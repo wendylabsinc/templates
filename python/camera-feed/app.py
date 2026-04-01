@@ -1,5 +1,7 @@
 import asyncio
+import glob
 import json
+import subprocess
 import threading
 from pathlib import Path
 
@@ -40,24 +42,54 @@ PIPELINES = [
 ]
 
 
+def _v4l2_device_name(path: str) -> str:
+    try:
+        out = subprocess.check_output(
+            ["v4l2-ctl", "--device", path, "--info"],
+            stderr=subprocess.DEVNULL, timeout=2,
+        ).decode()
+        for line in out.splitlines():
+            if "Card type" in line:
+                return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return Path(path).name
+
+
+def _v4l2_is_capture(path: str) -> bool:
+    try:
+        out = subprocess.check_output(
+            ["v4l2-ctl", "--device", path, "--all"],
+            stderr=subprocess.DEVNULL, timeout=2,
+        ).decode()
+        return "Video Capture" in out
+    except Exception:
+        return False
+
+
 def list_cameras() -> list[dict]:
-    """Return available video capture devices via GstDeviceMonitor."""
-    monitor = Gst.DeviceMonitor.new()
-    monitor.add_filter("Video/Source", None)
-    monitor.start()
-    devices = monitor.get_devices()
-    results = []
-    for dev in devices:
-        props = dev.get_properties()
-        device_path = props.get_string("device.path") if props else None
-        results.append(
-            {
-                "display_name": dev.get_display_name(),
-                "device_path": device_path,
-            }
-        )
-    monitor.stop()
-    return results
+    """Return available video capture devices."""
+    # Try GstDeviceMonitor first.
+    cameras: list[dict] = []
+    try:
+        monitor = Gst.DeviceMonitor.new()
+        monitor.add_filter("Video/Source", None)
+        monitor.start()
+        for dev in monitor.get_devices():
+            props = dev.get_properties()
+            path = props.get_string("device.path") if props else None
+            cameras.append({"id": path or "", "name": dev.get_display_name()})
+        monitor.stop()
+    except Exception:
+        pass
+
+    # Fallback: scan /dev/video* (works in containers without udev).
+    if not cameras:
+        for path in sorted(glob.glob("/dev/video*")):
+            if _v4l2_is_capture(path):
+                cameras.append({"id": path, "name": _v4l2_device_name(path)})
+
+    return cameras
 
 
 class CameraStream:

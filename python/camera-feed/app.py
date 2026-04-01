@@ -14,10 +14,16 @@ gi.require_version("GLib", "2.0")
 from gi.repository import GLib, Gst, GstApp  # noqa: E402
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
 from fastapi.responses import HTMLResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 Gst.init(None)
 
 app = FastAPI()
+
+_app_dir = Path(__file__).parent
+_assets_dir = _app_dir / "assets"
+if _assets_dir.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
 
 # ---------------------------------------------------------------------------
 # GLib main loop (runs in a daemon thread so GStreamer bus events are pumped)

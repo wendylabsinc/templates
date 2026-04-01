@@ -28,6 +28,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py index.html ./
 
+ENV PYTHONUNBUFFERED=1
+
 EXPOSE {{.PORT}}
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{{.PORT}}"]
+CMD ["/app/venv/bin/uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{{.PORT}}"]

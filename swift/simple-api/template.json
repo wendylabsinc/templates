@@ -16,6 +16,13 @@
             "default": 6001,
             "prompt": "HTTP port",
             "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "SWIFT_VERSION",
+            "description": "Swift toolchain version for swiftly",
+            "type": "string",
+            "default": "6.1",
+            "prompt": "Swift version"
         }
     ]
 }

@@ -1,0 +1,23 @@
+{
+    "templates": [
+        {
+            "name": "simple-api",
+            "description": "Minimal HTTP API with JSON endpoints"
+        },
+        {
+            "name": "fullstack",
+            "description": "Fullstack app: API backend + React/shadcn frontend"
+        },
+        {
+            "name": "camera-feed",
+            "description": "Live camera feed: GStreamer MJPEG over WebSocket"
+        }
+    ],
+    "languages": [
+        { "key": "python", "name": "Python" },
+        { "key": "swift", "name": "Swift" },
+        { "key": "rust", "name": "Rust" },
+        { "key": "node", "name": "Node (TypeScript)" },
+        { "key": "cpp", "name": "C++" }
+    ]
+}

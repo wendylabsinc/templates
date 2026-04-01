@@ -21,7 +21,7 @@
             "name": "SWIFT_VERSION",
             "description": "Swift toolchain version for swiftly",
             "type": "string",
-            "default": "6.1",
+            "default": "6.3",
             "prompt": "Swift version"
         }
     ]

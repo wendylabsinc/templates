@@ -43,8 +43,8 @@ _glib_thread.start()
 # ---------------------------------------------------------------------------
 
 PIPELINES = [
-    'v4l2src device={device} ! image/jpeg,framerate=30/1 ! appsink name=sink emit-signals=true sync=false',
-    'v4l2src device={device} ! videoconvert ! jpegenc ! appsink name=sink emit-signals=true sync=false',
+    'v4l2src device={device} ! image/jpeg,framerate=30/1 ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false',
+    'v4l2src device={device} ! videoconvert ! jpegenc ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false',
 ]
 
 

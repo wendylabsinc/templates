@@ -93,17 +93,23 @@ def list_cameras() -> list[dict]:
 
 
 class CameraStream:
-    """Wraps a GStreamer pipeline that pulls MJPEG frames from a camera."""
+    """Shared singleton that captures MJPEG frames from a camera.
 
-    def __init__(self, device: str = "/dev/video0"):
-        self.device = device
+    Multiple WebSocket clients share one GStreamer pipeline. Each client
+    gets its own asyncio.Queue; frames are broadcast to all queues.
+    The pipeline starts on first client and stops when the last disconnects.
+    """
+
+    def __init__(self):
+        self.device = "/dev/video0"
         self.pipeline = None
         self.appsink = None
-        self._start()
+        self._lock = threading.Lock()
+        self._queues: dict[int, asyncio.Queue] = {}
+        self._client_id = 0
+        self._loop: asyncio.AbstractEventLoop | None = None
 
-    # -- lifecycle -----------------------------------------------------------
-
-    def _start(self):
+    def _start_pipeline(self):
         for tmpl in PIPELINES:
             desc = tmpl.format(device=self.device)
             try:
@@ -111,9 +117,9 @@ class CameraStream:
             except GLib.Error:
                 continue
             sink = pipeline.get_by_name("sink")
+            sink.connect("new-sample", self._on_new_sample)
             pipeline.set_state(Gst.State.PLAYING)
-            # Give the pipeline a moment to negotiate
-            ret = pipeline.get_state(Gst.CLOCK_TIME_NONE if False else 2 * Gst.SECOND)
+            ret = pipeline.get_state(2 * Gst.SECOND)
             if ret[0] == Gst.StateChangeReturn.FAILURE:
                 pipeline.set_state(Gst.State.NULL)
                 continue
@@ -124,33 +130,55 @@ class CameraStream:
             f"Could not open camera {self.device} with any known pipeline"
         )
 
-    def stop(self):
-        if self.pipeline:
-            self.pipeline.set_state(Gst.State.NULL)
-            self.pipeline = None
-            self.appsink = None
-
-    def switch(self, device: str):
-        self.stop()
-        self.device = device
-        self._start()
-
-    # -- frame pull ----------------------------------------------------------
-
-    def pull_frame(self) -> bytes | None:
-        """Pull a single JPEG frame (blocking, short timeout)."""
-        if self.appsink is None:
-            return None
-        sample = self.appsink.try_pull_sample(Gst.SECOND)
+    def _on_new_sample(self, sink):
+        sample = sink.emit("pull-sample")
         if sample is None:
-            return None
+            return Gst.FlowReturn.OK
         buf = sample.get_buffer()
         ok, mapinfo = buf.map(Gst.MapFlags.READ)
         if not ok:
-            return None
+            return Gst.FlowReturn.OK
         data = bytes(mapinfo.data)
         buf.unmap(mapinfo)
-        return data
+        with self._lock:
+            for q in self._queues.values():
+                try:
+                    q.put_nowait(data)
+                except asyncio.QueueFull:
+                    pass
+        return Gst.FlowReturn.OK
+
+    def add_client(self) -> tuple[int, asyncio.Queue]:
+        self._loop = asyncio.get_event_loop()
+        q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2)
+        with self._lock:
+            self._client_id += 1
+            cid = self._client_id
+            self._queues[cid] = q
+            if self.pipeline is None:
+                self._start_pipeline()
+        return cid, q
+
+    def remove_client(self, cid: int):
+        with self._lock:
+            self._queues.pop(cid, None)
+            if not self._queues and self.pipeline:
+                self.pipeline.set_state(Gst.State.NULL)
+                self.pipeline = None
+                self.appsink = None
+
+    def switch(self, device: str):
+        with self._lock:
+            if self.pipeline:
+                self.pipeline.set_state(Gst.State.NULL)
+                self.pipeline = None
+                self.appsink = None
+            self.device = device
+            if self._queues:
+                self._start_pipeline()
+
+
+camera = CameraStream()
 
 
 # ---------------------------------------------------------------------------
@@ -173,49 +201,28 @@ async def cameras():
 # WebSocket streaming
 # ---------------------------------------------------------------------------
 
-MAX_QUEUE = 2  # drop frames when the client can't keep up
-
 
 @app.websocket("/stream")
 async def stream(ws: WebSocket):
     await ws.accept()
 
-    camera = CameraStream()
-    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MAX_QUEUE)
-    stop_event = asyncio.Event()
-
-    async def _producer():
-        loop = asyncio.get_event_loop()
-        while not stop_event.is_set():
-            frame = await loop.run_in_executor(None, camera.pull_frame)
-            if frame is None:
-                await asyncio.sleep(0.01)
-                continue
-            try:
-                queue.put_nowait(frame)
-            except asyncio.QueueFull:
-                # drop oldest, enqueue newest
-                try:
-                    queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
-                try:
-                    queue.put_nowait(frame)
-                except asyncio.QueueFull:
-                    pass
+    try:
+        cid, queue = camera.add_client()
+    except RuntimeError as exc:
+        await ws.close(code=1011, reason=str(exc))
+        return
 
     async def _consumer():
         try:
-            while not stop_event.is_set():
+            while True:
                 frame = await queue.get()
                 await ws.send_bytes(frame)
         except WebSocketDisconnect:
             pass
 
     async def _receiver():
-        """Listen for JSON control messages from the client."""
         try:
-            while not stop_event.is_set():
+            while True:
                 raw = await ws.receive_text()
                 try:
                     msg = json.loads(raw)
@@ -226,21 +233,18 @@ async def stream(ws: WebSocket):
         except WebSocketDisconnect:
             pass
 
-    producer = asyncio.create_task(_producer())
     consumer = asyncio.create_task(_consumer())
     receiver = asyncio.create_task(_receiver())
 
     try:
-        done, pending = await asyncio.wait(
-            [producer, consumer, receiver],
+        await asyncio.wait(
+            [consumer, receiver],
             return_when=asyncio.FIRST_COMPLETED,
         )
     finally:
-        stop_event.set()
-        producer.cancel()
         consumer.cancel()
         receiver.cancel()
-        camera.stop()
+        camera.remove_client(cid)
 
 
 # ---------------------------------------------------------------------------

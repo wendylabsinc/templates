@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "{{APP_ID}}",
+    name: "{{.APP_ID}}",
     platforms: [
         .macOS(.v14)
     ],
@@ -13,7 +13,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "{{APP_ID}}",
+            name: "{{.APP_ID}}",
             dependencies: [
                 .product(name: "Hummingbird", package: "hummingbird")
             ]

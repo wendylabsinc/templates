@@ -54,9 +54,9 @@ int main() {
         },
         {Post});
 
-    std::cout << "Server running on http://" << hostname << ":{{PORT}}" << std::endl;
+    std::cout << "Server running on http://" << hostname << ":{{.PORT}}" << std::endl;
 
-    app().addListener("0.0.0.0", {{PORT}});
+    app().addListener("0.0.0.0", {{.PORT}});
     app().run();
 
     return 0;

@@ -1,0 +1,21 @@
+{
+    "name": "simple-api",
+    "description": "Minimal HTTP API with Axum 0.8.8",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Primary HTTP port",
+            "type": "integer",
+            "default": 4001,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

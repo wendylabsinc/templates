@@ -11,6 +11,6 @@ RUN uv pip install --system fastapi==0.135.3 "uvicorn[standard]"
 
 COPY app.py .
 
-EXPOSE {{PORT}}
+EXPOSE {{.PORT}}
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{{PORT}}"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{{.PORT}}"]

@@ -15,8 +15,8 @@ async fn main() {
         .route("/health", get(health))
         .route("/items", post(create_item));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:{{PORT}}").await.unwrap();
-    println!("Server running on http://{}:{{PORT}}", hostname);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:{{.PORT}}").await.unwrap();
+    println!("Server running on http://{}:{{.PORT}}", hostname);
     axum::serve(listener, app).await.unwrap();
 }
 

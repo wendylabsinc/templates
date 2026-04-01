@@ -37,8 +37,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /app/build/{{APP_ID}} /usr/local/bin/{{APP_ID}}
+COPY --from=builder /app/build/{{.APP_ID}} /usr/local/bin/{{.APP_ID}}
 
-EXPOSE {{PORT}}
+EXPOSE {{.PORT}}
 
-CMD ["{{APP_ID}}"]
+CMD ["{{.APP_ID}}"]

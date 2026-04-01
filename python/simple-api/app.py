@@ -18,7 +18,7 @@ class Item(BaseModel):
 
 @app.on_event("startup")
 async def startup_event():
-    print(f"Server running on {hostname}:{{PORT}}", flush=True)
+    print(f"Server running on {hostname}:{{.PORT}}", flush=True)
 
 
 @app.get("/")

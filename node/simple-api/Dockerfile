@@ -14,6 +14,6 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 
-EXPOSE 5001
+EXPOSE {{PORT}}
 
 CMD ["node", "dist/index.js"]

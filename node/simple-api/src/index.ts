@@ -1,7 +1,7 @@
 import express, { Request, Response } from "express";
 
 const app = express();
-const port = 5001;
+const port = {{PORT}};
 const hostname = process.env.WENDY_HOSTNAME || "0.0.0.0";
 
 app.use(express.json());

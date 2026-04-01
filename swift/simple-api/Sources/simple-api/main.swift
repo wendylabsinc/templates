@@ -36,10 +36,10 @@ struct SimpleAPI {
 
         let app = Application(
             router: router,
-            configuration: .init(address: .hostname("0.0.0.0", port: 6001))
+            configuration: .init(address: .hostname("0.0.0.0", port: {{PORT}}))
         )
 
-        print("Server running on http://\(hostname):6001")
+        print("Server running on http://\(hostname):{{PORT}}")
         try await app.runService()
     }
 }

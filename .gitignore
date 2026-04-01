@@ -1,0 +1,21 @@
+# Swift
+.build/
+Package.resolved
+
+# Rust
+target/
+
+# Node
+node_modules/
+dist/
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

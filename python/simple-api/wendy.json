@@ -1,0 +1,18 @@
+{
+    "appId": "simple-api",
+    "version": "0.1.0",
+    "entitlements": [
+        {
+            "type": "network"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": 3001 },
+        "timeoutSeconds": 30
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "open http://${WENDY_HOSTNAME}:3001"
+        }
+    }
+}

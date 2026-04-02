@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Trash2Icon, PlusIcon } from "lucide-react"
 
 interface Car {
@@ -155,11 +156,9 @@ export default function PersistencePage() {
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-10">
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={selected.size === cars.length && cars.length > 0}
-                      onChange={toggleAll}
-                      className="rounded"
+                      onCheckedChange={toggleAll}
                     />
                   </TableHead>
                   <TableHead className="w-16">ID</TableHead>
@@ -173,11 +172,9 @@ export default function PersistencePage() {
                 {cars.map((car) => (
                   <TableRow key={car.id}>
                     <TableCell>
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={selected.has(car.id)}
-                        onChange={() => toggleSelect(car.id)}
-                        className="rounded"
+                        onCheckedChange={() => toggleSelect(car.id)}
                       />
                     </TableCell>
                     <TableCell className="font-mono text-muted-foreground">{car.id}</TableCell>

@@ -2,6 +2,7 @@ import { NavLink } from "react-router-dom"
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -9,13 +10,16 @@ import {
   SidebarGroup,
   SidebarGroupContent,
 } from "@/components/ui/sidebar"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   CameraIcon,
   AudioLinesIcon,
   HardDriveIcon,
   CpuIcon,
   InfoIcon,
+  AlertCircleIcon,
 } from "lucide-react"
+import { useBackendHealth } from "@/hooks/use-backend-health"
 
 const navItems = [
   { title: "Camera", to: "/camera", icon: CameraIcon },
@@ -26,6 +30,8 @@ const navItems = [
 ]
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+  const backendHealthy = useBackendHealth()
+
   return (
     <Sidebar collapsible="offcanvas" {...props}>
       <SidebarHeader>
@@ -35,7 +41,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
               <img
                 src="/assets/wendy-logo.svg"
                 alt="Wendy"
-                className="h-5 w-auto dark:invert"
+                className="h-5 w-auto invert dark:invert-0"
               />
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -64,6 +70,16 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      {!backendHealthy && (
+        <SidebarFooter>
+          <Alert variant="destructive" className="py-2">
+            <AlertCircleIcon className="h-4 w-4" />
+            <AlertDescription className="text-xs">
+              Backend unreachable
+            </AlertDescription>
+          </Alert>
+        </SidebarFooter>
+      )}
     </Sidebar>
   )
 }

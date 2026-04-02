@@ -43,8 +43,8 @@ _glib_thread.start()
 # ---------------------------------------------------------------------------
 
 PIPELINES = [
-    'v4l2src device={device} ! image/jpeg,framerate=30/1 ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false',
-    'v4l2src device={device} ! videoconvert ! jpegenc ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false',
+    'v4l2src device={device} ! image/jpeg,framerate=30/1 ! appsink name=sink max-buffers=2 drop=true sync=false',
+    'v4l2src device={device} ! videoconvert ! jpegenc ! appsink name=sink max-buffers=2 drop=true sync=false',
 ]
 
 
@@ -101,8 +101,9 @@ def list_cameras() -> list[dict]:
 class CameraStream:
     """Shared singleton that captures MJPEG frames from a camera.
 
-    Multiple WebSocket clients share one GStreamer pipeline. Each client
-    gets its own asyncio.Queue; frames are broadcast to all queues.
+    Multiple WebSocket clients share one GStreamer pipeline. A dedicated
+    pull thread calls try_pull_sample in a tight loop and broadcasts
+    frames to each client's asyncio.Queue.
     The pipeline starts on first client and stops when the last disconnects.
     """
 
@@ -113,7 +114,8 @@ class CameraStream:
         self._lock = threading.Lock()
         self._queues: dict[int, asyncio.Queue] = {}
         self._client_id = 0
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._pull_thread: threading.Thread | None = None
+        self._running = False
 
     def _start_pipeline(self):
         for tmpl in PIPELINES:
@@ -123,7 +125,6 @@ class CameraStream:
             except GLib.Error:
                 continue
             sink = pipeline.get_by_name("sink")
-            sink.connect("new-sample", self._on_new_sample)
             pipeline.set_state(Gst.State.PLAYING)
             ret = pipeline.get_state(2 * Gst.SECOND)
             if ret[0] == Gst.StateChangeReturn.FAILURE:
@@ -131,31 +132,45 @@ class CameraStream:
                 continue
             self.pipeline = pipeline
             self.appsink = sink
+            self._running = True
+            self._pull_thread = threading.Thread(target=self._pull_loop, daemon=True)
+            self._pull_thread.start()
             return
         raise RuntimeError(
             f"Could not open camera {self.device} with any known pipeline"
         )
 
-    def _on_new_sample(self, sink):
-        sample = sink.emit("pull-sample")
-        if sample is None:
-            return Gst.FlowReturn.OK
-        buf = sample.get_buffer()
-        ok, mapinfo = buf.map(Gst.MapFlags.READ)
-        if not ok:
-            return Gst.FlowReturn.OK
-        data = bytes(mapinfo.data)
-        buf.unmap(mapinfo)
-        with self._lock:
-            for q in self._queues.values():
-                try:
-                    q.put_nowait(data)
-                except asyncio.QueueFull:
-                    pass
-        return Gst.FlowReturn.OK
+    def _pull_loop(self):
+        """Tight loop pulling frames from appsink and broadcasting."""
+        while self._running:
+            sink = self.appsink
+            if sink is None:
+                break
+            sample = sink.try_pull_sample(Gst.SECOND)
+            if sample is None:
+                continue
+            buf = sample.get_buffer()
+            ok, mapinfo = buf.map(Gst.MapFlags.READ)
+            if not ok:
+                continue
+            data = bytes(mapinfo.data)
+            buf.unmap(mapinfo)
+            with self._lock:
+                for q in self._queues.values():
+                    try:
+                        q.put_nowait(data)
+                    except asyncio.QueueFull:
+                        pass
+
+    def _stop_pipeline(self):
+        self._running = False
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+        self.pipeline = None
+        self.appsink = None
+        self._pull_thread = None
 
     def add_client(self) -> tuple[int, asyncio.Queue]:
-        self._loop = asyncio.get_event_loop()
         q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2)
         with self._lock:
             self._client_id += 1
@@ -168,17 +183,12 @@ class CameraStream:
     def remove_client(self, cid: int):
         with self._lock:
             self._queues.pop(cid, None)
-            if not self._queues and self.pipeline:
-                self.pipeline.set_state(Gst.State.NULL)
-                self.pipeline = None
-                self.appsink = None
+            if not self._queues:
+                self._stop_pipeline()
 
     def switch(self, device: str):
         with self._lock:
-            if self.pipeline:
-                self.pipeline.set_state(Gst.State.NULL)
-                self.pipeline = None
-                self.appsink = None
+            self._stop_pipeline()
             self.device = device
             if self._queues:
                 self._start_pipeline()

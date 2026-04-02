@@ -1,6 +1,15 @@
+#!/usr/bin/env python3
+"""
+Webcam streaming server.
+GStreamer MJPEG-over-WebSocket — camera outputs MJPEG natively on most USB
+webcams so no encoding is needed. Frames are sent as-is to connected clients.
+"""
 import asyncio
+import collections
 import glob
 import json
+import logging
+import platform
 import subprocess
 import threading
 from pathlib import Path
@@ -9,14 +18,30 @@ import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-gi.require_version("GLib", "2.0")
 
-from gi.repository import GLib, Gst, GstApp  # noqa: E402
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect  # noqa: E402
-from fastapi.responses import HTMLResponse  # noqa: E402
-from fastapi.staticfiles import StaticFiles  # noqa: E402
+from gi.repository import Gst, GLib
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+_log_buffer = collections.deque(maxlen=200)
+
+
+class _BufferHandler(logging.Handler):
+    def emit(self, record):
+        _log_buffer.append(self.format(record))
+
+
+logging.basicConfig(level=logging.INFO)
+_bh = _BufferHandler()
+_bh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logging.getLogger().addHandler(_bh)
+logger = logging.getLogger(__name__)
 
 Gst.init(None)
+
+_glib_loop = GLib.MainLoop()
+threading.Thread(target=_glib_loop.run, daemon=True).start()
 
 app = FastAPI()
 
@@ -25,15 +50,7 @@ _assets_dir = _app_dir / "assets"
 if _assets_dir.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
 
-# GLib main loop — pumps GStreamer bus events.
-_glib_loop = GLib.MainLoop()
-threading.Thread(target=_glib_loop.run, daemon=True).start()
-
-# ---------------------------------------------------------------------------
-# Camera helpers
-# ---------------------------------------------------------------------------
-
-APPSINK = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
+IS_MACOS = platform.system() == "Darwin"
 
 
 def _v4l2_device_name(path: str) -> str:
@@ -61,34 +78,50 @@ def _v4l2_is_capture(path: str) -> bool:
         return False
 
 
-def list_cameras() -> list[dict]:
-    cameras: list[dict] = []
-    try:
-        monitor = Gst.DeviceMonitor.new()
-        monitor.add_filter("Video/Source", None)
-        monitor.start()
-        for dev in monitor.get_devices():
-            props = dev.get_properties()
-            path = props.get_string("device.path") if props else None
-            cameras.append({"id": path or "", "name": dev.get_display_name()})
-        monitor.stop()
-    except Exception:
-        pass
+def enumerate_cameras() -> list[dict]:
+    monitor = Gst.DeviceMonitor.new()
+    monitor.add_filter("Video/Source", Gst.Caps.from_string("video/x-raw"))
+    monitor.start()
+    devices = monitor.get_devices()
 
-    if not cameras:
+    cameras = []
+    for i, dev in enumerate(devices):
+        props = dev.get_properties()
+        name = dev.get_display_name()
+        if IS_MACOS:
+            idx = props.get_int("device.index")
+            device_id = str(idx.value) if idx[0] else str(i)
+        else:
+            path = props.get_string("device.path") or props.get_string("api.v4l2.path")
+            device_id = path if path else f"/dev/video{i}"
+        cameras.append({"id": device_id, "name": name})
+    monitor.stop()
+
+    if not cameras and not IS_MACOS:
         for path in sorted(glob.glob("/dev/video*")):
             if _v4l2_is_capture(path):
                 cameras.append({"id": path, "name": _v4l2_device_name(path)})
+        if cameras:
+            logger.info("Discovered %d camera(s) via /dev/video*", len(cameras))
 
     return cameras
 
 
-class MJPEGCamera:
-    """Shared camera singleton. One GStreamer pipeline, multiple WS clients.
+def build_source(device_id: str | None = None) -> str:
+    if IS_MACOS:
+        src = "avfvideosrc"
+        if device_id is not None:
+            src += f" device-index={device_id}"
+    else:
+        src = f"v4l2src device={device_id or '/dev/video0'}"
+    return src
 
-    Uses emit-signals callback on GStreamer's streaming thread for minimal
-    latency. Each client gets an asyncio.Queue; frames are broadcast to all.
-    Pipeline starts on first client, stops when last disconnects.
+
+class MJPEGCamera:
+    """Captures MJPEG frames from a camera using GStreamer appsink.
+
+    The camera outputs MJPEG natively on most USB webcams, so no
+    encoding is needed. Frames are sent as-is to connected WebSocket clients.
     """
 
     def __init__(self):
@@ -96,42 +129,57 @@ class MJPEGCamera:
         self.queues: dict[WebSocket, asyncio.Queue] = {}
         self._lock = threading.Lock()
         self._current_device: str | None = None
+        self._loop = None
 
     def _start_pipeline(self, device_id: str | None = None) -> Gst.Pipeline | None:
-        src = f"v4l2src device={device_id or '/dev/video0'}"
+        src = build_source(device_id)
+
+        appsink = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
         pipelines = [
-            f"{src} ! image/jpeg ! {APPSINK}",
-            f"{src} ! image/jpeg,width=640,height=480 ! {APPSINK}",
-            f"{src} ! videoconvert ! jpegenc quality=70 ! {APPSINK}",
+            # MJPEG native — most permissive first
+            f"{src} ! image/jpeg ! {appsink}",
+            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
+            # Camera outputs raw → encode to JPEG
+            f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
         ]
 
-        for desc in pipelines:
+        for p_str in pipelines:
             try:
-                pipeline = Gst.parse_launch(desc)
+                pipeline = Gst.parse_launch(p_str)
                 ret = pipeline.set_state(Gst.State.PAUSED)
                 if ret == Gst.StateChangeReturn.FAILURE:
                     pipeline.set_state(Gst.State.NULL)
+                    logger.info("Pipeline failed: %s", p_str)
                     continue
                 if ret == Gst.StateChangeReturn.ASYNC:
                     ret, _, _ = pipeline.get_state(5 * Gst.SECOND)
                     if ret == Gst.StateChangeReturn.FAILURE:
                         pipeline.set_state(Gst.State.NULL)
+                        logger.info("Pipeline preroll failed: %s", p_str)
                         continue
+                logger.info("Pipeline ready: %s", p_str)
                 return pipeline
-            except Exception:
-                continue
+            except Exception as e:
+                logger.info("Pipeline exception: %s — %s", p_str, e)
         return None
 
     def _on_new_sample(self, sink):
         sample = sink.emit("pull-sample")
         if not sample:
+            logger.warning("pull-sample returned None")
             return Gst.FlowReturn.OK
         buf = sample.get_buffer()
         ok, mapinfo = buf.map(Gst.MapFlags.READ)
         if not ok:
+            logger.warning("buffer map failed")
             return Gst.FlowReturn.OK
         data = bytes(mapinfo.data)
         buf.unmap(mapinfo)
+        if not hasattr(self, '_frame_count'):
+            self._frame_count = 0
+        self._frame_count += 1
+        if self._frame_count <= 3 or self._frame_count % 100 == 0:
+            logger.info("Frame %d: %d bytes, %d queues", self._frame_count, len(data), len(self.queues))
 
         with self._lock:
             for q in self.queues.values():
@@ -143,7 +191,8 @@ class MJPEGCamera:
         return Gst.FlowReturn.OK
 
     async def add_client(self, ws: WebSocket) -> asyncio.Queue:
-        q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2)
+        self._loop = asyncio.get_running_loop()
+        q = asyncio.Queue(maxsize=2)
         with self._lock:
             if not self.pipeline:
                 self.pipeline = self._start_pipeline(self._current_device)
@@ -152,7 +201,9 @@ class MJPEGCamera:
                 sink = self.pipeline.get_by_name("sink")
                 sink.connect("new-sample", self._on_new_sample)
                 self.pipeline.set_state(Gst.State.PLAYING)
+                logger.info("Camera streaming started")
             self.queues[ws] = q
+        logger.info("Client added (total: %d)", len(self.queues))
         return q
 
     def remove_client(self, ws: WebSocket):
@@ -161,12 +212,15 @@ class MJPEGCamera:
             if not self.queues and self.pipeline:
                 self.pipeline.set_state(Gst.State.NULL)
                 self.pipeline = None
+                logger.info("Camera stopped (no clients)")
+        logger.info("Client removed (total: %d)", len(self.queues))
 
     async def switch_camera(self, device_id: str):
         with self._lock:
             if self.pipeline:
                 self.pipeline.set_state(Gst.State.NULL)
                 self.pipeline = None
+                self._frame_count = 0
             self._current_device = device_id
             self.pipeline = self._start_pipeline(device_id)
             if not self.pipeline:
@@ -174,58 +228,44 @@ class MJPEGCamera:
             sink = self.pipeline.get_by_name("sink")
             sink.connect("new-sample", self._on_new_sample)
             self.pipeline.set_state(Gst.State.PLAYING)
+        logger.info("Switched to camera %s", device_id)
 
 
 camera = MJPEGCamera()
 
 
-# ---------------------------------------------------------------------------
-# HTTP routes
-# ---------------------------------------------------------------------------
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index():
-    html_path = Path(__file__).with_name("index.html")
-    return HTMLResponse(content=html_path.read_text(), status_code=200)
-
-
 @app.get("/cameras")
-async def cameras_endpoint():
-    return list_cameras()
-
-
-# ---------------------------------------------------------------------------
-# WebSocket streaming
-# ---------------------------------------------------------------------------
+async def list_cameras():
+    return JSONResponse(content=enumerate_cameras())
 
 
 @app.websocket("/stream")
-async def websocket_stream(ws: WebSocket):
-    await ws.accept()
+async def websocket_stream(websocket: WebSocket):
+    await websocket.accept()
     try:
-        q = await camera.add_client(ws)
-    except Exception:
-        await ws.close(code=1011)
+        q = await camera.add_client(websocket)
+    except Exception as e:
+        logger.error(f"Failed to start camera: {e}")
+        await websocket.close(code=1011)
         return
 
     async def send_frames():
         try:
             while True:
                 data = await q.get()
-                await ws.send_bytes(data)
+                await websocket.send_bytes(data)
         except Exception:
             pass
 
     async def recv_commands():
         try:
             while True:
-                msg = json.loads(await ws.receive_text())
+                msg = json.loads(await websocket.receive_text())
                 if "switch_camera" in msg:
                     try:
                         await camera.switch_camera(msg["switch_camera"])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.error(f"Camera switch failed: {e}")
         except WebSocketDisconnect:
             pass
         except Exception:
@@ -239,15 +279,31 @@ async def websocket_stream(ws: WebSocket):
         for t in pending:
             t.cancel()
     finally:
-        camera.remove_client(ws)
+        camera.remove_client(websocket)
 
 
-# ---------------------------------------------------------------------------
-# Entrypoint
-# ---------------------------------------------------------------------------
+@app.get("/logs")
+async def get_logs():
+    return JSONResponse(content=list(_log_buffer))
+
+
+@app.get("/debug")
+async def debug_info():
+    cameras = enumerate_cameras()
+    return JSONResponse(content={
+        "mode": "mjpeg-ws",
+        "cameras": cameras,
+        "pipeline_state": camera.pipeline.get_state(0)[1].value_nick if camera.pipeline else None,
+        "num_clients": len(camera.queues),
+    })
+
+
+@app.get("/")
+async def root():
+    return FileResponse(Path(__file__).parent / "index.html", media_type="text/html")
+
 
 if __name__ == "__main__":
     import uvicorn
 
-    print("Starting camera-feed on port {{.PORT}}")
     uvicorn.run(app, host="0.0.0.0", port={{.PORT}})

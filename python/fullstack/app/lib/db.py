@@ -14,7 +14,9 @@ def get_db() -> sqlite3.Connection:
             make TEXT NOT NULL,
             model TEXT NOT NULL,
             color TEXT NOT NULL,
-            year INTEGER NOT NULL
+            year INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT
         )
     """)
     conn.commit()

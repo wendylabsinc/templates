@@ -48,7 +48,7 @@ def get_car(car_id: int):
 def update_car(car_id: int, car: CarInput):
     db = get_db()
     db.execute(
-        "UPDATE cars SET make=?, model=?, color=?, year=? WHERE id=?",
+        "UPDATE cars SET make=?, model=?, color=?, year=?, updated_at=datetime('now') WHERE id=?",
         (car.make, car.model, car.color, car.year, car_id),
     )
     db.commit()

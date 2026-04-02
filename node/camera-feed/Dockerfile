@@ -8,7 +8,7 @@ RUN npm install
 
 COPY tsconfig.json ./
 COPY src ./src
-RUN npx tsc
+RUN npm run build
 
 # Stage 2 — runtime
 FROM node:22-slim
@@ -29,6 +29,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY index.html ./
+COPY assets ./assets
 
 EXPOSE {{.PORT}}
 

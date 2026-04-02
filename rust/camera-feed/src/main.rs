@@ -239,7 +239,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(index))
-        .route("/assets/wendy-logo.svg", get(wendy_logo))
+        .nest_service("/assets", tower_http::services::ServeDir::new("./assets"))
         .route("/cameras", get(list_cameras))
         .route("/stream", get(ws_handler))
         .with_state(state);

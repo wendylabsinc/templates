@@ -277,6 +277,10 @@ struct CameraFeedApp {
                     contentType = "text/css"
                 } else if filePath.hasSuffix(".js") {
                     contentType = "application/javascript"
+                } else if filePath.hasSuffix(".wav") {
+                    contentType = "audio/wav"
+                } else if filePath.hasSuffix(".mp3") {
+                    contentType = "audio/mpeg"
                 }
                 return Response(
                     status: .ok,

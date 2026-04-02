@@ -11,6 +11,10 @@
         {
             "name": "camera-feed",
             "description": "Live camera feed: GStreamer MJPEG over WebSocket"
+        },
+        {
+            "name": "audio",
+            "description": "Live audio waveform visualization with mic capture"
         }
     ],
     "languages": [

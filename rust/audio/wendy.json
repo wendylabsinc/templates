@@ -1,0 +1,22 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "audio"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 30
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "open http://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

@@ -1,0 +1,9 @@
+{
+    "name": "audio",
+    "description": "Live audio visualization with GStreamer mic capture",
+    "variables": [
+        {"name": "APP_ID", "description": "Application identifier", "type": "string", "required": true, "prompt": "App ID"},
+        {"name": "PORT", "description": "HTTP port", "type": "integer", "default": 6004, "prompt": "HTTP port", "validate": {"min": 1, "max": 65535}},
+        {"name": "SWIFT_VERSION", "description": "Swift toolchain version", "type": "string", "default": "6.3", "prompt": "Swift version"}
+    ]
+}

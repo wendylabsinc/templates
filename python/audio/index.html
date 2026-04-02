@@ -1,0 +1,155 @@
+<!doctype html>
+<html class="h-full bg-black overflow-hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{.APP_ID}} — Audio</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="h-full flex flex-col m-0 p-0 text-white font-sans overflow-hidden bg-black">
+    <!-- Waveform canvas fills the background -->
+    <canvas id="waveform" class="fixed inset-0 z-0 w-full h-full"></canvas>
+
+    <!-- Top bar: status left, logo right -->
+    <div class="relative z-10 p-6 flex justify-between items-start pointer-events-none">
+      <div class="pointer-events-auto">
+        <h1 class="text-xl font-bold drop-shadow-md">{{.APP_ID}}</h1>
+        <div class="flex items-center gap-2 mt-1">
+          <span id="status-dot" class="w-2 h-2 rounded-full bg-yellow-500 shadow-sm"></span>
+          <span id="status-text" class="text-xs font-medium uppercase tracking-wider drop-shadow-md">Connecting...</span>
+        </div>
+      </div>
+      <a href="https://wendy.sh" target="_blank" rel="noopener noreferrer" class="pointer-events-auto">
+        <img src="/assets/wendy-logo.svg" alt="Wendy" class="h-8 w-auto drop-shadow-lg opacity-80 hover:opacity-100 transition-opacity" />
+      </a>
+    </div>
+
+    <!-- Bottom bar: audio file buttons -->
+    <div class="relative z-10 mt-auto p-6 pointer-events-none">
+      <div id="audio-buttons" class="flex flex-wrap gap-3 items-center justify-center pointer-events-auto">
+        <span class="text-xs text-white/40 uppercase tracking-wider">Loading sounds...</span>
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("waveform");
+      const ctx = canvas.getContext("2d");
+      const statusDot = document.getElementById("status-dot");
+      const statusText = document.getElementById("status-text");
+      const audioButtons = document.getElementById("audio-buttons");
+
+      let ws = null;
+      let reconnectDelay = 2000;
+      let audioData = new Float32Array(0);
+
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      function setStatus(t, c) {
+        statusDot.className = `w-2 h-2 rounded-full bg-${c}-500`;
+        statusText.textContent = t;
+      }
+
+      // -- Waveform rendering -------------------------------------------------
+      function drawWaveform() {
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if (audioData.length === 0) {
+          requestAnimationFrame(drawWaveform);
+          return;
+        }
+
+        const bars = Math.min(audioData.length, Math.floor(canvas.width / 3));
+        const step = Math.floor(audioData.length / bars);
+        const barW = Math.max(1, (canvas.width / bars) - 1);
+        const midY = canvas.height / 2;
+
+        ctx.fillStyle = "white";
+
+        for (let i = 0; i < bars; i++) {
+          // Average a chunk of samples
+          let sum = 0;
+          for (let j = 0; j < step; j++) {
+            sum += Math.abs(audioData[i * step + j] || 0);
+          }
+          const amp = sum / step;
+          const h = Math.max(2, amp * canvas.height * 0.8);
+          const x = i * (canvas.width / bars);
+          ctx.fillRect(x, midY - h / 2, barW, h);
+        }
+
+        requestAnimationFrame(drawWaveform);
+      }
+      requestAnimationFrame(drawWaveform);
+
+      // -- WebSocket audio stream ---------------------------------------------
+      function connect() {
+        if (ws) ws.close();
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${proto}//${location.host}/stream`);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => setStatus("Live", "green");
+
+        ws.onmessage = (e) => {
+          if (e.data instanceof ArrayBuffer) {
+            // PCM 16-bit signed LE → Float32
+            const pcm = new Int16Array(e.data);
+            const floats = new Float32Array(pcm.length);
+            for (let i = 0; i < pcm.length; i++) {
+              floats[i] = pcm[i] / 32768;
+            }
+            audioData = floats;
+            reconnectDelay = 2000;
+          }
+        };
+
+        ws.onclose = () => {
+          setStatus("Disconnected", "red");
+          audioData = new Float32Array(0);
+          setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
+        };
+      }
+
+      // -- Load audio file list and create buttons ----------------------------
+      async function loadSounds() {
+        try {
+          const res = await fetch("/sounds");
+          const sounds = await res.json();
+          if (!sounds.length) {
+            audioButtons.innerHTML = '<span class="text-xs text-white/40">No sound files in /assets</span>';
+            return;
+          }
+          audioButtons.innerHTML = "";
+          sounds.forEach((s) => {
+            const btn = document.createElement("button");
+            btn.textContent = s.name;
+            btn.className =
+              "rounded-lg bg-white/10 hover:bg-white/20 backdrop-blur-sm px-4 py-2 text-sm font-medium border border-white/10 transition-colors";
+            btn.onclick = () => {
+              // Play locally
+              const audio = new Audio(`/assets/${s.file}`);
+              audio.play().catch(() => {});
+              // Also tell server to play (optional)
+              if (ws?.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ play: s.file }));
+              }
+            };
+            audioButtons.appendChild(btn);
+          });
+        } catch {
+          audioButtons.innerHTML = '<span class="text-xs text-white/40">Failed to load sounds</span>';
+        }
+      }
+
+      loadSounds();
+      connect();
+    </script>
+  </body>
+</html>

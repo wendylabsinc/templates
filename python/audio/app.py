@@ -2,12 +2,15 @@
 """
 Audio streaming server.
 GStreamer audio capture over WebSocket — captures raw PCM S16LE from the
-microphone and broadcasts it to connected WebSocket clients.
+microphone and broadcasts it to connected WebSocket clients. Can also
+play .wav files on a connected speaker via GStreamer.
 """
 import asyncio
 import collections
+import glob
 import json
 import logging
+import subprocess
 import threading
 from pathlib import Path
 
@@ -47,12 +50,61 @@ _assets_dir = _app_dir / "assets"
 if _assets_dir.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
 
+# Current speaker device for playback (set via /speakers endpoint or WS command).
+_current_speaker: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Device enumeration
+# ---------------------------------------------------------------------------
+
+
+def _parse_arecord_or_aplay(cmd: str) -> list[dict]:
+    """Parse `arecord -l` or `aplay -l` output into [{id, name}, ...]."""
+    devices: list[dict] = []
+    try:
+        out = subprocess.check_output(cmd.split(), stderr=subprocess.DEVNULL, timeout=2).decode()
+        for line in out.splitlines():
+            if line.startswith("card "):
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    card_num = line.split()[1].rstrip(":")
+                    name = parts[1].strip().split("[")[0].strip()
+                    devices.append({"id": f"hw:{card_num},0", "name": name})
+    except Exception:
+        pass
+    return devices
+
+
+def _list_microphones() -> list[dict]:
+    """Return available audio input (capture) devices."""
+    return _parse_arecord_or_aplay("arecord -l")
+
+
+def _list_speakers() -> list[dict]:
+    """Return available audio output (playback) devices."""
+    return _parse_arecord_or_aplay("aplay -l")
+
+
+def _list_sounds() -> list[dict]:
+    """Return .wav files in ./assets as [{name, file}, ...]."""
+    sounds = []
+    for f in sorted(_assets_dir.glob("*.wav")):
+        display = f.stem.replace("-", " ").replace("_", " ").title()
+        sounds.append({"name": display, "file": f.name})
+    return sounds
+
+
+# ---------------------------------------------------------------------------
+# Audio capture singleton
+# ---------------------------------------------------------------------------
+
 
 class AudioCapture:
     """Captures raw PCM audio from a microphone using GStreamer appsink.
 
-    Audio is captured as S16LE, mono, 16 kHz and broadcast as raw PCM
-    bytes to all connected WebSocket clients.
+    Uses alsasrc with a specific hw device. Audio is resampled to S16LE
+    mono 16kHz for the waveform visualization.
     """
 
     def __init__(self):
@@ -60,63 +112,62 @@ class AudioCapture:
         self.queues: dict[WebSocket, asyncio.Queue] = {}
         self._lock = threading.Lock()
         self._current_device: str | None = None
-        self._loop = None
 
     def _start_pipeline(self) -> Gst.Pipeline | None:
         appsink = "appsink name=sink emit-signals=true max-buffers=4 drop=true sync=false"
         pcm_caps = "audio/x-raw,format=S16LE,channels=1,rate=16000"
-        if self._current_device:
-            src = f'alsasrc device="{self._current_device}"'
-            pipelines = [f"{src} ! audioconvert ! {pcm_caps} ! {appsink}"]
-        else:
-            # Try multiple sources — autoaudiosrc, then alsasrc with
-            # specific hw devices found on the system.
-            pipelines = [
-                f"autoaudiosrc ! audioconvert ! {pcm_caps} ! {appsink}",
-                f"alsasrc ! audioconvert ! {pcm_caps} ! {appsink}",
-            ]
-            # Also try each ALSA capture device directly.
-            for mic in _list_microphones():
-                dev = mic.get("id", "")
-                if dev.startswith("hw:"):
-                    pipelines.append(f'alsasrc device="{dev}" ! audioconvert ! {pcm_caps} ! {appsink}')
 
-        for p_str in pipelines:
+        pipelines = []
+
+        if self._current_device:
+            # User selected a specific device.
+            pipelines.append(
+                f'alsasrc device="{self._current_device}" ! audioconvert ! audioresample ! {pcm_caps} ! {appsink}'
+            )
+        else:
+            # Try each known capture device.
+            for mic in _list_microphones():
+                dev = mic["id"]
+                pipelines.append(
+                    f'alsasrc device="{dev}" ! audioconvert ! audioresample ! {pcm_caps} ! {appsink}'
+                )
+            # Fallback generic.
+            pipelines.append(f"alsasrc ! audioconvert ! audioresample ! {pcm_caps} ! {appsink}")
+
+        for desc in pipelines:
             try:
-                pipeline = Gst.parse_launch(p_str)
+                pipeline = Gst.parse_launch(desc)
                 ret = pipeline.set_state(Gst.State.PAUSED)
                 if ret == Gst.StateChangeReturn.FAILURE:
                     pipeline.set_state(Gst.State.NULL)
-                    logger.info("Pipeline failed: %s", p_str)
+                    logger.info("Pipeline failed: %s", desc)
                     continue
                 if ret == Gst.StateChangeReturn.ASYNC:
                     ret, _, _ = pipeline.get_state(5 * Gst.SECOND)
                     if ret == Gst.StateChangeReturn.FAILURE:
                         pipeline.set_state(Gst.State.NULL)
-                        logger.info("Pipeline preroll failed: %s", p_str)
+                        logger.info("Pipeline preroll failed: %s", desc)
                         continue
-                logger.info("Pipeline ready: %s", p_str)
+                logger.info("Pipeline ready: %s", desc)
                 return pipeline
             except Exception as e:
-                logger.info("Pipeline exception: %s — %s", p_str, e)
+                logger.info("Pipeline exception: %s — %s", desc, e)
         return None
 
     def _on_new_sample(self, sink):
         sample = sink.emit("pull-sample")
         if not sample:
-            logger.warning("pull-sample returned None")
             return Gst.FlowReturn.OK
         buf = sample.get_buffer()
         ok, mapinfo = buf.map(Gst.MapFlags.READ)
         if not ok:
-            logger.warning("buffer map failed")
             return Gst.FlowReturn.OK
         data = bytes(mapinfo.data)
         buf.unmap(mapinfo)
         if not hasattr(self, '_sample_count'):
             self._sample_count = 0
         self._sample_count += 1
-        if self._sample_count <= 3 or self._sample_count % 100 == 0:
+        if self._sample_count <= 3 or self._sample_count % 200 == 0:
             logger.info("Sample %d: %d bytes, %d queues", self._sample_count, len(data), len(self.queues))
 
         with self._lock:
@@ -129,7 +180,6 @@ class AudioCapture:
         return Gst.FlowReturn.OK
 
     async def add_client(self, ws: WebSocket) -> asyncio.Queue:
-        self._loop = asyncio.get_running_loop()
         q = asyncio.Queue(maxsize=4)
         with self._lock:
             if not self.pipeline:
@@ -172,46 +222,9 @@ class AudioCapture:
 audio = AudioCapture()
 
 
-def _list_sounds() -> list[dict]:
-    """Return .wav files in ./assets as [{name, file}, ...]."""
-    sounds = []
-    for f in sorted(_assets_dir.glob("*.wav")):
-        display = f.stem.replace("-", " ").replace("_", " ").title()
-        sounds.append({"name": display, "file": f.name})
-    return sounds
-
-
-def _list_microphones() -> list[dict]:
-    """Return available audio input devices."""
-    mics: list[dict] = []
-    try:
-        monitor = Gst.DeviceMonitor.new()
-        monitor.add_filter("Audio/Source", None)
-        monitor.start()
-        for dev in monitor.get_devices():
-            props = dev.get_properties()
-            device_path = props.get_string("device.path") if props else None
-            mics.append({"id": device_path or dev.get_display_name(), "name": dev.get_display_name()})
-        monitor.stop()
-    except Exception:
-        pass
-
-    if not mics:
-        # Fallback: check common ALSA devices
-        import subprocess, glob
-        try:
-            out = subprocess.check_output(["arecord", "-l"], stderr=subprocess.DEVNULL, timeout=2).decode()
-            for line in out.splitlines():
-                if line.startswith("card "):
-                    parts = line.split(":")
-                    if len(parts) >= 2:
-                        card_num = line.split()[1].rstrip(":")
-                        name = parts[1].strip().split("[")[0].strip()
-                        mics.append({"id": f"hw:{card_num}", "name": name})
-        except Exception:
-            pass
-
-    return mics
+# ---------------------------------------------------------------------------
+# HTTP routes
+# ---------------------------------------------------------------------------
 
 
 @app.get("/sounds")
@@ -224,37 +237,60 @@ async def list_microphones():
     return JSONResponse(content=_list_microphones())
 
 
+@app.get("/speakers")
+async def list_speakers():
+    return JSONResponse(content=_list_speakers())
+
+
 @app.post("/play/{filename}")
 async def play_sound(filename: str):
     """Play a wav file from ./assets on the device speaker via GStreamer."""
+    global _current_speaker
     filepath = _assets_dir / filename
     if not filepath.exists() or not filename.endswith(".wav"):
         return JSONResponse(content={"error": "not found"}, status_code=404)
 
-    # Play asynchronously — fire and forget
-    desc = f'filesrc location="{filepath}" ! wavparse ! audioconvert ! audioresample ! autoaudiosink'
+    if _current_speaker:
+        sink = f'alsasink device="{_current_speaker}"'
+    else:
+        # Try to find a speaker automatically.
+        speakers = _list_speakers()
+        if speakers:
+            sink = f'alsasink device="{speakers[0]["id"]}"'
+        else:
+            sink = "autoaudiosink"
+
+    desc = f'filesrc location="{filepath}" ! wavparse ! audioconvert ! audioresample ! {sink}'
     try:
         pipeline = Gst.parse_launch(desc)
         pipeline.set_state(Gst.State.PLAYING)
 
-        # Clean up when done (watch for EOS or ERROR on the bus)
         def _watch_bus():
             bus = pipeline.get_bus()
-            while True:
-                msg = bus.timed_pop_filtered(
-                    Gst.CLOCK_TIME_NONE,
-                    Gst.MessageType.EOS | Gst.MessageType.ERROR,
-                )
-                if msg:
-                    break
+            msg = bus.timed_pop_filtered(
+                30 * Gst.SECOND,
+                Gst.MessageType.EOS | Gst.MessageType.ERROR,
+            )
+            if msg and msg.type == Gst.MessageType.ERROR:
+                err, debug = msg.parse_error()
+                logger.error("Playback error: %s (%s)", err.message, debug)
             pipeline.set_state(Gst.State.NULL)
 
         threading.Thread(target=_watch_bus, daemon=True).start()
-        logger.info("Playing %s on device speaker", filename)
+        logger.info("Playing %s via %s", filename, sink)
         return JSONResponse(content={"status": "playing", "file": filename})
     except Exception as e:
         logger.error("Failed to play %s: %s", filename, e)
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.post("/speaker/{device_id:path}")
+async def set_speaker(device_id: str):
+    """Set the active speaker device for playback."""
+    global _current_speaker
+    _current_speaker = device_id
+    logger.info("Speaker set to %s", device_id)
+    return JSONResponse(content={"status": "ok", "speaker": device_id})
 
 
 @app.websocket("/stream")
@@ -284,8 +320,6 @@ async def websocket_stream(websocket: WebSocket):
                         await audio.switch_microphone(msg["switch_microphone"])
                     except Exception as e:
                         logger.error(f"Microphone switch failed: {e}")
-                elif "play" in msg:
-                    logger.info("Client requested playback: %s", msg["play"])
         except WebSocketDisconnect:
             pass
         except Exception:
@@ -313,6 +347,8 @@ async def debug_info():
         "mode": "pcm-s16le-ws",
         "pipeline_state": audio.pipeline.get_state(0)[1].value_nick if audio.pipeline else None,
         "num_clients": len(audio.queues),
+        "microphones": _list_microphones(),
+        "speakers": _list_speakers(),
         "sounds": _list_sounds(),
     })
 

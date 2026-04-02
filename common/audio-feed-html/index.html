@@ -19,16 +19,28 @@
           <span id="status-text" class="text-xs font-medium uppercase tracking-wider drop-shadow-md">Connecting...</span>
         </div>
       </div>
-      <div class="flex flex-col items-end gap-2 pointer-events-auto">
+      <div class="flex flex-col items-end gap-3 pointer-events-auto">
         <a href="https://wendy.sh" target="_blank" rel="noopener noreferrer">
           <img src="/assets/wendy-logo.svg" alt="Wendy" class="h-8 w-auto drop-shadow-lg opacity-80 hover:opacity-100 transition-opacity" />
         </a>
-        <select
-          id="mic-select"
-          class="bg-black/40 hover:bg-black/60 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm border border-white/10 outline-none cursor-pointer appearance-none min-w-[160px]"
-        >
-          <option value="">Loading microphones...</option>
-        </select>
+        <div class="flex flex-col gap-1">
+          <label class="text-[10px] uppercase tracking-wider text-white/50">Microphone</label>
+          <select
+            id="mic-select"
+            class="bg-black/40 hover:bg-black/60 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm border border-white/10 outline-none cursor-pointer appearance-none min-w-[180px]"
+          >
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-[10px] uppercase tracking-wider text-white/50">Speaker</label>
+          <select
+            id="speaker-select"
+            class="bg-black/40 hover:bg-black/60 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm border border-white/10 outline-none cursor-pointer appearance-none min-w-[180px]"
+          >
+            <option value="">Loading...</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -46,6 +58,7 @@
       const statusText = document.getElementById("status-text");
       const audioButtons = document.getElementById("audio-buttons");
       const micSelect = document.getElementById("mic-select");
+      const speakerSelect = document.getElementById("speaker-select");
 
       let ws = null;
       let reconnectDelay = 2000;
@@ -184,7 +197,39 @@
         }
       });
 
+      // -- Load speakers --------------------------------------------------------
+      async function loadSpeakers() {
+        try {
+          const res = await fetch("/speakers");
+          const speakers = await res.json();
+          speakerSelect.innerHTML = "";
+          if (!speakers.length) {
+            speakerSelect.innerHTML = '<option>No speakers</option>';
+            return;
+          }
+          speakers.forEach((s, i) => {
+            const o = document.createElement("option");
+            o.value = s.id;
+            o.textContent = s.name || `Speaker ${i}`;
+            speakerSelect.appendChild(o);
+          });
+          // Auto-select first speaker on server
+          if (speakers.length) {
+            fetch(`/speaker/${speakers[0].id}`, { method: "POST" });
+          }
+        } catch {
+          speakerSelect.innerHTML = '<option>Failed to load</option>';
+        }
+      }
+
+      speakerSelect.addEventListener("change", () => {
+        if (speakerSelect.value) {
+          fetch(`/speaker/${speakerSelect.value}`, { method: "POST" });
+        }
+      });
+
       loadMicrophones();
+      loadSpeakers();
       loadSounds();
       connect();
     </script>

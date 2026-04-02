@@ -34,13 +34,25 @@ Each template includes:
 - `Dockerfile` — containerized deployment
 - Application source code
 
-### common (planned)
+### fullstack
 
-Shared frontend templates that pair with any backend:
+Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage Dockerfile builds the React frontend then serves it alongside a CRUD API for cars.
 
-- `shadcn-react-typescript-frontend/`
-- `raw-camera-feed-html/`
-- `raw-audio-feed-html/`
+### camera-feed
+
+Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), video, gpu.
+
+### audio
+
+Live audio waveform visualization with GStreamer mic capture. Streams raw PCM S16LE 16kHz mono over WebSocket. Includes sample .wav files for playback. Entitlements: network (host), audio.
+
+### common
+
+Shared building blocks (not selectable as templates):
+
+- `shadcn-vite-frontend/` — Vite + React + shadcn/ui dashboard
+- `camera-feed-html/` — Webcam viewer HTML page
+- `audio-feed-html/` — Audio waveform visualizer HTML page
 
 ---
 
@@ -150,3 +162,9 @@ app.use(cors());
 - Test your templates by running `wendy init --template {name} --language {lang}` locally
 - Avoid complex logic in templates — conditionals are supported but keep them minimal
 - Use sensible defaults so non-interactive mode works out of the box
+
+---
+
+## Acknowledgements
+
+Sample `.wav` audio files in the audio template are from [pdx-cs-sound/wavs](https://github.com/pdx-cs-sound/wavs). Thanks to the Portland State University CS Sound group for making these available.

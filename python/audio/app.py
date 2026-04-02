@@ -59,15 +59,20 @@ class AudioCapture:
         self.pipeline = None
         self.queues: dict[WebSocket, asyncio.Queue] = {}
         self._lock = threading.Lock()
+        self._current_device: str | None = None
         self._loop = None
 
     def _start_pipeline(self) -> Gst.Pipeline | None:
         appsink = "appsink name=sink emit-signals=true max-buffers=4 drop=true sync=false"
         pcm_caps = "audio/x-raw,format=S16LE,channels=1,rate=16000"
-        pipelines = [
-            f"autoaudiosrc ! audioconvert ! {pcm_caps} ! {appsink}",
-            f"alsasrc ! audioconvert ! {pcm_caps} ! {appsink}",
-        ]
+        if self._current_device:
+            src = f'alsasrc device="{self._current_device}"'
+            pipelines = [f"{src} ! audioconvert ! {pcm_caps} ! {appsink}"]
+        else:
+            pipelines = [
+                f"autoaudiosrc ! audioconvert ! {pcm_caps} ! {appsink}",
+                f"alsasrc ! audioconvert ! {pcm_caps} ! {appsink}",
+            ]
 
         for p_str in pipelines:
             try:
@@ -141,6 +146,21 @@ class AudioCapture:
                 logger.info("Audio capture stopped (no clients)")
         logger.info("Client removed (total: %d)", len(self.queues))
 
+    async def switch_microphone(self, device_id: str):
+        with self._lock:
+            if self.pipeline:
+                self.pipeline.set_state(Gst.State.NULL)
+                self.pipeline = None
+                self._sample_count = 0
+            self._current_device = device_id
+            self.pipeline = self._start_pipeline()
+            if not self.pipeline:
+                raise RuntimeError(f"Could not start microphone {device_id}")
+            sink = self.pipeline.get_by_name("sink")
+            sink.connect("new-sample", self._on_new_sample)
+            self.pipeline.set_state(Gst.State.PLAYING)
+        logger.info("Switched to microphone %s", device_id)
+
 
 audio = AudioCapture()
 
@@ -154,9 +174,47 @@ def _list_sounds() -> list[dict]:
     return sounds
 
 
+def _list_microphones() -> list[dict]:
+    """Return available audio input devices."""
+    mics: list[dict] = []
+    try:
+        monitor = Gst.DeviceMonitor.new()
+        monitor.add_filter("Audio/Source", None)
+        monitor.start()
+        for dev in monitor.get_devices():
+            props = dev.get_properties()
+            device_path = props.get_string("device.path") if props else None
+            mics.append({"id": device_path or dev.get_display_name(), "name": dev.get_display_name()})
+        monitor.stop()
+    except Exception:
+        pass
+
+    if not mics:
+        # Fallback: check common ALSA devices
+        import subprocess, glob
+        try:
+            out = subprocess.check_output(["arecord", "-l"], stderr=subprocess.DEVNULL, timeout=2).decode()
+            for line in out.splitlines():
+                if line.startswith("card "):
+                    parts = line.split(":")
+                    if len(parts) >= 2:
+                        card_num = line.split()[1].rstrip(":")
+                        name = parts[1].strip().split("[")[0].strip()
+                        mics.append({"id": f"hw:{card_num}", "name": name})
+        except Exception:
+            pass
+
+    return mics
+
+
 @app.get("/sounds")
 async def list_sounds():
     return JSONResponse(content=_list_sounds())
+
+
+@app.get("/microphones")
+async def list_microphones():
+    return JSONResponse(content=_list_microphones())
 
 
 @app.websocket("/stream")
@@ -181,7 +239,12 @@ async def websocket_stream(websocket: WebSocket):
         try:
             while True:
                 msg = json.loads(await websocket.receive_text())
-                if "play" in msg:
+                if "switch_microphone" in msg:
+                    try:
+                        await audio.switch_microphone(msg["switch_microphone"])
+                    except Exception as e:
+                        logger.error(f"Microphone switch failed: {e}")
+                elif "play" in msg:
                     logger.info("Client requested playback: %s", msg["play"])
         except WebSocketDisconnect:
             pass

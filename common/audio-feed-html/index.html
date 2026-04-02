@@ -19,9 +19,17 @@
           <span id="status-text" class="text-xs font-medium uppercase tracking-wider drop-shadow-md">Connecting...</span>
         </div>
       </div>
-      <a href="https://wendy.sh" target="_blank" rel="noopener noreferrer" class="pointer-events-auto">
-        <img src="/assets/wendy-logo.svg" alt="Wendy" class="h-8 w-auto drop-shadow-lg opacity-80 hover:opacity-100 transition-opacity" />
-      </a>
+      <div class="flex flex-col items-end gap-2 pointer-events-auto">
+        <a href="https://wendy.sh" target="_blank" rel="noopener noreferrer">
+          <img src="/assets/wendy-logo.svg" alt="Wendy" class="h-8 w-auto drop-shadow-lg opacity-80 hover:opacity-100 transition-opacity" />
+        </a>
+        <select
+          id="mic-select"
+          class="bg-black/40 hover:bg-black/60 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm border border-white/10 outline-none cursor-pointer appearance-none min-w-[160px]"
+        >
+          <option value="">Loading microphones...</option>
+        </select>
+      </div>
     </div>
 
     <!-- Bottom bar: audio file buttons -->
@@ -37,6 +45,7 @@
       const statusDot = document.getElementById("status-dot");
       const statusText = document.getElementById("status-text");
       const audioButtons = document.getElementById("audio-buttons");
+      const micSelect = document.getElementById("mic-select");
 
       let ws = null;
       let reconnectDelay = 2000;
@@ -148,6 +157,35 @@
         }
       }
 
+      // -- Load microphone list -------------------------------------------------
+      async function loadMicrophones() {
+        try {
+          const res = await fetch("/microphones");
+          const mics = await res.json();
+          micSelect.innerHTML = "";
+          if (!mics.length) {
+            micSelect.innerHTML = '<option>No microphones</option>';
+            return;
+          }
+          mics.forEach((m, i) => {
+            const o = document.createElement("option");
+            o.value = m.id;
+            o.textContent = m.name || `Microphone ${i}`;
+            micSelect.appendChild(o);
+          });
+        } catch {
+          micSelect.innerHTML = '<option>Failed to load</option>';
+        }
+      }
+
+      micSelect.addEventListener("change", () => {
+        if (micSelect.value && ws?.readyState === WebSocket.OPEN) {
+          setStatus("Switching...", "yellow");
+          ws.send(JSON.stringify({ switch_microphone: micSelect.value }));
+        }
+      });
+
+      loadMicrophones();
       loadSounds();
       connect();
     </script>

@@ -1,13 +1,43 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
+
+interface Device { id: string; name: string }
 
 export default function AudioPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const wsRef = useRef<WebSocket | null>(null)
   const [status, setStatus] = useState<"connecting" | "live" | "error">("connecting")
   const audioDataRef = useRef(new Float32Array(0))
+  const [microphones, setMicrophones] = useState<Device[]>([])
+  const [selectedMic, setSelectedMic] = useState<string>("")
+
+  const fetchMics = useCallback(() => {
+    fetch("/api/microphones")
+      .then((r) => r.json())
+      .then((list: Device[]) => {
+        setMicrophones(list)
+        if (!selectedMic && list.length > 0) setSelectedMic(list[0].id)
+      })
+      .catch(() => {})
+  }, [selectedMic])
+
+  // Poll for mic changes every 3s
+  useEffect(() => {
+    fetchMics()
+    const id = setInterval(fetchMics, 3000)
+    return () => clearInterval(id)
+  }, [fetchMics])
+
+  // Switch mic via WS
+  useEffect(() => {
+    if (selectedMic && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ switch_microphone: selectedMic }))
+    }
+  }, [selectedMic])
 
   useEffect(() => {
-    let ws: WebSocket | null = null
     let animId: number
 
     function draw() {
@@ -44,8 +74,9 @@ export default function AudioPage() {
 
     function connect() {
       const proto = location.protocol === "https:" ? "wss:" : "ws:"
-      ws = new WebSocket(`${proto}//${location.host}/api/audio/stream`)
+      const ws = new WebSocket(`${proto}//${location.host}/api/audio/stream`)
       ws.binaryType = "arraybuffer"
+      wsRef.current = ws
 
       ws.onopen = () => setStatus("live")
       ws.onmessage = (e) => {
@@ -67,41 +98,48 @@ export default function AudioPage() {
     connect()
     return () => {
       cancelAnimationFrame(animId)
-      ws?.close()
+      wsRef.current?.close()
     }
   }, [])
 
   return (
     <div className="flex flex-col gap-4 p-4 md:gap-6 md:p-6">
-      <h1 className="text-2xl font-bold tracking-tight">Audio</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold tracking-tight">Audio</h1>
+        {microphones.length > 0 && (
+          <div className="flex items-center gap-2">
+            <Label className="text-sm text-muted-foreground">Microphone</Label>
+            <Select value={selectedMic} onValueChange={(v) => v && setSelectedMic(v)}>
+              <SelectTrigger className="w-[260px]">
+                <SelectValue placeholder="Select microphone" />
+              </SelectTrigger>
+              <SelectContent>
+                {microphones.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-2">
           <CardTitle className="text-sm font-medium">Microphone Waveform</CardTitle>
           <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                status === "live"
-                  ? "bg-green-500"
-                  : status === "error"
-                    ? "bg-red-500"
-                    : "bg-yellow-500"
-              }`}
-            />
+            <span className={`h-2 w-2 rounded-full ${status === "live" ? "bg-green-500" : status === "error" ? "bg-red-500" : "bg-yellow-500"}`} />
             {status === "live" ? "Live" : status === "error" ? "Error" : "Connecting..."}
           </span>
         </CardHeader>
         <CardContent>
-          <canvas
-            ref={canvasRef}
-            className="h-48 w-full rounded-lg"
-            style={{ background: "black" }}
-          />
+          {microphones.length === 0 ? (
+            <div className="flex h-48 items-center justify-center rounded-lg bg-black text-sm text-muted-foreground">
+              No microphones detected. Plug in a USB audio device.
+            </div>
+          ) : (
+            <canvas ref={canvasRef} className="h-48 w-full rounded-lg" style={{ background: "black" }} />
+          )}
         </CardContent>
       </Card>
-      <p className="text-sm text-muted-foreground">
-        Connect a USB microphone. The waveform streams PCM S16LE 16kHz mono via WebSocket.
-        Add a <code className="rounded bg-muted px-1 py-0.5">/api/audio/stream</code> WebSocket endpoint to your backend.
-      </p>
     </div>
   )
 }

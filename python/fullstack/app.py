@@ -120,6 +120,59 @@ def delete_car(car_id: int):
 
 
 # ---------------------------------------------------------------------------
+# Device enumeration helpers
+# ---------------------------------------------------------------------------
+
+
+def _v4l2_device_name(path: str) -> str:
+    try:
+        out = subprocess.check_output(
+            ["v4l2-ctl", "--device", path, "--info"],
+            stderr=subprocess.DEVNULL, timeout=2,
+        ).decode()
+        for line in out.splitlines():
+            if "Card type" in line:
+                return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return Path(path).name
+
+
+def _v4l2_is_capture(path: str) -> bool:
+    try:
+        out = subprocess.check_output(
+            ["v4l2-ctl", "--device", path, "--all"],
+            stderr=subprocess.DEVNULL, timeout=2,
+        ).decode()
+        return "Video Capture" in out
+    except Exception:
+        return False
+
+
+def _list_cameras() -> list[dict]:
+    cameras = []
+    for path in sorted(glob.glob("/dev/video*")):
+        if _v4l2_is_capture(path):
+            cameras.append({"id": path, "name": _v4l2_device_name(path)})
+    return cameras
+
+
+@app.get("/api/cameras")
+def list_cameras_endpoint():
+    return _list_cameras()
+
+
+@app.get("/api/microphones")
+def list_microphones_endpoint():
+    return _list_alsa_devices("arecord -l")
+
+
+@app.get("/api/speakers")
+def list_speakers_endpoint():
+    return _list_alsa_devices("aplay -l")
+
+
+# ---------------------------------------------------------------------------
 # Camera — MJPEG over WebSocket
 # ---------------------------------------------------------------------------
 
@@ -128,14 +181,20 @@ class MJPEGCamera:
         self.pipeline = None
         self.queues: dict[WebSocket, asyncio.Queue] = {}
         self._lock = threading.Lock()
+        self._current_device: str | None = None
 
-    def _start_pipeline(self):
+    def _start_pipeline(self) -> Gst.Pipeline | None:
         appsink = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
-        for desc in [
-            f"v4l2src ! image/jpeg ! {appsink}",
-            f"v4l2src ! image/jpeg,width=640,height=480 ! {appsink}",
-            f"v4l2src ! videoconvert ! jpegenc quality=70 ! {appsink}",
-        ]:
+        if self._current_device:
+            src = f"v4l2src device={self._current_device}"
+        else:
+            src = "v4l2src"
+        pipelines = [
+            f"{src} ! image/jpeg ! {appsink}",
+            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
+            f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
+        ]
+        for desc in pipelines:
             try:
                 p = Gst.parse_launch(desc)
                 ret = p.set_state(Gst.State.PAUSED)
@@ -145,6 +204,7 @@ class MJPEGCamera:
                     r, _, _ = p.get_state(5 * Gst.SECOND)
                     if r == Gst.StateChangeReturn.FAILURE:
                         p.set_state(Gst.State.NULL); continue
+                logger.info("Camera pipeline ready: %s", desc)
                 return p
             except Exception:
                 continue
@@ -182,6 +242,19 @@ class MJPEGCamera:
                 self.pipeline.set_state(Gst.State.NULL)
                 self.pipeline = None
 
+    def switch_device(self, device: str):
+        with self._lock:
+            if self.pipeline:
+                self.pipeline.set_state(Gst.State.NULL)
+                self.pipeline = None
+            self._current_device = device
+            if self.queues:
+                self.pipeline = self._start_pipeline()
+                if self.pipeline:
+                    self.pipeline.get_by_name("sink").connect("new-sample", self._on_new_sample)
+                    self.pipeline.set_state(Gst.State.PLAYING)
+        logger.info("Camera switched to %s", device)
+
 camera = MJPEGCamera()
 
 
@@ -192,11 +265,30 @@ async def camera_stream(ws: WebSocket):
         q = await camera.add_client(ws)
     except Exception:
         await ws.close(1011); return
+
+    async def send():
+        try:
+            while True:
+                await ws.send_bytes(await q.get())
+        except Exception:
+            pass
+
+    async def recv():
+        try:
+            while True:
+                msg = json.loads(await ws.receive_text())
+                if "switch_camera" in msg:
+                    camera.switch_device(msg["switch_camera"])
+        except Exception:
+            pass
+
     try:
-        while True:
-            await ws.send_bytes(await q.get())
-    except Exception:
-        pass
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(send()), asyncio.create_task(recv())],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
     finally:
         camera.remove_client(ws)
 
@@ -226,14 +318,18 @@ class AudioCapture:
         self.pipeline = None
         self.queues: dict[WebSocket, asyncio.Queue] = {}
         self._lock = threading.Lock()
+        self._current_device: str | None = None
 
     def _start_pipeline(self):
         appsink = "appsink name=sink emit-signals=true max-buffers=4 drop=true sync=false"
         pcm = "audio/x-raw,format=S16LE,channels=1,rate=16000"
         pipelines = []
-        for mic in _list_alsa_devices("arecord -l"):
-            pipelines.append(f'alsasrc device="{mic["id"]}" ! audioconvert ! audioresample ! {pcm} ! {appsink}')
-        pipelines.append(f"alsasrc ! audioconvert ! audioresample ! {pcm} ! {appsink}")
+        if self._current_device:
+            pipelines.append(f'alsasrc device="{self._current_device}" ! audioconvert ! audioresample ! {pcm} ! {appsink}')
+        else:
+            for mic in _list_alsa_devices("arecord -l"):
+                pipelines.append(f'alsasrc device="{mic["id"]}" ! audioconvert ! audioresample ! {pcm} ! {appsink}')
+            pipelines.append(f"alsasrc ! audioconvert ! audioresample ! {pcm} ! {appsink}")
 
         for desc in pipelines:
             try:
@@ -283,6 +379,19 @@ class AudioCapture:
                 self.pipeline.set_state(Gst.State.NULL)
                 self.pipeline = None
 
+    def switch_device(self, device: str):
+        with self._lock:
+            if self.pipeline:
+                self.pipeline.set_state(Gst.State.NULL)
+                self.pipeline = None
+            self._current_device = device
+            if self.queues:
+                self.pipeline = self._start_pipeline()
+                if self.pipeline:
+                    self.pipeline.get_by_name("sink").connect("new-sample", self._on_new_sample)
+                    self.pipeline.set_state(Gst.State.PLAYING)
+        logger.info("Microphone switched to %s", device)
+
 audio_capture = AudioCapture()
 
 
@@ -293,11 +402,30 @@ async def audio_stream(ws: WebSocket):
         q = await audio_capture.add_client(ws)
     except Exception:
         await ws.close(1011); return
+
+    async def send():
+        try:
+            while True:
+                await ws.send_bytes(await q.get())
+        except Exception:
+            pass
+
+    async def recv():
+        try:
+            while True:
+                msg = json.loads(await ws.receive_text())
+                if "switch_microphone" in msg:
+                    audio_capture.switch_device(msg["switch_microphone"])
+        except Exception:
+            pass
+
     try:
-        while True:
-            await ws.send_bytes(await q.get())
-    except Exception:
-        pass
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(send()), asyncio.create_task(recv())],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
     finally:
         audio_capture.remove_client(ws)
 

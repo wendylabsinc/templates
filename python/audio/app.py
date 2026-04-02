@@ -69,10 +69,17 @@ class AudioCapture:
             src = f'alsasrc device="{self._current_device}"'
             pipelines = [f"{src} ! audioconvert ! {pcm_caps} ! {appsink}"]
         else:
+            # Try multiple sources — autoaudiosrc, then alsasrc with
+            # specific hw devices found on the system.
             pipelines = [
                 f"autoaudiosrc ! audioconvert ! {pcm_caps} ! {appsink}",
                 f"alsasrc ! audioconvert ! {pcm_caps} ! {appsink}",
             ]
+            # Also try each ALSA capture device directly.
+            for mic in _list_microphones():
+                dev = mic.get("id", "")
+                if dev.startswith("hw:"):
+                    pipelines.append(f'alsasrc device="{dev}" ! audioconvert ! {pcm_caps} ! {appsink}')
 
         for p_str in pipelines:
             try:
@@ -215,6 +222,39 @@ async def list_sounds():
 @app.get("/microphones")
 async def list_microphones():
     return JSONResponse(content=_list_microphones())
+
+
+@app.post("/play/{filename}")
+async def play_sound(filename: str):
+    """Play a wav file from ./assets on the device speaker via GStreamer."""
+    filepath = _assets_dir / filename
+    if not filepath.exists() or not filename.endswith(".wav"):
+        return JSONResponse(content={"error": "not found"}, status_code=404)
+
+    # Play asynchronously — fire and forget
+    desc = f'filesrc location="{filepath}" ! wavparse ! audioconvert ! audioresample ! autoaudiosink'
+    try:
+        pipeline = Gst.parse_launch(desc)
+        pipeline.set_state(Gst.State.PLAYING)
+
+        # Clean up when done (watch for EOS or ERROR on the bus)
+        def _watch_bus():
+            bus = pipeline.get_bus()
+            while True:
+                msg = bus.timed_pop_filtered(
+                    Gst.CLOCK_TIME_NONE,
+                    Gst.MessageType.EOS | Gst.MessageType.ERROR,
+                )
+                if msg:
+                    break
+            pipeline.set_state(Gst.State.NULL)
+
+        threading.Thread(target=_watch_bus, daemon=True).start()
+        logger.info("Playing %s on device speaker", filename)
+        return JSONResponse(content={"status": "playing", "file": filename})
+    except Exception as e:
+        logger.error("Failed to play %s: %s", filename, e)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @app.websocket("/stream")

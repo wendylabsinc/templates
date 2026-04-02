@@ -25,13 +25,20 @@ _assets_dir = _app_dir / "assets"
 if _assets_dir.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
 
-# GLib main loop — pumps GStreamer bus events including appsink signals.
+# ---------------------------------------------------------------------------
+# GLib main loop (runs in a daemon thread so GStreamer bus events are pumped)
+# ---------------------------------------------------------------------------
 _glib_loop = GLib.MainLoop()
 threading.Thread(target=_glib_loop.run, daemon=True).start()
 
 # ---------------------------------------------------------------------------
 # Camera helpers
 # ---------------------------------------------------------------------------
+
+PIPELINES = [
+    'v4l2src device={device} ! image/jpeg,framerate=30/1 ! appsink name=sink emit-signals=true sync=false',
+    'v4l2src device={device} ! videoconvert ! jpegenc ! appsink name=sink emit-signals=true sync=false',
+]
 
 
 def _v4l2_device_name(path: str) -> str:
@@ -82,105 +89,59 @@ def list_cameras() -> list[dict]:
     return cameras
 
 
-def _build_source(device: str) -> str:
-    return f"v4l2src device={device}"
+class CameraStream:
+    """Wraps a GStreamer pipeline that pulls MJPEG frames from a camera."""
 
-
-class MJPEGCamera:
-    """Shared camera singleton. Uses the emit-signals callback model
-    (same as the proven 30fps wendy sample) with multiple client queues.
-    """
-
-    def __init__(self):
+    def __init__(self, device: str = "/dev/video0"):
+        self.device = device
         self.pipeline = None
-        self.queues: dict[int, asyncio.Queue] = {}
-        self._lock = threading.Lock()
-        self._current_device: str = "/dev/video0"
-        self._client_id = 0
+        self.appsink = None
+        self._start()
 
-    def _start_pipeline(self) -> Gst.Pipeline | None:
-        src = _build_source(self._current_device)
-        appsink = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
-        pipelines = [
-            f"{src} ! image/jpeg ! {appsink}",
-            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
-            f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
-        ]
-
-        for desc in pipelines:
+    def _start(self):
+        for tmpl in PIPELINES:
+            desc = tmpl.format(device=self.device)
             try:
                 pipeline = Gst.parse_launch(desc)
-                ret = pipeline.set_state(Gst.State.PAUSED)
-                if ret == Gst.StateChangeReturn.FAILURE:
-                    pipeline.set_state(Gst.State.NULL)
-                    continue
-                if ret == Gst.StateChangeReturn.ASYNC:
-                    ret, _, _ = pipeline.get_state(5 * Gst.SECOND)
-                    if ret == Gst.StateChangeReturn.FAILURE:
-                        pipeline.set_state(Gst.State.NULL)
-                        continue
-                return pipeline
-            except Exception:
+            except GLib.Error:
                 continue
-        return None
+            sink = pipeline.get_by_name("sink")
+            pipeline.set_state(Gst.State.PLAYING)
+            ret = pipeline.get_state(2 * Gst.SECOND)
+            if ret[0] == Gst.StateChangeReturn.FAILURE:
+                pipeline.set_state(Gst.State.NULL)
+                continue
+            self.pipeline = pipeline
+            self.appsink = sink
+            return
+        raise RuntimeError(
+            f"Could not open camera {self.device} with any known pipeline"
+        )
 
-    def _on_new_sample(self, sink):
-        sample = sink.emit("pull-sample")
-        if not sample:
-            return Gst.FlowReturn.OK
+    def stop(self):
+        if self.pipeline:
+            self.pipeline.set_state(Gst.State.NULL)
+            self.pipeline = None
+            self.appsink = None
+
+    def switch(self, device: str):
+        self.stop()
+        self.device = device
+        self._start()
+
+    def pull_frame(self) -> bytes | None:
+        if self.appsink is None:
+            return None
+        sample = self.appsink.try_pull_sample(Gst.SECOND)
+        if sample is None:
+            return None
         buf = sample.get_buffer()
         ok, mapinfo = buf.map(Gst.MapFlags.READ)
         if not ok:
-            return Gst.FlowReturn.OK
+            return None
         data = bytes(mapinfo.data)
         buf.unmap(mapinfo)
-
-        with self._lock:
-            for q in self.queues.values():
-                try:
-                    q.put_nowait(data)
-                except asyncio.QueueFull:
-                    pass
-
-        return Gst.FlowReturn.OK
-
-    def add_client(self) -> tuple[int, asyncio.Queue]:
-        q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2)
-        with self._lock:
-            if not self.pipeline:
-                self.pipeline = self._start_pipeline()
-                if not self.pipeline:
-                    raise RuntimeError("Could not start camera pipeline")
-                sink = self.pipeline.get_by_name("sink")
-                sink.connect("new-sample", self._on_new_sample)
-                self.pipeline.set_state(Gst.State.PLAYING)
-            self._client_id += 1
-            cid = self._client_id
-            self.queues[cid] = q
-        return cid, q
-
-    def remove_client(self, cid: int):
-        with self._lock:
-            self.queues.pop(cid, None)
-            if not self.queues and self.pipeline:
-                self.pipeline.set_state(Gst.State.NULL)
-                self.pipeline = None
-
-    def switch_camera(self, device: str):
-        with self._lock:
-            if self.pipeline:
-                self.pipeline.set_state(Gst.State.NULL)
-                self.pipeline = None
-            self._current_device = device
-            if self.queues:
-                self.pipeline = self._start_pipeline()
-                if self.pipeline:
-                    sink = self.pipeline.get_by_name("sink")
-                    sink.connect("new-sample", self._on_new_sample)
-                    self.pipeline.set_state(Gst.State.PLAYING)
-
-
-camera = MJPEGCamera()
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +156,7 @@ async def index():
 
 
 @app.get("/cameras")
-async def cameras_endpoint():
+async def cameras():
     return list_cameras()
 
 
@@ -203,45 +164,72 @@ async def cameras_endpoint():
 # WebSocket streaming
 # ---------------------------------------------------------------------------
 
+MAX_QUEUE = 2
+
 
 @app.websocket("/stream")
 async def stream(ws: WebSocket):
     await ws.accept()
 
-    try:
-        cid, queue = camera.add_client()
-    except RuntimeError as exc:
-        await ws.close(code=1011, reason=str(exc))
-        return
+    camera = CameraStream()
+    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=MAX_QUEUE)
+    stop_event = asyncio.Event()
 
-    async def _send_frames():
-        try:
-            while True:
-                data = await queue.get()
-                await ws.send_bytes(data)
-        except Exception:
-            pass
+    async def _producer():
+        loop = asyncio.get_event_loop()
+        while not stop_event.is_set():
+            frame = await loop.run_in_executor(None, camera.pull_frame)
+            if frame is None:
+                await asyncio.sleep(0.01)
+                continue
+            try:
+                queue.put_nowait(frame)
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+                try:
+                    queue.put_nowait(frame)
+                except asyncio.QueueFull:
+                    pass
 
-    async def _recv_commands():
+    async def _consumer():
         try:
-            while True:
-                msg = json.loads(await ws.receive_text())
-                if "switch_camera" in msg:
-                    camera.switch_camera(msg["switch_camera"])
+            while not stop_event.is_set():
+                frame = await queue.get()
+                await ws.send_bytes(frame)
         except WebSocketDisconnect:
             pass
-        except Exception:
+
+    async def _receiver():
+        try:
+            while not stop_event.is_set():
+                raw = await ws.receive_text()
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if "switch_camera" in msg:
+                    camera.switch(msg["switch_camera"])
+        except WebSocketDisconnect:
             pass
+
+    producer = asyncio.create_task(_producer())
+    consumer = asyncio.create_task(_consumer())
+    receiver = asyncio.create_task(_receiver())
 
     try:
         done, pending = await asyncio.wait(
-            [asyncio.create_task(_send_frames()), asyncio.create_task(_recv_commands())],
+            [producer, consumer, receiver],
             return_when=asyncio.FIRST_COMPLETED,
         )
-        for t in pending:
-            t.cancel()
     finally:
-        camera.remove_client(cid)
+        stop_event.set()
+        producer.cancel()
+        consumer.cancel()
+        receiver.cancel()
+        camera.stop()
 
 
 # ---------------------------------------------------------------------------

@@ -32,8 +32,10 @@ app = FastAPI()
 _static_dir = Path(__file__).parent / "static"
 
 # ---------------------------------------------------------------------------
-# Cars CRUD (in-memory)
+# Cars CRUD (SQLite — persisted at /data/cars.db)
 # ---------------------------------------------------------------------------
+
+import sqlite3
 
 class CarInput(BaseModel):
     make: str
@@ -41,54 +43,80 @@ class CarInput(BaseModel):
     color: str
     year: int
 
-_cars: list[dict] = []
-_next_car_id = 1
-_car_lock = Lock()
+_DB_PATH = Path("/data/cars.db")
+
+
+def _get_db() -> sqlite3.Connection:
+    _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS cars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            make TEXT NOT NULL,
+            model TEXT NOT NULL,
+            color TEXT NOT NULL,
+            year INTEGER NOT NULL
+        )
+    """)
+    conn.commit()
+    return conn
 
 
 @app.get("/api/cars")
 def list_cars():
-    with _car_lock:
-        return list(_cars)
+    db = _get_db()
+    rows = db.execute("SELECT * FROM cars ORDER BY id").fetchall()
+    db.close()
+    return [dict(r) for r in rows]
 
 
 @app.post("/api/cars", status_code=201)
 def create_car(car: CarInput):
-    global _next_car_id
-    with _car_lock:
-        new = {"id": _next_car_id, **car.model_dump()}
-        _next_car_id += 1
-        _cars.append(new)
-    return new
+    db = _get_db()
+    cur = db.execute(
+        "INSERT INTO cars (make, model, color, year) VALUES (?, ?, ?, ?)",
+        (car.make, car.model, car.color, car.year),
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM cars WHERE id = ?", (cur.lastrowid,)).fetchone()
+    db.close()
+    return dict(row)
 
 
 @app.get("/api/cars/{car_id}")
 def get_car(car_id: int):
-    with _car_lock:
-        for c in _cars:
-            if c["id"] == car_id:
-                return c
-    raise HTTPException(404, "Car not found")
+    db = _get_db()
+    row = db.execute("SELECT * FROM cars WHERE id = ?", (car_id,)).fetchone()
+    db.close()
+    if not row:
+        raise HTTPException(404, "Car not found")
+    return dict(row)
 
 
 @app.put("/api/cars/{car_id}")
 def update_car(car_id: int, car: CarInput):
-    with _car_lock:
-        for i, c in enumerate(_cars):
-            if c["id"] == car_id:
-                _cars[i] = {"id": car_id, **car.model_dump()}
-                return _cars[i]
-    raise HTTPException(404, "Car not found")
+    db = _get_db()
+    db.execute(
+        "UPDATE cars SET make=?, model=?, color=?, year=? WHERE id=?",
+        (car.make, car.model, car.color, car.year, car_id),
+    )
+    db.commit()
+    row = db.execute("SELECT * FROM cars WHERE id = ?", (car_id,)).fetchone()
+    db.close()
+    if not row:
+        raise HTTPException(404, "Car not found")
+    return dict(row)
 
 
 @app.delete("/api/cars/{car_id}", status_code=204)
 def delete_car(car_id: int):
-    with _car_lock:
-        for i, c in enumerate(_cars):
-            if c["id"] == car_id:
-                _cars.pop(i)
-                return
-    raise HTTPException(404, "Car not found")
+    db = _get_db()
+    cur = db.execute("DELETE FROM cars WHERE id = ?", (car_id,))
+    db.commit()
+    db.close()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "Car not found")
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,22 @@
     "version": "0.1.0",
     "entitlements": [
         {
-            "type": "network"
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "video"
+        },
+        {
+            "type": "audio"
+        },
+        {
+            "type": "gpu"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-data",
+            "path": "/data"
         }
     ],
     "readiness": {

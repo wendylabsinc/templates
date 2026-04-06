@@ -10,9 +10,6 @@
             "type": "camera"
         },
         {
-            "type": "usb"
-        },
-        {
             "type": "gpu"
         }
     ],

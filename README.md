@@ -40,7 +40,7 @@ Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage
 
 ### camera-feed
 
-Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, usb, gpu.
+Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
 
 ### audio
 

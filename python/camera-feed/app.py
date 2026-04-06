@@ -29,6 +29,9 @@ _log_buffer = collections.deque(maxlen=200)
 _last_v4l_target_log: tuple[str, tuple[str, ...]] | None = None
 _last_camera_inventory_log: tuple[tuple[str, str], ...] | None = None
 _last_no_camera_log = False
+_SUPPRESSED_GLIB_MESSAGES = (
+    "gst_value_set_int_range_step: assertion 'end % step == 0' failed",
+)
 
 
 class _BufferHandler(logging.Handler):
@@ -42,6 +45,19 @@ _bh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(messag
 logging.getLogger().addHandler(_bh)
 logger = logging.getLogger(__name__)
 
+
+def _glib_log_writer(log_level, fields, user_data):
+    if log_level & GLib.LogLevelFlags.LEVEL_CRITICAL:
+        try:
+            message = GLib.log_writer_format_fields(log_level, fields, False)
+        except Exception:
+            message = None
+        if message and any(suppressed in message for suppressed in _SUPPRESSED_GLIB_MESSAGES):
+            return GLib.LogWriterOutput.HANDLED
+    return GLib.log_writer_default(log_level, fields, user_data)
+
+
+GLib.log_set_writer_func(_glib_log_writer, None)
 Gst.init(None)
 
 _glib_loop = GLib.MainLoop()
@@ -163,6 +179,10 @@ def _linux_candidate_video_nodes() -> list[str]:
     if symlink_nodes:
         return symlink_nodes
 
+    if any(directory.exists() for directory in V4L_SYMLINK_DIRS):
+        _log_v4l_targets_once("waiting-stable", [])
+        return []
+
     nodes = sorted(glob.glob("/dev/video*"), key=lambda p: (_v4l2_node_index(p), p))
     if not nodes:
         _log_v4l_targets_once("none", [])
@@ -193,6 +213,8 @@ def _log_v4l_targets_once(source: str, nodes: list[str]):
         logger.info("Falling back to raw USB V4L2 nodes: %s", ", ".join(nodes))
     elif source == "raw":
         logger.info("Falling back to raw V4L2 nodes: %s", ", ".join(nodes))
+    elif source == "waiting-stable":
+        logger.info("Waiting for stable V4L USB targets under /dev/v4l")
     else:
         logger.info("No raw V4L2 nodes available under /dev/video*")
 

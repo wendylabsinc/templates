@@ -7,7 +7,7 @@
             "mode": "host"
         },
         {
-            "type": "camera"
+            "type": "video"
         },
         {
             "type": "gpu"

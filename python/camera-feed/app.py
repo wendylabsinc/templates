@@ -11,6 +11,7 @@ import json
 import logging
 import platform
 import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -25,6 +26,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 _log_buffer = collections.deque(maxlen=200)
+_last_v4l_target_log: tuple[str, tuple[str, ...]] | None = None
+_last_camera_inventory_log: tuple[tuple[str, str], ...] | None = None
+_last_no_camera_log = False
 
 
 class _BufferHandler(logging.Handler):
@@ -32,7 +36,7 @@ class _BufferHandler(logging.Handler):
         _log_buffer.append(self.format(record))
 
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 _bh = _BufferHandler()
 _bh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
 logging.getLogger().addHandler(_bh)
@@ -135,7 +139,7 @@ def _linux_symlink_video_nodes() -> list[str]:
             if target.name.startswith("video"):
                 add(f"/dev/{target.name}")
     if nodes:
-        logger.info("Stable V4L USB targets via /dev/v4l/by-id: %s", ", ".join(nodes))
+        _log_v4l_targets_once("by-id", nodes)
         return nodes
 
     by_path = V4L_SYMLINK_DIRS[1]
@@ -150,7 +154,7 @@ def _linux_symlink_video_nodes() -> list[str]:
             if target.name.startswith("video"):
                 add(f"/dev/{target.name}")
     if nodes:
-        logger.info("Stable V4L USB targets via /dev/v4l/by-path: %s", ", ".join(nodes))
+        _log_v4l_targets_once("by-path", nodes)
     return nodes
 
 
@@ -161,16 +165,57 @@ def _linux_candidate_video_nodes() -> list[str]:
 
     nodes = sorted(glob.glob("/dev/video*"), key=lambda p: (_v4l2_node_index(p), p))
     if not nodes:
-        logger.info("No raw V4L2 nodes available under /dev/video*")
+        _log_v4l_targets_once("none", [])
         return nodes
 
     usb_nodes = [path for path in nodes if _usb_device_id_for_video_node(path)]
     if usb_nodes:
-        logger.info("Falling back to raw USB V4L2 nodes: %s", ", ".join(usb_nodes))
+        _log_v4l_targets_once("raw-usb", usb_nodes)
         return usb_nodes
 
-    logger.info("Falling back to raw V4L2 nodes: %s", ", ".join(nodes))
+    _log_v4l_targets_once("raw", nodes)
     return nodes
+
+
+def _log_v4l_targets_once(source: str, nodes: list[str]):
+    global _last_v4l_target_log
+
+    current = (source, tuple(nodes))
+    if current == _last_v4l_target_log:
+        return
+    _last_v4l_target_log = current
+
+    if source == "by-id":
+        logger.info("Stable V4L USB targets via /dev/v4l/by-id: %s", ", ".join(nodes))
+    elif source == "by-path":
+        logger.info("Stable V4L USB targets via /dev/v4l/by-path: %s", ", ".join(nodes))
+    elif source == "raw-usb":
+        logger.info("Falling back to raw USB V4L2 nodes: %s", ", ".join(nodes))
+    elif source == "raw":
+        logger.info("Falling back to raw V4L2 nodes: %s", ", ".join(nodes))
+    else:
+        logger.info("No raw V4L2 nodes available under /dev/video*")
+
+
+def _log_camera_inventory_once(cameras: list[dict]):
+    global _last_camera_inventory_log, _last_no_camera_log
+
+    current = tuple((camera["id"], camera["name"]) for camera in cameras)
+    if cameras:
+        if current != _last_camera_inventory_log:
+            logger.info(
+                "Discovered %d camera(s) via V4L2: %s",
+                len(cameras),
+                ", ".join(f"{camera_id} ({name})" for camera_id, name in current),
+            )
+            _last_camera_inventory_log = current
+        _last_no_camera_log = False
+        return
+
+    if not _last_no_camera_log:
+        logger.info("No capture-classified V4L2 cameras found")
+        _last_no_camera_log = True
+    _last_camera_inventory_log = current
 
 
 def _enumerate_linux_cameras() -> list[dict]:
@@ -178,14 +223,7 @@ def _enumerate_linux_cameras() -> list[dict]:
     for path in _linux_candidate_video_nodes():
         if _v4l2_is_capture(path):
             cameras.append({"id": path, "name": _v4l2_device_name(path)})
-    if cameras:
-        logger.info(
-            "Discovered %d camera(s) via V4L2: %s",
-            len(cameras),
-            ", ".join(f"{camera['id']} ({camera['name']})" for camera in cameras),
-        )
-    else:
-        logger.info("No capture-classified V4L2 cameras found")
+    _log_camera_inventory_once(cameras)
     return cameras
 
 
@@ -410,11 +448,6 @@ class MJPEGCamera:
             return Gst.FlowReturn.OK
         data = bytes(mapinfo.data)
         buf.unmap(mapinfo)
-        if not hasattr(self, "_frame_count"):
-            self._frame_count = 0
-        self._frame_count += 1
-        if self._frame_count <= 3 or self._frame_count % 100 == 0:
-            logger.info("Frame %d: %d bytes, %d queues", self._frame_count, len(data), len(self.queues))
 
         with self._lock:
             for q in self.queues.values():

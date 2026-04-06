@@ -72,7 +72,17 @@
       const camSelect = document.getElementById("camera-select");
 
       let ws = null, frameCount = 0, lastFpsTime = performance.now();
-      let reconnectDelay = 2000, prevBlob = null;
+      let reconnectDelay = 2000;
+
+      function arrayBufferToDataUrl(buffer) {
+        let binary = "";
+        const bytes = new Uint8Array(buffer);
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+        }
+        return `data:image/jpeg;base64,${btoa(binary)}`;
+      }
 
       function setStatus(t, c) {
         statusDot.className = `w-2 h-2 rounded-full bg-${c}-500`;
@@ -112,14 +122,11 @@
         if (ws) ws.close();
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
         ws = new WebSocket(`${proto}//${location.host}/stream`);
-        ws.binaryType = "blob";
+        ws.binaryType = "arraybuffer";
         ws.onopen = () => setStatus("Connected", "yellow");
         ws.onmessage = (e) => {
-          if (e.data instanceof Blob) {
-            const url = URL.createObjectURL(e.data);
-            imgEl.src = url;
-            if (prevBlob) URL.revokeObjectURL(prevBlob);
-            prevBlob = url;
+          if (e.data instanceof ArrayBuffer) {
+            imgEl.src = arrayBufferToDataUrl(e.data);
             frameCount++;
             overlay.classList.add("opacity-0", "pointer-events-none");
             setStatus("Live", "green");

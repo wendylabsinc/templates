@@ -128,6 +128,8 @@ class MJPEGCamera
         std::string desc =
             "v4l2src device=" + device_ +
             " ! image/jpeg"
+            " ! jpegdec"
+            " ! jpegenc quality=85"
             " ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false";
 
         GError *err = nullptr;

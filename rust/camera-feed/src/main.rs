@@ -43,7 +43,7 @@ impl MJPEGCamera {
         self.device = device.to_string();
 
         let launch = format!(
-            "v4l2src device={device} ! image/jpeg ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
+            "v4l2src device={device} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
         );
 
         let element = gstreamer::parse::launch(&launch).expect("Failed to create pipeline");

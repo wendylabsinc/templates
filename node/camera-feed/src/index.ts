@@ -70,6 +70,11 @@ class MJPEGCamera {
       "!",
       "image/jpeg",
       "!",
+      "jpegdec",
+      "!",
+      "jpegenc",
+      "quality=85",
+      "!",
       "fdsink",
       "fd=1",
     ]);

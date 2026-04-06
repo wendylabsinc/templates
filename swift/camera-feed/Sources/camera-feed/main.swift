@@ -137,6 +137,8 @@ actor MJPEGCamera {
         process.arguments = [
             "v4l2src", "device=\(device)", "!",
             "image/jpeg", "!",
+            "jpegdec", "!",
+            "jpegenc", "quality=85", "!",
             "fdsink", "fd=1",
         ]
 

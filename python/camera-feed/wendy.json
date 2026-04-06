@@ -7,7 +7,10 @@
             "mode": "host"
         },
         {
-            "type": "video"
+            "type": "camera"
+        },
+        {
+            "type": "usb"
         },
         {
             "type": "gpu"

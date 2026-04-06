@@ -94,6 +94,9 @@ def enumerate_cameras() -> list[dict]:
         else:
             path = props.get_string("device.path") or props.get_string("api.v4l2.path")
             device_id = path if path else f"/dev/video{i}"
+            if path and not _v4l2_is_capture(path):
+                logger.info("Skipping non-capture V4L2 device: %s (%s)", path, name)
+                continue
         cameras.append({"id": device_id, "name": name})
     monitor.stop()
 
@@ -136,11 +139,15 @@ class MJPEGCamera:
 
         appsink = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
         pipelines = [
-            # MJPEG native — most permissive first
-            f"{src} ! image/jpeg ! {appsink}",
-            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
+            # Safari is stricter than Chrome about webcam-native MJPEG.
+            # Re-encode to a standard JPEG bitstream first for compatibility.
+            f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! {appsink}",
+            f"{src} ! image/jpeg,width=640,height=480 ! jpegdec ! jpegenc quality=85 ! {appsink}",
             # Camera outputs raw → encode to JPEG
             f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
+            # Last resort: pass camera-native MJPEG through unchanged.
+            f"{src} ! image/jpeg ! {appsink}",
+            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
         ]
 
         for p_str in pipelines:
@@ -217,17 +224,29 @@ class MJPEGCamera:
 
     async def switch_camera(self, device_id: str):
         with self._lock:
+            previous_pipeline = self.pipeline
+            previous_device = self._current_device
+            previous_frame_count = getattr(self, "_frame_count", 0)
+
             if self.pipeline:
                 self.pipeline.set_state(Gst.State.NULL)
                 self.pipeline = None
                 self._frame_count = 0
-            self._current_device = device_id
-            self.pipeline = self._start_pipeline(device_id)
-            if not self.pipeline:
+
+            next_pipeline = self._start_pipeline(device_id)
+            if not next_pipeline:
+                self.pipeline = previous_pipeline
+                self._current_device = previous_device
+                self._frame_count = previous_frame_count
+                if previous_pipeline:
+                    previous_pipeline.set_state(Gst.State.PLAYING)
                 raise RuntimeError(f"Could not start camera {device_id}")
-            sink = self.pipeline.get_by_name("sink")
+
+            self.pipeline = next_pipeline
+            self._current_device = device_id
+            sink = next_pipeline.get_by_name("sink")
             sink.connect("new-sample", self._on_new_sample)
-            self.pipeline.set_state(Gst.State.PLAYING)
+            next_pipeline.set_state(Gst.State.PLAYING)
         logger.info("Switched to camera %s", device_id)
 
 

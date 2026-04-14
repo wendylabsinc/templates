@@ -909,7 +909,7 @@ router.get("{path+}") { request, _ -> Response in
 
     if FileManager.default.fileExists(atPath: filePath) {
         var isDir: ObjCBool = false
-        FileManager.default.fileExists(atPath: filePath, isDirectory: &isDir)
+        _ = FileManager.default.fileExists(atPath: filePath, isDirectory: &isDir)
         if !isDir.boolValue {
             let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
             return Response(
@@ -947,7 +947,7 @@ wsRouter.ws("api/camera/stream") { inbound, outbound, _ in
         try? await outbound.write(.binary(ByteBuffer(bytes: frame)))
     }
 
-    for try await message in inbound {
+    for try await message in inbound.messages(maxSize: 1_048_576) {
         if case .text(let text) = message {
             if let data = text.data(using: .utf8),
                let cmd = try? JSONDecoder().decode(SwitchCameraMessage.self, from: data)
@@ -971,7 +971,7 @@ wsRouter.ws("api/audio/stream") { inbound, outbound, _ in
         try? await outbound.write(.binary(ByteBuffer(bytes: chunk)))
     }
 
-    for try await message in inbound {
+    for try await message in inbound.messages(maxSize: 1_048_576) {
         if case .text(let text) = message {
             if let data = text.data(using: .utf8),
                let cmd = try? JSONDecoder().decode(SwitchMicrophoneMessage.self, from: data)
@@ -988,13 +988,7 @@ wsRouter.ws("api/audio/stream") { inbound, outbound, _ in
 
 let app = Application(
     router: router,
-    server: .http1WebSocketUpgrade(webSocketRouter: wsRouter) { request, _ in
-        let path = request.uri.path
-        if path == "/api/camera/stream" || path == "/api/audio/stream" {
-            return .upgrade([:])
-        }
-        return .dontUpgrade
-    },
+    server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
     configuration: .init(
         address: .hostname("0.0.0.0", port: {{.PORT}})
     )

@@ -315,7 +315,7 @@ struct CameraFeedApp {
                 try? await outbound.write(.binary(ByteBuffer(bytes: frame)))
             }
 
-            for try await message in inbound {
+            for try await message in inbound.messages(maxSize: 1_048_576) {
                 if case .text(let text) = message {
                     if let data = text.data(using: .utf8),
                        let cmd = try? JSONDecoder().decode(SwitchCameraMessage.self, from: data)
@@ -330,9 +330,7 @@ struct CameraFeedApp {
 
         let app = Application(
             router: router,
-            server: .http1WebSocketUpgrade(webSocketRouter: wsRouter) { request, _ in
-                request.uri.path == "/stream" ? .upgrade([:]) : .dontUpgrade
-            },
+            server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
             configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
         )
 

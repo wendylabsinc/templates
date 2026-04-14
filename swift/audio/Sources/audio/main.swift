@@ -165,9 +165,7 @@ wsRouter.ws("/stream") { inbound, outbound, _ in
 
 let app = Application(
     router: router,
-    server: .http1WebSocketUpgrade(webSocketRouter: wsRouter) { request, _ in
-        request.uri.path == "/stream" ? .upgrade([:]) : .dontUpgrade
-    },
+    server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
     configuration: .init(
         address: .hostname("0.0.0.0", port: {{.PORT}})
     )

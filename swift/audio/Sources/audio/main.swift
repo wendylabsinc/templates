@@ -145,7 +145,7 @@ router.get("/assets/{filepath}") { _, context -> Response in
 }
 
 // WebSocket /stream — send binary PCM data to clients
-let wsRouter = Router()
+let wsRouter = Router(context: BasicWebSocketRequestContext.self)
 wsRouter.ws("/stream") { inbound, outbound, _ in
     let clientId = UUID()
     print("[WebSocket] Client connected: \(clientId)")
@@ -165,7 +165,7 @@ wsRouter.ws("/stream") { inbound, outbound, _ in
 
 let app = Application(
     router: router,
-    server: .webSocketUpgrade(webSocketRouter: wsRouter) { request, _ in
+    server: .http1WebSocketUpgrade(webSocketRouter: wsRouter) { request, _ in
         request.uri.path == "/stream" ? .upgrade([:]) : .dontUpgrade
     },
     configuration: .init(

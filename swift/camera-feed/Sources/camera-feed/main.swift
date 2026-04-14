@@ -256,7 +256,7 @@ struct CameraFeedApp {
                 return Response(
                     status: .ok,
                     headers: [.contentType: "text/html; charset=utf-8"],
-                    body: .init(byteBuffer: .init(data: data))
+                    body: .init(byteBuffer: .init(bytes: data))
                 )
             }
             return Response(status: .notFound, body: .init(byteBuffer: .init(string: "index.html not found")))
@@ -287,7 +287,7 @@ struct CameraFeedApp {
                 return Response(
                     status: .ok,
                     headers: [.contentType: contentType],
-                    body: .init(byteBuffer: .init(data: data))
+                    body: .init(byteBuffer: .init(bytes: data))
                 )
             }
             return Response(status: .notFound)
@@ -300,18 +300,19 @@ struct CameraFeedApp {
             return Response(
                 status: .ok,
                 headers: [.contentType: "application/json"],
-                body: .init(byteBuffer: .init(data: data))
+                body: .init(byteBuffer: .init(bytes: data))
             )
         }
 
         // WebSocket /stream — sends binary JPEG frames, accepts camera switch commands
-        router.ws("/stream") { inbound, outbound, _ in
+        let wsRouter = Router(context: BasicWebSocketRequestContext.self)
+        wsRouter.ws("/stream") { inbound, outbound, _ in
             final class ConnectionID: Sendable {}
             let connID = ConnectionID()
             let id = ObjectIdentifier(connID)
 
             await camera.subscribe(id: id) { frame in
-                try? await outbound.write(.binary(frame))
+                try? await outbound.write(.binary(ByteBuffer(bytes: frame)))
             }
 
             for try await message in inbound {
@@ -329,6 +330,9 @@ struct CameraFeedApp {
 
         let app = Application(
             router: router,
+            server: .http1WebSocketUpgrade(webSocketRouter: wsRouter) { request, _ in
+                request.uri.path == "/stream" ? .upgrade([:]) : .dontUpgrade
+            },
             configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
         )
 

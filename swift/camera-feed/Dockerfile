@@ -7,8 +7,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY Package.swift ./
-COPY Package.resolved ./
-RUN swift package resolve
 COPY Sources Sources
 RUN swift build -c release
 

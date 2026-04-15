@@ -312,7 +312,9 @@ struct CameraFeedApp {
             let id = ObjectIdentifier(connID)
 
             await camera.subscribe(id: id) { frame in
-                try? await outbound.write(.binary(ByteBuffer(bytes: frame)))
+                var buffer = ByteBufferAllocator().buffer(capacity: frame.count)
+                buffer.writeBytes(frame)
+                try? await outbound.write(.binary(buffer))
             }
 
             for try await message in inbound.messages(maxSize: 1_048_576) {

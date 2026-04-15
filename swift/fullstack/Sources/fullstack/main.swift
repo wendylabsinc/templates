@@ -67,7 +67,7 @@ let SQLITE_DONE: Int32     = 101
 let SQLITE_INTEGER: Int32  = 1
 let SQLITE_TEXT: Int32     = 3
 let SQLITE_NULL: Int32     = 5
-nonisolated(unsafe) let SQLITE_TRANSIENT = unsafeBitCast(-1, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
+let SQLITE_TRANSIENT = unsafeBitCast(-1, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
 #endif
 
 /// Lightweight wrapper around a SQLite3 database pointer.
@@ -103,7 +103,7 @@ final class SQLiteDB: @unchecked Sendable {
         while sqlite3_step(stmt) == SQLITE_ROW {
             var row: [String: String?] = [:]
             for i in 0..<colCount {
-                let name = sqlite3_column_name(stmt, i).map { String(cString: $0) } ?? ""
+                let name = sqlite3_column_name(stmt, i).map { String(cString: $0) } ?? "column_\(i)"
                 let type = sqlite3_column_type(stmt, i)
                 if type == SQLITE_NULL {
                     row[name] = nil
@@ -944,7 +944,9 @@ wsRouter.ws("api/camera/stream") { inbound, outbound, _ in
     let id = ObjectIdentifier(connID)
 
     await camera.subscribe(id: id) { frame in
-        try? await outbound.write(.binary(ByteBuffer(bytes: frame)))
+        var buffer = ByteBuffer()
+        buffer.writeBytes(frame)
+        try? await outbound.write(.binary(buffer))
     }
 
     for try await message in inbound.messages(maxSize: 1_048_576) {
@@ -968,7 +970,9 @@ wsRouter.ws("api/audio/stream") { inbound, outbound, _ in
     let id = ObjectIdentifier(connID)
 
     await audio.subscribe(id: id) { chunk in
-        try? await outbound.write(.binary(ByteBuffer(bytes: chunk)))
+        var buffer = ByteBufferAllocator().buffer(capacity: chunk.count)
+        buffer.writeBytes(chunk)
+        try? await outbound.write(.binary(buffer))
     }
 
     for try await message in inbound.messages(maxSize: 1_048_576) {

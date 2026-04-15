@@ -784,10 +784,12 @@ let carsGroup = router.group("api/cars")
 carsGroup.get { _, _ -> Response in
     let cars = try await carStore.all()
     let data = try JSONEncoder().encode(cars)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -797,10 +799,12 @@ carsGroup.post { request, context -> Response in
         throw HTTPError(.internalServerError, message: "Failed to create car")
     }
     let data = try JSONEncoder().encode(car)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .created,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -812,10 +816,12 @@ carsGroup.get(":id") { _, context -> Response in
         throw HTTPError(.notFound, message: "Car not found")
     }
     let data = try JSONEncoder().encode(car)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -828,10 +834,12 @@ carsGroup.put(":id") { request, context -> Response in
         throw HTTPError(.notFound, message: "Car not found")
     }
     let data = try JSONEncoder().encode(car)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -850,30 +858,36 @@ carsGroup.delete(":id") { _, context -> HTTPResponse.Status in
 router.get("api/cameras") { _, _ -> Response in
     let cameras = listCameras()
     let data = try JSONEncoder().encode(cameras)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
 router.get("api/microphones") { _, _ -> Response in
     let mics = listAlsaDevices(command: "arecord -l")
     let data = try JSONEncoder().encode(mics)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
 router.get("api/speakers") { _, _ -> Response in
     let speakers = listAlsaDevices(command: "aplay -l")
     let data = try JSONEncoder().encode(speakers)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -882,10 +896,12 @@ router.get("api/speakers") { _, _ -> Response in
 router.get("api/gpu") { _, _ -> Response in
     let info = gpuInfo()
     let data = try JSONEncoder().encode(info)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -894,10 +910,12 @@ router.get("api/gpu") { _, _ -> Response in
 router.get("api/system") { _, _ -> Response in
     let info = systemInfo()
     let data = try JSONEncoder().encode(info)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -912,10 +930,12 @@ router.get("{path+}") { request, _ -> Response in
         _ = FileManager.default.fileExists(atPath: filePath, isDirectory: &isDir)
         if !isDir.boolValue {
             let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
+            var buffer = ByteBuffer()
+            buffer.writeBytes(data)
             return Response(
                 status: .ok,
                 headers: [.contentType: contentType(for: filePath)],
-                body: .init(byteBuffer: .init(bytes: data))
+                body: .init(byteBuffer: buffer)
             )
         }
     }
@@ -925,10 +945,12 @@ router.get("{path+}") { request, _ -> Response in
     guard let data = FileManager.default.contents(atPath: indexPath) else {
         return Response(status: .notFound, body: .init(byteBuffer: .init(string: "Not Found")))
     }
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "text/html; charset=utf-8"],
-        body: .init(byteBuffer: .init(bytes: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 

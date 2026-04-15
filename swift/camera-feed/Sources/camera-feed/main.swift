@@ -253,10 +253,12 @@ struct CameraFeedApp {
             let indexPath = "index.html"
             if FileManager.default.fileExists(atPath: indexPath) {
                 let data = try Data(contentsOf: URL(fileURLWithPath: indexPath))
+                var buffer = ByteBuffer()
+                buffer.writeBytes(data)
                 return Response(
                     status: .ok,
                     headers: [.contentType: "text/html; charset=utf-8"],
-                    body: .init(byteBuffer: .init(bytes: data))
+                    body: .init(byteBuffer: buffer)
                 )
             }
             return Response(status: .notFound, body: .init(byteBuffer: .init(string: "index.html not found")))
@@ -284,10 +286,12 @@ struct CameraFeedApp {
                 } else if filePath.hasSuffix(".mp3") {
                     contentType = "audio/mpeg"
                 }
+                var buffer = ByteBuffer()
+                buffer.writeBytes(data)
                 return Response(
                     status: .ok,
                     headers: [.contentType: contentType],
-                    body: .init(byteBuffer: .init(bytes: data))
+                    body: .init(byteBuffer: buffer)
                 )
             }
             return Response(status: .notFound)
@@ -297,10 +301,12 @@ struct CameraFeedApp {
         router.get("/cameras") { _, _ -> Response in
             let cameras = MJPEGCamera.listCameras()
             let data = try JSONEncoder().encode(cameras)
+            var buffer = ByteBuffer()
+            buffer.writeBytes(data)
             return Response(
                 status: .ok,
                 headers: [.contentType: "application/json"],
-                body: .init(byteBuffer: .init(bytes: data))
+                body: .init(byteBuffer: buffer)
             )
         }
 

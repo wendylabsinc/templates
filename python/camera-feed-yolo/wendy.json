@@ -1,0 +1,25 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "camera"
+        },
+        {
+            "type": "gpu"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 60
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "open http://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

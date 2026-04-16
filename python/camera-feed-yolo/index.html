@@ -1,0 +1,200 @@
+<!doctype html>
+<html class="h-full bg-black overflow-hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{.APP_ID}} — YOLO Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="h-full flex flex-col m-0 p-0 text-white font-sans overflow-hidden bg-black">
+    <div class="fixed inset-0 z-0 flex items-center justify-center bg-black">
+      <img
+        id="video-stream"
+        class="max-w-full max-h-full w-full h-full object-contain"
+        alt=""
+      />
+    </div>
+
+    <!-- UI Overlay -->
+    <div class="relative z-10 p-6 flex flex-col justify-between h-full pointer-events-none">
+      <div class="flex justify-between items-start">
+        <div class="pointer-events-auto">
+          <a href="https://wendy.sh" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 no-underline">
+            <img src="/assets/wendy-logo.svg" alt="Wendy" class="h-6 w-auto drop-shadow-md" />
+            <h1 class="text-xl font-bold drop-shadow-md">{{.APP_ID}}</h1>
+          </a>
+          <div class="flex items-center gap-2 mt-1">
+            <span id="status-dot" class="w-2 h-2 rounded-full bg-yellow-500 shadow-sm"></span>
+            <span id="status-text" class="text-xs font-medium uppercase tracking-wider drop-shadow-md">Connecting...</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col items-end gap-2 pointer-events-auto">
+          <select
+            id="camera-select"
+            class="bg-black/40 hover:bg-black/60 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm border border-white/10 outline-none cursor-pointer appearance-none min-w-[160px]"
+          >
+            <option value="">Loading cameras...</option>
+          </select>
+          <div class="flex items-center gap-2 bg-black/40 backdrop-blur-sm rounded-lg px-3 py-2 border border-white/10">
+            <label class="text-[10px] uppercase tracking-widest text-white/70 whitespace-nowrap">Conf</label>
+            <input id="confidence-slider" type="range" min="5" max="95" value="25" class="w-20 h-1 accent-blue-500" />
+            <span id="confidence-value" class="text-[10px] font-mono text-white/90 w-8 text-right">0.25</span>
+          </div>
+          <button id="fullscreen-btn" class="bg-black/40 hover:bg-black/60 p-2 rounded-full backdrop-blur-sm transition-colors border border-white/10 group">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="group-hover:scale-110 transition-transform"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex items-end justify-between">
+        <div class="pointer-events-auto bg-black/40 backdrop-blur-md p-3 rounded-lg border border-white/10 text-[10px] flex gap-4 uppercase tracking-widest text-white/70">
+          <div><span class="font-bold text-white">FPS:</span> <span id="fps">0</span></div>
+          <div><span class="font-bold text-white">Objects:</span> <span id="det-count">0</span></div>
+          <div><span class="font-bold text-white">Inference:</span> <span id="inference-ms">—</span>ms</div>
+          <div><span class="font-bold text-white">Model:</span> YOLOv8n</div>
+        </div>
+
+        <div id="classes-panel" class="pointer-events-auto bg-black/40 backdrop-blur-md p-3 rounded-lg border border-white/10 text-[10px] uppercase tracking-widest text-white/70 min-w-[140px] hidden">
+          <div class="font-bold text-white mb-1">Detected</div>
+          <div id="classes-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="loading-overlay"
+      class="fixed inset-0 z-20 flex items-center justify-center bg-black transition-opacity duration-500"
+    >
+      <div class="text-center">
+        <div class="relative w-16 h-16 mx-auto mb-4">
+          <div class="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
+          <div class="absolute inset-0 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+        <p class="text-gray-400 font-medium tracking-wide">LOADING YOLO MODEL</p>
+      </div>
+    </div>
+
+    <script>
+      const imgEl = document.getElementById("video-stream");
+      const overlay = document.getElementById("loading-overlay");
+      const statusDot = document.getElementById("status-dot");
+      const statusText = document.getElementById("status-text");
+      const fpsDisplay = document.getElementById("fps");
+      const detCount = document.getElementById("det-count");
+      const inferenceMs = document.getElementById("inference-ms");
+      const classesPanel = document.getElementById("classes-panel");
+      const classesList = document.getElementById("classes-list");
+      const camSelect = document.getElementById("camera-select");
+      const confSlider = document.getElementById("confidence-slider");
+      const confValue = document.getElementById("confidence-value");
+
+      let ws = null, frameCount = 0, lastFpsTime = performance.now();
+      let reconnectDelay = 2000;
+
+      function arrayBufferToDataUrl(buffer) {
+        let binary = "";
+        const bytes = new Uint8Array(buffer);
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+        }
+        return `data:image/jpeg;base64,${btoa(binary)}`;
+      }
+
+      function setStatus(t, c) {
+        statusDot.className = `w-2 h-2 rounded-full bg-${c}-500`;
+        statusText.textContent = t;
+      }
+
+      setInterval(() => {
+        const now = performance.now(), elapsed = now - lastFpsTime;
+        if (elapsed >= 1000) {
+          fpsDisplay.textContent = Math.round((frameCount * 1000) / elapsed);
+          frameCount = 0;
+          lastFpsTime = now;
+        }
+      }, 1000);
+
+      function updateDetections(meta) {
+        detCount.textContent = meta.detections;
+        inferenceMs.textContent = meta.inference_ms;
+
+        const entries = Object.entries(meta.classes || {});
+        if (entries.length > 0) {
+          classesPanel.classList.remove("hidden");
+          classesList.innerHTML = entries
+            .sort((a, b) => b[1] - a[1])
+            .map(([cls, n]) =>
+              `<div class="flex justify-between gap-3"><span>${cls}</span><span class="text-white font-bold">${n}</span></div>`
+            )
+            .join("");
+        } else {
+          classesPanel.classList.add("hidden");
+        }
+      }
+
+      confSlider.addEventListener("input", () => {
+        confValue.textContent = (confSlider.value / 100).toFixed(2);
+      });
+      confSlider.addEventListener("change", () => {
+        const val = confSlider.value / 100;
+        confValue.textContent = val.toFixed(2);
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ confidence: val }));
+        }
+      });
+
+      async function loadCameras() {
+        try {
+          const cameras = await (await fetch("/cameras")).json();
+          camSelect.innerHTML = "";
+          if (!cameras.length) { camSelect.innerHTML = '<option>No cameras</option>'; return; }
+          cameras.forEach((c, i) => {
+            const o = document.createElement("option");
+            o.value = c.id; o.textContent = c.name || `Camera ${i}`;
+            camSelect.appendChild(o);
+          });
+        } catch { camSelect.innerHTML = '<option>Failed to load</option>'; }
+      }
+
+      camSelect.addEventListener("change", () => {
+        if (camSelect.value && ws?.readyState === WebSocket.OPEN) {
+          setStatus("Switching...", "yellow");
+          ws.send(JSON.stringify({ switch_camera: camSelect.value }));
+        }
+      });
+
+      function connect() {
+        if (ws) ws.close();
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${proto}//${location.host}/stream`);
+        ws.binaryType = "arraybuffer";
+        ws.onopen = () => setStatus("Connected", "yellow");
+        ws.onmessage = (e) => {
+          if (e.data instanceof ArrayBuffer) {
+            imgEl.src = arrayBufferToDataUrl(e.data);
+            frameCount++;
+            overlay.classList.add("opacity-0", "pointer-events-none");
+            setStatus("Live", "green");
+            reconnectDelay = 2000;
+          } else {
+            try { updateDetections(JSON.parse(e.data)); } catch {}
+          }
+        };
+        ws.onclose = () => {
+          setStatus("Disconnected", "red");
+          overlay.classList.remove("opacity-0", "pointer-events-none");
+          setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
+        };
+      }
+
+      document.getElementById("fullscreen-btn").onclick = () =>
+        document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+
+      loadCameras();
+      connect();
+    </script>
+  </body>
+</html>

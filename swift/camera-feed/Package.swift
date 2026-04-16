@@ -18,8 +18,7 @@ let package = Package(
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
                 .product(name: "GStreamer", package: "gstreamer-swift"),
-            ],
-            path: "Sources/camera-feed"
+            ]
         )
     ]
 )

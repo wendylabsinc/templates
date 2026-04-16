@@ -19,8 +19,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Hummingbird", package: "hummingbird", condition: nil),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
-            ],
-            path: "Sources/audio"
+            ]
         ),
     ]
 )

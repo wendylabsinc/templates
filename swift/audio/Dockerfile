@@ -1,4 +1,4 @@
-FROM swift:6.0-bookworm AS builder
+FROM swift:{{.SWIFT_VERSION}}-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgstreamer1.0-dev \

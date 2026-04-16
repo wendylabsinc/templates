@@ -253,10 +253,12 @@ struct CameraFeedApp {
             let indexPath = "index.html"
             if FileManager.default.fileExists(atPath: indexPath) {
                 let data = try Data(contentsOf: URL(fileURLWithPath: indexPath))
+                var buffer = ByteBuffer()
+                buffer.writeBytes(data)
                 return Response(
                     status: .ok,
                     headers: [.contentType: "text/html; charset=utf-8"],
-                    body: .init(byteBuffer: .init(data: data))
+                    body: .init(byteBuffer: buffer)
                 )
             }
             return Response(status: .notFound, body: .init(byteBuffer: .init(string: "index.html not found")))
@@ -284,10 +286,12 @@ struct CameraFeedApp {
                 } else if filePath.hasSuffix(".mp3") {
                     contentType = "audio/mpeg"
                 }
+                var buffer = ByteBuffer()
+                buffer.writeBytes(data)
                 return Response(
                     status: .ok,
                     headers: [.contentType: contentType],
-                    body: .init(byteBuffer: .init(data: data))
+                    body: .init(byteBuffer: buffer)
                 )
             }
             return Response(status: .notFound)
@@ -297,24 +301,29 @@ struct CameraFeedApp {
         router.get("/cameras") { _, _ -> Response in
             let cameras = MJPEGCamera.listCameras()
             let data = try JSONEncoder().encode(cameras)
+            var buffer = ByteBuffer()
+            buffer.writeBytes(data)
             return Response(
                 status: .ok,
                 headers: [.contentType: "application/json"],
-                body: .init(byteBuffer: .init(data: data))
+                body: .init(byteBuffer: buffer)
             )
         }
 
         // WebSocket /stream — sends binary JPEG frames, accepts camera switch commands
-        router.ws("/stream") { inbound, outbound, _ in
+        let wsRouter = Router(context: BasicWebSocketRequestContext.self)
+        wsRouter.ws("/stream") { inbound, outbound, _ in
             final class ConnectionID: Sendable {}
             let connID = ConnectionID()
             let id = ObjectIdentifier(connID)
 
             await camera.subscribe(id: id) { frame in
-                try? await outbound.write(.binary(frame))
+                var buffer = ByteBufferAllocator().buffer(capacity: frame.count)
+                buffer.writeBytes(frame)
+                try? await outbound.write(.binary(buffer))
             }
 
-            for try await message in inbound {
+            for try await message in inbound.messages(maxSize: 1_048_576) {
                 if case .text(let text) = message {
                     if let data = text.data(using: .utf8),
                        let cmd = try? JSONDecoder().decode(SwitchCameraMessage.self, from: data)
@@ -329,6 +338,7 @@ struct CameraFeedApp {
 
         let app = Application(
             router: router,
+            server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
             configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
         )
 

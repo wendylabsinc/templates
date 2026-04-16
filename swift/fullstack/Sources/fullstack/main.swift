@@ -87,7 +87,7 @@ final class SQLiteDB: @unchecked Sendable {
         self.db = handle
     }
 
-    deinit { sqlite3_close(db) }
+    deinit { _ = sqlite3_close(db) }
 
     @discardableResult
     func exec(_ sql: String) throws -> [[String: String?]] {
@@ -96,14 +96,14 @@ final class SQLiteDB: @unchecked Sendable {
             let msg = sqlite3_errmsg(db).map { String(cString: $0) } ?? "unknown"
             throw SQLiteError.prepare(msg)
         }
-        defer { sqlite3_finalize(stmt) }
+        defer { _ = sqlite3_finalize(stmt) }
 
         var rows: [[String: String?]] = []
         let colCount = sqlite3_column_count(stmt)
         while sqlite3_step(stmt) == SQLITE_ROW {
             var row: [String: String?] = [:]
             for i in 0..<colCount {
-                let name = String(cString: sqlite3_column_name(stmt, i))
+                let name = sqlite3_column_name(stmt, i).map { String(cString: $0) } ?? "column_\(i)"
                 let type = sqlite3_column_type(stmt, i)
                 if type == SQLITE_NULL {
                     row[name] = nil
@@ -118,23 +118,24 @@ final class SQLiteDB: @unchecked Sendable {
         return rows
     }
 
+    @discardableResult
     func run(_ sql: String, bindings: [Any?] = []) throws -> Int64 {
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
             let msg = sqlite3_errmsg(db).map { String(cString: $0) } ?? "unknown"
             throw SQLiteError.prepare(msg)
         }
-        defer { sqlite3_finalize(stmt) }
+        defer { _ = sqlite3_finalize(stmt) }
 
         for (i, value) in bindings.enumerated() {
             let idx = Int32(i + 1)
             switch value {
             case let v as String:
-                sqlite3_bind_text(stmt, idx, v, -1, SQLITE_TRANSIENT)
+                _ = sqlite3_bind_text(stmt, idx, v, -1, SQLITE_TRANSIENT)
             case let v as Int:
-                sqlite3_bind_int64(stmt, idx, Int64(v))
+                _ = sqlite3_bind_int64(stmt, idx, Int64(v))
             case let v as Int64:
-                sqlite3_bind_int64(stmt, idx, v)
+                _ = sqlite3_bind_int64(stmt, idx, v)
             default:
                 // NULL binding is the default
                 break
@@ -778,70 +779,78 @@ let router = Router()
 
 // MARK: Cars CRUD
 
-router.group("api/cars") { group in
-    group.get { _, _ -> Response in
-        let cars = try await carStore.all()
-        let data = try JSONEncoder().encode(cars)
-        return Response(
-            status: .ok,
-            headers: [.contentType: "application/json"],
-            body: .init(byteBuffer: .init(data: data))
-        )
-    }
+let carsGroup = router.group("api/cars")
 
-    group.post { request, context -> Response in
-        let input = try await request.decode(as: CarInput.self, context: context)
-        guard let car = try await carStore.create(input: input) else {
-            throw HTTPError(.internalServerError, message: "Failed to create car")
-        }
-        let data = try JSONEncoder().encode(car)
-        return Response(
-            status: .created,
-            headers: [.contentType: "application/json"],
-            body: .init(byteBuffer: .init(data: data))
-        )
-    }
+carsGroup.get { _, _ -> Response in
+    let cars = try await carStore.all()
+    let data = try JSONEncoder().encode(cars)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
+    return Response(
+        status: .ok,
+        headers: [.contentType: "application/json"],
+        body: .init(byteBuffer: buffer)
+    )
+}
 
-    group.get(":id") { _, context -> Response in
-        guard let id = context.parameters.get("id", as: Int.self) else {
-            throw HTTPError(.badRequest, message: "Invalid car ID")
-        }
-        guard let car = try await carStore.get(id: id) else {
-            throw HTTPError(.notFound, message: "Car not found")
-        }
-        let data = try JSONEncoder().encode(car)
-        return Response(
-            status: .ok,
-            headers: [.contentType: "application/json"],
-            body: .init(byteBuffer: .init(data: data))
-        )
+carsGroup.post { request, context -> Response in
+    let input = try await request.decode(as: CarInput.self, context: context)
+    guard let car = try await carStore.create(input: input) else {
+        throw HTTPError(.internalServerError, message: "Failed to create car")
     }
+    let data = try JSONEncoder().encode(car)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
+    return Response(
+        status: .created,
+        headers: [.contentType: "application/json"],
+        body: .init(byteBuffer: buffer)
+    )
+}
 
-    group.put(":id") { request, context -> Response in
-        guard let id = context.parameters.get("id", as: Int.self) else {
-            throw HTTPError(.badRequest, message: "Invalid car ID")
-        }
-        let input = try await request.decode(as: CarInput.self, context: context)
-        guard let car = try await carStore.update(id: id, input: input) else {
-            throw HTTPError(.notFound, message: "Car not found")
-        }
-        let data = try JSONEncoder().encode(car)
-        return Response(
-            status: .ok,
-            headers: [.contentType: "application/json"],
-            body: .init(byteBuffer: .init(data: data))
-        )
+carsGroup.get(":id") { _, context -> Response in
+    guard let id = context.parameters.get("id", as: Int.self) else {
+        throw HTTPError(.badRequest, message: "Invalid car ID")
     }
+    guard let car = try await carStore.get(id: id) else {
+        throw HTTPError(.notFound, message: "Car not found")
+    }
+    let data = try JSONEncoder().encode(car)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
+    return Response(
+        status: .ok,
+        headers: [.contentType: "application/json"],
+        body: .init(byteBuffer: buffer)
+    )
+}
 
-    group.delete(":id") { _, context -> HTTPResponse.Status in
-        guard let id = context.parameters.get("id", as: Int.self) else {
-            throw HTTPError(.badRequest, message: "Invalid car ID")
-        }
-        guard try await carStore.delete(id: id) else {
-            throw HTTPError(.notFound, message: "Car not found")
-        }
-        return .noContent
+carsGroup.put(":id") { request, context -> Response in
+    guard let id = context.parameters.get("id", as: Int.self) else {
+        throw HTTPError(.badRequest, message: "Invalid car ID")
     }
+    let input = try await request.decode(as: CarInput.self, context: context)
+    guard let car = try await carStore.update(id: id, input: input) else {
+        throw HTTPError(.notFound, message: "Car not found")
+    }
+    let data = try JSONEncoder().encode(car)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
+    return Response(
+        status: .ok,
+        headers: [.contentType: "application/json"],
+        body: .init(byteBuffer: buffer)
+    )
+}
+
+carsGroup.delete(":id") { _, context -> HTTPResponse.Status in
+    guard let id = context.parameters.get("id", as: Int.self) else {
+        throw HTTPError(.badRequest, message: "Invalid car ID")
+    }
+    guard try await carStore.delete(id: id) else {
+        throw HTTPError(.notFound, message: "Car not found")
+    }
+    return .noContent
 }
 
 // MARK: Device Endpoints
@@ -849,30 +858,36 @@ router.group("api/cars") { group in
 router.get("api/cameras") { _, _ -> Response in
     let cameras = listCameras()
     let data = try JSONEncoder().encode(cameras)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(data: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
 router.get("api/microphones") { _, _ -> Response in
     let mics = listAlsaDevices(command: "arecord -l")
     let data = try JSONEncoder().encode(mics)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(data: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
 router.get("api/speakers") { _, _ -> Response in
     let speakers = listAlsaDevices(command: "aplay -l")
     let data = try JSONEncoder().encode(speakers)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(data: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -881,10 +896,12 @@ router.get("api/speakers") { _, _ -> Response in
 router.get("api/gpu") { _, _ -> Response in
     let info = gpuInfo()
     let data = try JSONEncoder().encode(info)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(data: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -893,10 +910,12 @@ router.get("api/gpu") { _, _ -> Response in
 router.get("api/system") { _, _ -> Response in
     let info = systemInfo()
     let data = try JSONEncoder().encode(info)
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: .init(data: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
@@ -908,13 +927,15 @@ router.get("{path+}") { request, _ -> Response in
 
     if FileManager.default.fileExists(atPath: filePath) {
         var isDir: ObjCBool = false
-        FileManager.default.fileExists(atPath: filePath, isDirectory: &isDir)
+        _ = FileManager.default.fileExists(atPath: filePath, isDirectory: &isDir)
         if !isDir.boolValue {
             let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
+            var buffer = ByteBuffer()
+            buffer.writeBytes(data)
             return Response(
                 status: .ok,
                 headers: [.contentType: contentType(for: filePath)],
-                body: .init(byteBuffer: .init(data: data))
+                body: .init(byteBuffer: buffer)
             )
         }
     }
@@ -924,16 +945,18 @@ router.get("{path+}") { request, _ -> Response in
     guard let data = FileManager.default.contents(atPath: indexPath) else {
         return Response(status: .notFound, body: .init(byteBuffer: .init(string: "Not Found")))
     }
+    var buffer = ByteBuffer()
+    buffer.writeBytes(data)
     return Response(
         status: .ok,
         headers: [.contentType: "text/html; charset=utf-8"],
-        body: .init(byteBuffer: .init(data: data))
+        body: .init(byteBuffer: buffer)
     )
 }
 
 // -- WebSocket Router --
 
-let wsRouter = Router()
+let wsRouter = Router(context: BasicWebSocketRequestContext.self)
 
 // MARK: Camera WebSocket
 
@@ -943,10 +966,12 @@ wsRouter.ws("api/camera/stream") { inbound, outbound, _ in
     let id = ObjectIdentifier(connID)
 
     await camera.subscribe(id: id) { frame in
-        try? await outbound.write(.binary(frame))
+        var buffer = ByteBuffer()
+        buffer.writeBytes(frame)
+        try? await outbound.write(.binary(buffer))
     }
 
-    for try await message in inbound {
+    for try await message in inbound.messages(maxSize: 1_048_576) {
         if case .text(let text) = message {
             if let data = text.data(using: .utf8),
                let cmd = try? JSONDecoder().decode(SwitchCameraMessage.self, from: data)
@@ -967,10 +992,12 @@ wsRouter.ws("api/audio/stream") { inbound, outbound, _ in
     let id = ObjectIdentifier(connID)
 
     await audio.subscribe(id: id) { chunk in
-        try? await outbound.write(.binary(chunk))
+        var buffer = ByteBufferAllocator().buffer(capacity: chunk.count)
+        buffer.writeBytes(chunk)
+        try? await outbound.write(.binary(buffer))
     }
 
-    for try await message in inbound {
+    for try await message in inbound.messages(maxSize: 1_048_576) {
         if case .text(let text) = message {
             if let data = text.data(using: .utf8),
                let cmd = try? JSONDecoder().decode(SwitchMicrophoneMessage.self, from: data)
@@ -987,13 +1014,7 @@ wsRouter.ws("api/audio/stream") { inbound, outbound, _ in
 
 let app = Application(
     router: router,
-    server: .webSocketUpgrade(webSocketRouter: wsRouter) { request, _ in
-        let path = request.uri.path
-        if path == "/api/camera/stream" || path == "/api/audio/stream" {
-            return .upgrade([:])
-        }
-        return .dontUpgrade
-    },
+    server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
     configuration: .init(
         address: .hostname("0.0.0.0", port: {{.PORT}})
     )

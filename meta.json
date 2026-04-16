@@ -15,6 +15,10 @@
         {
             "name": "audio",
             "description": "Live audio waveform visualization with mic capture"
+        },
+        {
+            "name": "camera-feed-yolo",
+            "description": "Live camera feed with YOLOv8 COCO object detection"
         }
     ],
     "languages": [

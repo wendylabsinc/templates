@@ -149,7 +149,7 @@ public:
     }
 
     WS_PATH_LIST_BEGIN
-    WS_PATH_ADD("/stream")
+    WS_PATH_ADD("/stream");
     WS_PATH_LIST_END
 
 private:

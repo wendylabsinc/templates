@@ -494,7 +494,7 @@ public:
     }
 
     WS_PATH_LIST_BEGIN
-    WS_PATH_ADD("/api/camera/stream")
+    WS_PATH_ADD("/api/camera/stream");
     WS_PATH_LIST_END
 };
 
@@ -533,7 +533,7 @@ public:
     }
 
     WS_PATH_LIST_BEGIN
-    WS_PATH_ADD("/api/audio/stream")
+    WS_PATH_ADD("/api/audio/stream");
     WS_PATH_LIST_END
 };
 

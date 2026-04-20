@@ -20,7 +20,7 @@ COPY Sources Sources
 RUN swift build -c release
 
 # Stage 3: Runtime image
-FROM debian:bookworm-slim
+FROM swift:{{.SWIFT_VERSION}}-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
+"""YOLOv8 webcam server: GStreamer (or OpenCV fallback) → YOLO → annotated MJPEG over WebSocket.
+
+Env overrides: CAMERA_BACKEND=opencv|gstreamer, YOLO_MAX_FPS=<n>.
 """
-YOLO object-detection webcam server.
-GStreamer captures MJPEG frames from USB webcams, YOLOv8n runs COCO
-detection, and annotated frames are streamed over WebSocket.
-"""
+from __future__ import annotations
 import asyncio
 import collections
 import glob
 import json
 import logging
+import os
 import platform
 import subprocess
 import sys
@@ -18,12 +19,16 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-import gi
-
-gi.require_version("Gst", "1.0")
-gi.require_version("GstApp", "1.0")
-
-from gi.repository import Gst, GLib
+try:
+    import gi
+    gi.require_version("Gst", "1.0")
+    gi.require_version("GstApp", "1.0")
+    from gi.repository import Gst, GLib
+    _HAS_GSTREAMER = True
+except Exception:
+    Gst = None  # type: ignore
+    GLib = None  # type: ignore
+    _HAS_GSTREAMER = False
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -46,15 +51,61 @@ _bh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(messag
 logging.getLogger().addHandler(_bh)
 logger = logging.getLogger(__name__)
 
-Gst.init(None)
+if _HAS_GSTREAMER:
+    Gst.init(None)
+    _glib_loop = GLib.MainLoop()
+    threading.Thread(target=_glib_loop.run, daemon=True).start()
 
-_glib_loop = GLib.MainLoop()
-threading.Thread(target=_glib_loop.run, daemon=True).start()
 
-logger.info("Loading YOLOv8n model...")
-_model_path = "yolov8n.onnx" if Path("yolov8n.onnx").exists() else "yolov8n.pt"
-_model = YOLO(_model_path)
-logger.info("YOLOv8n ready — %d COCO classes, backend: %s", len(_model.names), _model_path)
+def _has_cuda() -> bool:
+    try:
+        import torch
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
+def _is_rpi() -> bool:
+    try:
+        return "Raspberry Pi" in Path("/proc/device-tree/model").read_text()
+    except Exception:
+        return False
+
+
+_HAS_CUDA = _has_cuda()
+IS_RPI = _is_rpi()
+
+if not _HAS_CUDA:
+    # Stops ONNX Runtime from probing CUDA providers on CPU-only devices.
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+
+_MAX_INFERENCE_FPS = float(os.environ.get("YOLO_MAX_FPS", "15" if _HAS_CUDA else "3"))
+_MIN_INFERENCE_INTERVAL = 1.0 / _MAX_INFERENCE_FPS if _MAX_INFERENCE_FPS > 0 else 0
+_INFERENCE_IMGSZ = 320 if _HAS_CUDA else 224
+# RPi5 browns out under GStreamer + inference when USB-powered; OpenCV idles lighter.
+_backend = os.environ.get("CAMERA_BACKEND", "auto").lower()
+_FORCE_OPENCV = not _HAS_GSTREAMER or (_backend == "opencv") or (_backend == "auto" and (IS_RPI or not _HAS_CUDA))
+logger.info("Platform: %s, CUDA: %s, capture: %s, max inference FPS: %s, imgsz: %s",
+            "rpi" if IS_RPI else "generic", _HAS_CUDA,
+            "opencv" if _FORCE_OPENCV else "gstreamer", _MAX_INFERENCE_FPS, _INFERENCE_IMGSZ)
+
+_model: YOLO | None = None
+_model_lock = threading.Lock()
+
+
+def _get_model() -> YOLO:
+    global _model
+    if _model is not None:
+        return _model
+    with _model_lock:
+        if _model is not None:
+            return _model
+        model_path = "yolov8n.onnx" if Path("yolov8n.onnx").exists() else "yolov8n.pt"
+        logger.info("Loading YOLOv8n model (CUDA: %s)...", _HAS_CUDA)
+        m = YOLO(model_path)
+        logger.info("YOLOv8n ready — %d COCO classes, backend: %s", len(m.names), model_path)
+        _model = m
+        return _model
 
 app = FastAPI()
 
@@ -237,7 +288,7 @@ def _enumerate_linux_cameras() -> list[dict]:
 
 
 def enumerate_cameras() -> list[dict]:
-    if not IS_MACOS:
+    if not IS_MACOS or not _HAS_GSTREAMER:
         return _enumerate_linux_cameras()
 
     monitor = Gst.DeviceMonitor.new()
@@ -270,8 +321,7 @@ _rng = np.random.default_rng(42)
 _COLORS = [tuple(int(c) for c in row) for row in _rng.integers(60, 255, size=(80, 3))]
 
 
-def _draw_detections(frame, detections, det_shape):
-    """Draw cached bounding boxes + labels onto a frame."""
+def _draw_detections(frame, detections, det_shape, names):
     if not detections:
         return
     h, w = frame.shape[:2]
@@ -282,19 +332,16 @@ def _draw_detections(frame, detections, det_shape):
         ix2, iy2 = int(x2 * sx), int(y2 * sy)
         color = _COLORS[cls_id % 80]
         cv2.rectangle(frame, (ix1, iy1), (ix2, iy2), color, 2)
-        label = f"{_model.names[cls_id]} {conf:.2f}"
+        label = f"{names[cls_id]} {conf:.2f}"
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         cv2.rectangle(frame, (ix1, iy1 - th - 8), (ix1 + tw + 4, iy1), color, -1)
         cv2.putText(frame, label, (ix1 + 2, iy1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
 
 class YOLOCamera:
-    """Captures frames via GStreamer, runs YOLOv8 COCO detection, streams annotated frames.
-
-    Display runs at camera rate (~30 FPS) by drawing cached detection boxes on
-    every frame.  Inference runs in a background thread at its own rate (~10 FPS)
-    and updates the cached boxes.
-    """
+    """Display runs at camera rate by drawing cached boxes each frame; inference runs in a
+    background thread at its own (lower) rate and updates the cache — so slow YOLO never
+    stalls the stream."""
 
     def __init__(self):
         self.pipeline = None
@@ -308,25 +355,44 @@ class YOLOCamera:
         self._confidence = 0.25
         self._latest_raw: bytes | None = None
         self._raw_event = threading.Event()
-        self._cached_dets: list[tuple] = []  
-        self._cached_det_shape: tuple[int, int] = (1, 1)  
+        self._cached_dets: list[tuple] = []
+        self._cached_det_shape: tuple[int, int] = (1, 1)
         self._cached_meta: str = '{"detections":0,"inference_ms":0,"classes":{}}'
         self._last_meta: dict = {"detections": 0, "inference_ms": 0, "classes": {}}
-        self._annotated_jpeg: bytes | None = None  
+        self._annotated_jpeg: bytes | None = None
+        self._capture_mode: str = "opencv" if _FORCE_OPENCV else "gstreamer"
+        self._opencv_thread: threading.Thread | None = None
         self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
         self._inference_thread.start()
-
 
     def _start_pipeline(self, device_id: str | None = None) -> Gst.Pipeline | None:
         src = build_source(device_id)
         appsink = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
-        pipelines = [
-            f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! {appsink}",
-            f"{src} ! image/jpeg,width=640,height=480 ! jpegdec ! jpegenc quality=85 ! {appsink}",
-            f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
-            f"{src} ! image/jpeg ! {appsink}",
-            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
-        ]
+        if _HAS_CUDA:
+            # Jetson has HW JPEG codecs, so decode+re-encode for quality control is cheap.
+            pipelines = [
+                f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! {appsink}",
+                f"{src} ! image/jpeg,width=640,height=480 ! jpegdec ! jpegenc quality=85 ! {appsink}",
+                f"{src} ! video/x-raw ! videoconvert ! jpegenc quality=70 ! {appsink}",
+                f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
+                f"{src} ! image/jpeg ! {appsink}",
+                f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
+            ]
+        else:
+            # CPU: passthrough first — skip 30 fps decode/re-encode; inference decodes at its own rate.
+            pipelines = [
+                f"{src} ! image/jpeg ! {appsink}",
+                f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
+                f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=70 ! {appsink}",
+                f"{src} ! video/x-raw ! videoconvert ! jpegenc quality=70 ! {appsink}",
+                f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
+            ]
+        # libcamerasrc covers RPi CSI modules; harmlessly fails parse on hosts without it.
+        if not IS_MACOS:
+            pipelines += [
+                f"libcamerasrc ! video/x-raw,format=NV12,width=640,height=480 ! videoconvert ! jpegenc quality=70 ! {appsink}",
+                f"libcamerasrc ! video/x-raw,width=640,height=480 ! videoconvert ! jpegenc quality=70 ! {appsink}",
+            ]
 
         for p_str in pipelines:
             try:
@@ -457,7 +523,7 @@ class YOLOCamera:
         try:
             while True:
                 with self._lock:
-                    if self.pipeline or not self.queues:
+                    if self.pipeline or not self.queues or self._capture_mode == "opencv":
                         return
                     preferred_device = self._current_device
 
@@ -474,6 +540,12 @@ class YOLOCamera:
                         self._attach_pipeline_locked(pipeline, resolved_device)
                     return
 
+                if not IS_MACOS:
+                    device = resolved_device or preferred_device
+                    fell_back = await asyncio.to_thread(self._try_opencv_fallback, device)
+                    if fell_back:
+                        return
+
                 logger.info("Camera unavailable after %s; retrying in %.1fs", reason, delay)
                 await asyncio.sleep(delay)
                 delay = min(delay * 1.5, 5.0)
@@ -482,6 +554,34 @@ class YOLOCamera:
                 if self._restart_task is asyncio.current_task():
                     self._restart_task = None
 
+    def _distribute_frame(self, raw_jpeg: bytes):
+        """Thread-safe: marshals the actual queue push onto the asyncio loop."""
+        if not self._loop:
+            return
+        with self._lock:
+            has_clients = bool(self.queues)
+            annotated = self._annotated_jpeg
+            meta = self._cached_meta
+            queues = list(self.queues.values())
+
+        if not has_clients:
+            return
+
+        out_bytes = annotated if annotated is not None else raw_jpeg
+
+        def _do_push():
+            for q in queues:
+                if q.full():
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                try:
+                    q.put_nowait((out_bytes, meta))
+                except asyncio.QueueFull:
+                    pass
+
+        self._loop.call_soon_threadsafe(_do_push)
 
     def _on_new_sample(self, sink):
         sample = sink.emit("pull-sample")
@@ -496,37 +596,100 @@ class YOLOCamera:
 
         with self._lock:
             self._latest_raw = data
-            has_clients = bool(self.queues)
-            dets = self._cached_dets
-            det_shape = self._cached_det_shape
-            meta = self._cached_meta
-            annotated = self._annotated_jpeg
         self._raw_event.set()
-
-        if not has_clients:
-            return Gst.FlowReturn.OK
-
-        out_bytes = annotated if annotated is not None else data
-
-        with self._lock:
-            for q in self.queues.values():
-                if q.full():
-                    try:
-                        q.get_nowait()
-                    except asyncio.QueueEmpty:
-                        pass
-                try:
-                    q.put_nowait((out_bytes, meta))
-                except asyncio.QueueFull:
-                    pass
-
+        self._distribute_frame(data)
         return Gst.FlowReturn.OK
 
+    def _try_opencv_fallback(self, device: str | None) -> bool:
+        candidates = [device, "/dev/video0"] if device and device != "/dev/video0" else ["/dev/video0"]
+        for dev in candidates:
+            if dev is None:
+                continue
+            cap = cv2.VideoCapture(dev)
+            opened = cap.isOpened()
+            cap.release()
+            if opened:
+                logger.info("GStreamer unavailable; switching to OpenCV capture on %s", dev)
+                with self._lock:
+                    self._capture_mode = "opencv"
+                    self._current_device = dev
+                self._start_opencv_thread(dev)
+                return True
+        return False
+
+    def _start_opencv_thread(self, device: str):
+        if self._opencv_thread and self._opencv_thread.is_alive():
+            return
+        self._opencv_thread = threading.Thread(target=self._opencv_loop, args=(device,), daemon=True)
+        self._opencv_thread.start()
+
+    def _opencv_loop(self, initial_device: str):
+        while True:
+            with self._lock:
+                device = self._current_device or initial_device
+
+            cap = cv2.VideoCapture(device)
+            if not cap.isOpened() and device != "/dev/video0":
+                cap.release()
+                cap = cv2.VideoCapture("/dev/video0")
+            if not cap.isOpened():
+                cap.release()
+                cap = cv2.VideoCapture(0)
+
+            if not cap.isOpened():
+                cap.release()
+                logger.warning("OpenCV: no camera on %s, retrying in 2s", device)
+                time.sleep(2)
+                continue
+
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            logger.info("OpenCV camera opened: %s", device)
+
+            try:
+                while True:
+                    with self._lock:
+                        current_device = self._current_device or initial_device
+                    if current_device != device:
+                        logger.info("OpenCV: switching to %s", current_device)
+                        break
+
+                    with self._lock:
+                        has_clients = bool(self.queues)
+                    if not has_clients:
+                        time.sleep(0.05)
+                        continue
+
+                    ret, frame = cap.read()
+                    if not ret:
+                        logger.warning("OpenCV: camera read failed on %s", device)
+                        break
+
+                    ok, jpeg_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    if not ok:
+                        continue
+
+                    raw_jpeg = jpeg_buf.tobytes()
+                    with self._lock:
+                        self._latest_raw = raw_jpeg
+                    self._raw_event.set()
+                    if not _FORCE_OPENCV:
+                        self._distribute_frame(raw_jpeg)
+            finally:
+                cap.release()
+
+            logger.warning("OpenCV: camera lost on %s, retrying in 2s", device)
+            time.sleep(2)
+
     def _inference_loop(self):
-        """Runs YOLO on the latest frame and updates cached detection boxes."""
+        last_inference = 0.0
         while True:
             self._raw_event.wait(timeout=1.0)
             self._raw_event.clear()
+
+            now = time.monotonic()
+            if now - last_inference < _MIN_INFERENCE_INTERVAL:
+                continue
 
             with self._lock:
                 raw = self._latest_raw
@@ -537,6 +700,8 @@ class YOLOCamera:
             if raw is None or not has_clients:
                 continue
 
+            model = _get_model()
+
             nparr = np.frombuffer(raw, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             if frame is None:
@@ -545,8 +710,9 @@ class YOLOCamera:
             h, w = frame.shape[:2]
 
             t0 = time.monotonic()
-            results = _model.predict(frame, conf=conf, imgsz=320, verbose=False)
+            results = model.predict(frame, conf=conf, imgsz=_INFERENCE_IMGSZ, verbose=False)
             inference_ms = (time.monotonic() - t0) * 1000
+            last_inference = time.monotonic()
 
             dets = []
             classes: dict[str, int] = {}
@@ -555,7 +721,7 @@ class YOLOCamera:
                 cls_id = int(box.cls)
                 c = float(box.conf)
                 dets.append((xyxy[0], xyxy[1], xyxy[2], xyxy[3], c, cls_id))
-                cls_name = _model.names[cls_id]
+                cls_name = model.names[cls_id]
                 classes[cls_name] = classes.get(cls_name, 0) + 1
 
             meta = json.dumps({
@@ -565,7 +731,7 @@ class YOLOCamera:
             })
 
             if dets:
-                _draw_detections(frame, dets, (h, w))
+                _draw_detections(frame, dets, (h, w), model.names)
             ok_enc, jpeg_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             annotated = jpeg_buf.tobytes() if ok_enc else None
 
@@ -576,21 +742,30 @@ class YOLOCamera:
                 self._last_meta = {"detections": len(dets), "inference_ms": round(inference_ms, 1), "classes": classes}
                 self._annotated_jpeg = annotated
 
+            if _FORCE_OPENCV:
+                self._distribute_frame(annotated if annotated is not None else raw)
+
     async def add_client(self, ws: WebSocket) -> asyncio.Queue:
         self._loop = asyncio.get_running_loop()
         q = asyncio.Queue(maxsize=2)
         with self._lock:
             self.queues[ws] = q
-            should_restart = self.pipeline is None
-        if should_restart:
+            mode = self._capture_mode
+            should_start_gst = mode == "gstreamer" and self.pipeline is None
+
+        if mode == "opencv":
+            device = self._current_device or "/dev/video0"
+            self._start_opencv_thread(device)
+        elif should_start_gst:
             self._ensure_restart_task("client connected")
+
         logger.info("Client added (total: %d)", len(self.queues))
         return q
 
     def remove_client(self, ws: WebSocket):
         with self._lock:
             self.queues.pop(ws, None)
-            if not self.queues:
+            if not self.queues and self._capture_mode == "gstreamer":
                 if self._restart_task and not self._restart_task.done():
                     self._restart_task.cancel()
                     self._restart_task = None
@@ -601,10 +776,14 @@ class YOLOCamera:
     async def switch_camera(self, device_id: str):
         with self._lock:
             self._current_device = device_id
-            self._clear_pipeline_locked()
             self._cached_dets = []
             self._annotated_jpeg = None
-        self._ensure_restart_task(f"switch to {device_id}")
+            if self._capture_mode == "gstreamer":
+                self._clear_pipeline_locked()
+
+        if self._capture_mode == "gstreamer":
+            self._ensure_restart_task(f"switch to {device_id}")
+        # OpenCV mode picks up _current_device change on its next iteration.
         logger.info("Requested camera switch to %s", device_id)
 
     def set_confidence(self, value: float):
@@ -613,6 +792,10 @@ class YOLOCamera:
 
 
 camera = YOLOCamera()
+
+# Warm the model at startup so the first client connection isn't stalled by a
+# multi-second GIL-holding torch load.
+threading.Thread(target=_get_model, daemon=True).start()
 
 
 @app.get("/cameras")
@@ -677,11 +860,17 @@ async def get_logs():
 @app.get("/debug")
 async def debug_info():
     cameras = enumerate_cameras()
+    model = _model
     return JSONResponse(
         content={
             "mode": "yolo-mjpeg-ws",
             "model": "yolov8n",
-            "device": str(_model.device),
+            "cuda": _HAS_CUDA,
+            "is_rpi": IS_RPI,
+            "max_inference_fps": _MAX_INFERENCE_FPS,
+            "inference_imgsz": _INFERENCE_IMGSZ,
+            "capture_backend": camera._capture_mode,
+            "device": str(model.device) if model else "not loaded",
             "confidence": camera._confidence,
             "cameras": cameras,
             "pipeline_state": camera.pipeline.get_state(0)[1].value_nick if camera.pipeline else None,

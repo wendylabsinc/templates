@@ -18,7 +18,7 @@
         },
         {
             "name": "camera-feed-yolo",
-            "description": "Live camera feed with YOLOv8 COCO object detection"
+            "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         }
     ],
     "languages": [

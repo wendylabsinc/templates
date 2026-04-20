@@ -39,6 +39,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY --from=frontend /frontend/dist ./static
 
+ARG WENDY_DEVICE_TYPE
+ARG WENDY_DEBUG=false
+ENV WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE}
+ENV WENDY_DEBUG=${WENDY_DEBUG}
+RUN if [ "$WENDY_DEBUG" = "true" ]; then pip install --no-cache-dir debugpy; fi
+
 EXPOSE {{.PORT}}
 
 CMD ["/app/venv/bin/uvicorn", "app:api", "--host", "0.0.0.0", "--port", "{{.PORT}}"]

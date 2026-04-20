@@ -1,0 +1,28 @@
+{
+    "name": "camera-feed-yolo",
+    "description": "Live camera feed with YOLOv8 COCO object detection",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port",
+            "type": "integer",
+            "default": 3005,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "TARGET",
+            "description": "Build target: 'generic' (RPi/x86, CPU inference) or 'jetson' (NVIDIA Jetson, CUDA inference)",
+            "type": "string",
+            "default": "generic",
+            "prompt": "Build target (generic or jetson)"
+        }
+    ]
+}

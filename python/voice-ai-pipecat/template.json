@@ -1,0 +1,28 @@
+{
+    "name": "voice-ai-pipecat",
+    "description": "Voice AI assistant: Pipecat + Gemini 2.5 Flash + local faster-whisper STT + Piper TTS",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP + WebSocket port",
+            "type": "integer",
+            "default": 3005,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "GOOGLE_API_KEY",
+            "description": "API key for Gemini (aistudio.google.com)",
+            "type": "string",
+            "required": true,
+            "prompt": "Google API key"
+        }
+    ]
+}

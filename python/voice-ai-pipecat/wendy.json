@@ -1,0 +1,30 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "audio"
+        },
+        {
+            "type": "gpu"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-models",
+            "path": "/models"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 60
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "open http://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

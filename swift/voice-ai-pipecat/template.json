@@ -1,0 +1,35 @@
+{
+    "name": "voice-ai-pipecat",
+    "description": "Voice AI assistant: Swift PythonKit bridge -> Pipecat + Gemini + local faster-whisper STT + Piper TTS",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP + WebSocket port",
+            "type": "integer",
+            "default": 6005,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "SWIFT_VERSION",
+            "description": "Swift toolchain version for swiftly",
+            "type": "string",
+            "default": "6.3",
+            "prompt": "Swift version"
+        },
+        {
+            "name": "GOOGLE_API_KEY",
+            "description": "API key for Gemini (aistudio.google.com)",
+            "type": "string",
+            "required": true,
+            "prompt": "Google API key"
+        }
+    ]
+}

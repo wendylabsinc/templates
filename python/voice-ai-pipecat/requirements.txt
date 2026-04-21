@@ -1,0 +1,7 @@
+pipecat-ai[websocket,google,whisper,piper]
+faster-whisper
+piper-tts
+fastapi
+uvicorn[standard]
+websockets
+python-dotenv

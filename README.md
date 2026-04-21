@@ -46,6 +46,17 @@ Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network 
 
 Live audio waveform visualization with GStreamer mic capture. Streams raw PCM S16LE 16kHz mono over WebSocket. Includes sample .wav files for playback. Entitlements: network (host), audio.
 
+### voice-ai-pipecat
+
+Always-on voice AI assistant: local [faster-whisper](https://github.com/SYSTRAN/faster-whisper) STT -> Gemini 2.5 Flash (with native Google Search grounding) -> local [Piper](https://github.com/rhasspy/piper) TTS, orchestrated by [Pipecat](https://github.com/pipecat-ai/pipecat). React visualizer ships two reactive line groups (blue = your voice, emerald = the bot). Entitlements: network (host), audio, gpu, persist (caches model weights at `/models`).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | Pipecat + FastAPI | 3005 | `python/voice-ai-pipecat/` |
+| Swift | PythonKit bridge -> Pipecat | 6005 | `swift/voice-ai-pipecat/` |
+
+The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into both language directories.
+
 ### common
 
 Shared building blocks (not selectable as templates):
@@ -53,6 +64,7 @@ Shared building blocks (not selectable as templates):
 - `shadcn-vite-frontend/` — Vite + React + shadcn/ui dashboard
 - `camera-feed-html/` — Webcam viewer HTML page
 - `audio-feed-html/` — Audio waveform visualizer HTML page
+- `voice-ai-pipecat-frontend/` — React + Three.js visualizer for the `voice-ai-pipecat` template (blue mic lines + emerald bot lines)
 
 ---
 

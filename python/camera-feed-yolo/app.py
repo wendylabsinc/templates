@@ -79,7 +79,8 @@ def _has_cuda() -> bool:
         import torch
         return torch.cuda.is_available()
     except Exception:
-        return hint is True
+        logger.warning("CUDA probe failed; falling back to CPU inference", exc_info=True)
+        return False
 
 
 def _is_rpi() -> bool:

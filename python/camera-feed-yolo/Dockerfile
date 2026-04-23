@@ -8,6 +8,7 @@
 
 ARG WENDY_PLATFORM=generic
 
+# ── NVIDIA Jetson base (CUDA-accelerated via L4T) ────────────────────────────
 FROM dustynv/pytorch:2.7-r36.4.0-cu128-24.04 AS base-nvidia-jetson
 
 # L4T base already ships CUDA torch/torchvision/OpenCV/numpy.
@@ -43,6 +44,7 @@ RUN pip3 install --no-cache-dir \
     ln -sf /opt/venv/bin/python3 /usr/local/bin/python3-venv
 
 
+# ── Generic CPU base (Raspberry Pi, unknown, or any non-accelerated device) ──
 FROM python:3.11-slim-bookworm AS base-generic
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -67,10 +69,27 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 
-# Final stage resolves to base-nvidia-jetson or base-generic based on WENDY_PLATFORM.
+# ── Final stage: WENDY_PLATFORM selects the hardware path ────────────────────
 FROM base-${WENDY_PLATFORM} AS final
 
 WORKDIR /app
+
+# Surface the device capabilities the CLI passed in so app.py can choose
+# GPU vs CPU inference at runtime without re-detecting hardware.
+ARG WENDY_PLATFORM=generic
+ARG WENDY_DEVICE_TYPE=""
+ARG WENDY_HAS_GPU=""
+ARG WENDY_GPU_VENDOR=""
+ARG WENDY_JETPACK_VERSION=""
+ARG WENDY_CUDA_VERSION=""
+ARG WENDY_DEBUG=false
+ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
+    WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE} \
+    WENDY_HAS_GPU=${WENDY_HAS_GPU} \
+    WENDY_GPU_VENDOR=${WENDY_GPU_VENDOR} \
+    WENDY_JETPACK_VERSION=${WENDY_JETPACK_VERSION} \
+    WENDY_CUDA_VERSION=${WENDY_CUDA_VERSION} \
+    WENDY_DEBUG=${WENDY_DEBUG}
 
 # Both bases install python3-gi via apt, which drops bindings under
 # /usr/lib/python3/dist-packages — a path the python image's /usr/local Python
@@ -85,25 +104,12 @@ RUN python3 -c "import gi; gi.require_version('Gst', '1.0'); from gi.repository 
 RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" && \
     [ -s /app/yolov8n.pt ] && [ "$(stat -c %s /app/yolov8n.pt)" -gt 6000000 ]
 
+RUN if [ "$WENDY_DEBUG" = "true" ]; then pip install --no-cache-dir debugpy; fi
+
 COPY app.py index.html ./
 COPY assets/ ./assets/
 
 ENV PYTHONUNBUFFERED=1
-
-# Surface the device capabilities the CLI passed in so app.py can choose
-# GPU vs CPU inference at runtime without re-detecting hardware.
-ARG WENDY_PLATFORM=generic
-ARG WENDY_DEVICE_TYPE=""
-ARG WENDY_HAS_GPU=""
-ARG WENDY_GPU_VENDOR=""
-ARG WENDY_JETPACK_VERSION=""
-ARG WENDY_CUDA_VERSION=""
-ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
-    WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE} \
-    WENDY_HAS_GPU=${WENDY_HAS_GPU} \
-    WENDY_GPU_VENDOR=${WENDY_GPU_VENDOR} \
-    WENDY_JETPACK_VERSION=${WENDY_JETPACK_VERSION} \
-    WENDY_CUDA_VERSION=${WENDY_CUDA_VERSION}
 
 EXPOSE {{.PORT}}
 

@@ -67,7 +67,7 @@ let SQLITE_DONE: Int32     = 101
 let SQLITE_INTEGER: Int32  = 1
 let SQLITE_TEXT: Int32     = 3
 let SQLITE_NULL: Int32     = 5
-let SQLITE_TRANSIENT = unsafeBitCast(-1, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
+nonisolated(unsafe) let SQLITE_TRANSIENT = unsafeBitCast(-1, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
 #endif
 
 /// Lightweight wrapper around a SQLite3 database pointer.

@@ -32,6 +32,12 @@ COPY assets/ ./assets/
 
 ENV PYTHONUNBUFFERED=1
 
+ARG WENDY_DEVICE_TYPE
+ARG WENDY_DEBUG=false
+ENV WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE}
+ENV WENDY_DEBUG=${WENDY_DEBUG}
+RUN if [ "$WENDY_DEBUG" = "true" ]; then pip install --no-cache-dir debugpy; fi
+
 EXPOSE {{.PORT}}
 
 CMD ["/app/venv/bin/uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{{.PORT}}"]

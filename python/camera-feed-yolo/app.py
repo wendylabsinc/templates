@@ -57,15 +57,37 @@ if _HAS_GSTREAMER:
     threading.Thread(target=_glib_loop.run, daemon=True).start()
 
 
+def _env_bool(name: str) -> bool | None:
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in ("true", "1", "yes"):
+        return True
+    if raw in ("false", "0", "no"):
+        return False
+    return None
+
+
 def _has_cuda() -> bool:
+    # wendy CLI bakes WENDY_HAS_GPU into the image from the agent's device
+    # capability probe (see WENDY_HAS_GPU / WENDY_GPU_VENDOR build args). Prefer
+    # that over runtime detection so CPU-only devices never load the CUDA path.
+    hint = _env_bool("WENDY_HAS_GPU")
+    if hint is False:
+        return False
+    if os.environ.get("WENDY_GPU_VENDOR", "").lower() not in ("", "nvidia"):
+        return False
     try:
         import torch
         return torch.cuda.is_available()
     except Exception:
-        return False
+        return hint is True
 
 
 def _is_rpi() -> bool:
+    device_type = os.environ.get("WENDY_DEVICE_TYPE", "")
+    if device_type.startswith("raspberrypi"):
+        return True
+    if device_type:
+        return False
     try:
         return "Raspberry Pi" in Path("/proc/device-tree/model").read_text()
     except Exception:
@@ -85,8 +107,11 @@ _INFERENCE_IMGSZ = 320 if _HAS_CUDA else 224
 # RPi5 browns out under GStreamer + inference when USB-powered; OpenCV idles lighter.
 _backend = os.environ.get("CAMERA_BACKEND", "auto").lower()
 _FORCE_OPENCV = not _HAS_GSTREAMER or (_backend == "opencv") or (_backend == "auto" and (IS_RPI or not _HAS_CUDA))
-logger.info("Platform: %s, CUDA: %s, capture: %s, max inference FPS: %s, imgsz: %s",
-            "rpi" if IS_RPI else "generic", _HAS_CUDA,
+logger.info("Platform: %s (device=%s, gpu=%s), CUDA: %s, capture: %s, max inference FPS: %s, imgsz: %s",
+            os.environ.get("WENDY_PLATFORM", "rpi" if IS_RPI else "generic"),
+            os.environ.get("WENDY_DEVICE_TYPE", "unknown"),
+            os.environ.get("WENDY_GPU_VENDOR", "none"),
+            _HAS_CUDA,
             "opencv" if _FORCE_OPENCV else "gstreamer", _MAX_INFERENCE_FPS, _INFERENCE_IMGSZ)
 
 _model: YOLO | None = None

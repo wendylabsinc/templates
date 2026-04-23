@@ -1,6 +1,16 @@
-{{if eq .TARGET "jetson"}}FROM dustynv/pytorch:2.7-r36.4.0-cu128-24.04
+# syntax=docker/dockerfile:1.6
+#
+# Base image is selected at `wendy run` time via the WENDY_PLATFORM build arg
+# that the wendy CLI injects after querying the target device:
+#   - nvidia-jetson -> dustynv/pytorch with CUDA/JetPack
+#   - generic       -> python:3.11-slim-bookworm (CPU inference)
+# Falls back to "generic" when no build arg is supplied (e.g. plain `docker build`).
 
-# L4T base already includes CUDA-enabled torch, torchvision, OpenCV, numpy.
+ARG WENDY_PLATFORM=generic
+
+FROM dustynv/pytorch:2.7-r36.4.0-cu128-24.04 AS base-nvidia-jetson
+
+# L4T base already ships CUDA torch/torchvision/OpenCV/numpy.
 # Add GStreamer + v4l so USB cameras work; install app-level Python deps on top.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-gi \
@@ -21,8 +31,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # /usr/local/bin/python3 which can't see the venv's site-packages).
 ENV PATH="/opt/venv/bin:${PATH}"
 
-WORKDIR /app
-
 # Pip will see the pre-installed torch>=2.2 and skip reinstalling it for ultralytics.
 # The dustynv base pins pip to Jetson-specific indexes that don't mirror fastapi/uvicorn —
 # override with real PyPI. Torch is pre-installed so ultralytics won't pull a CPU wheel.
@@ -33,7 +41,9 @@ RUN pip3 install --no-cache-dir \
     ultralytics && \
     ln -sf /opt/venv/bin/uvicorn /usr/local/bin/uvicorn && \
     ln -sf /opt/venv/bin/python3 /usr/local/bin/python3-venv
-{{else}}FROM python:3.11-slim-bookworm
+
+
+FROM python:3.11-slim-bookworm AS base-generic
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-gi \
@@ -53,11 +63,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+
+# Final stage resolves to base-nvidia-jetson or base-generic based on WENDY_PLATFORM.
+FROM base-${WENDY_PLATFORM} AS final
+
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-{{end}}
 # Both bases install python3-gi via apt, which drops bindings under
 # /usr/lib/python3/dist-packages — a path the python image's /usr/local Python
 # and dustynv's /opt/venv Python don't include by default. Expose it via
@@ -75,6 +89,21 @@ COPY app.py index.html ./
 COPY assets/ ./assets/
 
 ENV PYTHONUNBUFFERED=1
+
+# Surface the device capabilities the CLI passed in so app.py can choose
+# GPU vs CPU inference at runtime without re-detecting hardware.
+ARG WENDY_PLATFORM=generic
+ARG WENDY_DEVICE_TYPE=""
+ARG WENDY_HAS_GPU=""
+ARG WENDY_GPU_VENDOR=""
+ARG WENDY_JETPACK_VERSION=""
+ARG WENDY_CUDA_VERSION=""
+ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
+    WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE} \
+    WENDY_HAS_GPU=${WENDY_HAS_GPU} \
+    WENDY_GPU_VENDOR=${WENDY_GPU_VENDOR} \
+    WENDY_JETPACK_VERSION=${WENDY_JETPACK_VERSION} \
+    WENDY_CUDA_VERSION=${WENDY_CUDA_VERSION}
 
 EXPOSE {{.PORT}}
 

@@ -1,4 +1,4 @@
-pipecat-ai[websocket,google,whisper,piper]
+pipecat-ai[websocket,google,whisper,piper,silero]<1.0
 faster-whisper
 piper-tts
 fastapi

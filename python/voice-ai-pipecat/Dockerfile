@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     ffmpeg \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -29,6 +30,24 @@ ENV PATH="/app/venv/bin:$PATH"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download NLTK data at build time. Piper TTS uses punkt_tab for sentence
+# tokenization and tries to download it on first import, which fails inside
+# a container whose DNS isn't up at boot.
+ENV NLTK_DATA=/usr/local/share/nltk_data
+RUN /app/venv/bin/python -c "import nltk; nltk.download('punkt_tab', download_dir='/usr/local/share/nltk_data')"
+
+# Pre-download Piper voice (en_US-lessac-medium, ~63 MB) so the container can
+# start offline and avoid a ~5s first-connection stall.
+RUN mkdir -p /app/models/piper && \
+    curl -fsSL -o /app/models/piper/en_US-lessac-medium.onnx \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx && \
+    curl -fsSL -o /app/models/piper/en_US-lessac-medium.onnx.json \
+      https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
+
+# Pre-download faster-whisper TINY (~75 MB) into the default HF cache so the
+# first WebSocket connection doesn't block on a HuggingFace round-trip.
+RUN /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
 
 COPY main.py pipeline.py ./
 COPY --from=frontend /frontend/dist ./static

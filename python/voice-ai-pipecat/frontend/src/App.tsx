@@ -9,7 +9,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./components/ui/tooltip"
-import { useMicrophoneSource, useWebSocketSource } from "./audio"
+import { usePipecatClient } from "./audio"
 
 function resolveBotWsUrl(): string {
   const override = (import.meta.env.VITE_BOT_WS_URL as string | undefined) ?? null
@@ -26,10 +26,13 @@ function App() {
   // Only the browser mic source is wired up today; wendyos-sourced audio lands
   // once the agent client exists (see useWendyosMicrophones).
   const browserDeviceId = selection?.kind === "browser" ? selection.id : null
-  const mic = useMicrophoneSource(browserDeviceId, { muted })
 
   const botWsUrl = React.useMemo(resolveBotWsUrl, [])
-  const bot = useWebSocketSource({ url: botWsUrl, sampleRate: 16000 })
+  const client = usePipecatClient({
+    url: browserDeviceId ? botWsUrl : null,
+    inputDeviceId: browserDeviceId,
+    muted,
+  })
 
   const wendyosNotice =
     selection?.kind === "wendyos"
@@ -44,8 +47,8 @@ function App() {
       <main className="relative h-screen w-screen overflow-hidden bg-black text-white">
         {/* Visualizer Background */}
         <LifestreamVisualizer
-          micAnalyser={mic.analyser}
-          botAnalyser={bot.analyser}
+          micAnalyser={client.micAnalyser}
+          botAnalyser={client.botAnalyser}
           lineCount={40}
         />
 
@@ -70,8 +73,8 @@ function App() {
 
           <div className="mt-4">
             <ErrorAlerts
-              micError={mic.error}
-              botError={bot.error}
+              micError={client.error}
+              botError={null}
               wendyosError={wendyosNotice}
             />
           </div>

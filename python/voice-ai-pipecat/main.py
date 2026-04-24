@@ -18,6 +18,7 @@ from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.transports.websocket.fastapi import (
@@ -64,9 +65,11 @@ async def bot_audio(websocket: WebSocket) -> None:
         params=FastAPIWebsocketParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
+            audio_in_sample_rate=16000,
+            audio_out_sample_rate=16000,
             add_wav_header=False,
             serializer=ProtobufFrameSerializer(),
-            vad_enabled=True,
+            vad_analyzer=SileroVADAnalyzer(),
         ),
     )
 

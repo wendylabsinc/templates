@@ -69,41 +69,25 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
       enableCam: false,
       callbacks: {
         onConnected: () => {
-          console.log("[usePipecatClient] onConnected")
           if (disposed) return
           setStatus("active")
         },
         onDisconnected: () => {
-          console.log("[usePipecatClient] onDisconnected")
           if (disposed) return
           setStatus("idle")
         },
-        onBotReady: (data) => {
-          console.log("[usePipecatClient] onBotReady", data)
-        },
         onTrackStarted: (track, participant) => {
-          console.log("[usePipecatClient] onTrackStarted", { kind: track.kind, local: participant?.local, participant })
           if (disposed || track.kind !== "audio") return
           const analyser = buildAnalyser(track)
           if (participant?.local) setMicAnalyser(analyser)
           else setBotAnalyser(analyser)
         },
         onTrackStopped: (track, participant) => {
-          console.log("[usePipecatClient] onTrackStopped", { kind: track.kind, local: participant?.local })
           if (disposed || track.kind !== "audio") return
           if (participant?.local) setMicAnalyser(null)
           else setBotAnalyser(null)
         },
-        onLocalAudioLevel: (level) => {
-          const n = Number(level)
-          if (n > 0.05) console.log("[usePipecatClient] local mic level:", n.toFixed(3))
-        },
-        onRemoteAudioLevel: (level) => {
-          const n = Number(level)
-          if (n > 0.05) console.log("[usePipecatClient] remote bot level:", n.toFixed(3))
-        },
         onError: (message) => {
-          console.error("[usePipecatClient] onError", message)
           if (disposed) return
           setError(new Error(typeof message === "string" ? message : JSON.stringify(message)))
           setStatus("error")
@@ -111,17 +95,12 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
       },
     })
     clientRef.current = client
-    console.log("[usePipecatClient] client created", { url, micEnabled: true })
 
     void (async () => {
       try {
-        console.log("[usePipecatClient] calling initDevices...")
         await client.initDevices()
-        console.log("[usePipecatClient] initDevices done; connecting...", { url })
         await client.connect({ wsUrl: url })
-        console.log("[usePipecatClient] connect resolved")
       } catch (err) {
-        console.error("[usePipecatClient] connect failed", err)
         if (disposed) return
         setError(err as Error)
         setStatus("error")

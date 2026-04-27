@@ -259,12 +259,25 @@ impl YoloEngine {
         }
 
         let input_value = ort::value::Tensor::from_array(input)?;
-        let outputs = self.session.run(ort::inputs!["images" => input_value])?;
+        // ort 2.0.0-rc.9: `inputs!` returns `Result<Vec<_>>`; the `?` turns
+        // it into the `Vec` that `Session::run` accepts via `Into<SessionInputs>`.
+        let outputs = self.session.run(ort::inputs!["images" => input_value]?)?;
         let Some((_, output)) = outputs.iter().next() else {
             eprintln!("[yolo] inference returned no outputs");
             return Ok((Vec::new(), w, h));
         };
-        let view = output.try_extract_tensor::<f32>()?.into_dimensionality::<ndarray::Ix3>()?;
+        let dyn_view = output.try_extract_tensor::<f32>()?;
+        // rc.9's `ort::Error` doesn't impl `From<ShapeError>`, so we can't `?`
+        // straight through `into_dimensionality`. Fall back to empty detections
+        // if the model ever emits an unexpected rank — we'd see this once at
+        // startup, not a hot-path concern.
+        let view = match dyn_view.into_dimensionality::<ndarray::Ix3>() {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[yolo] unexpected output rank: {e}");
+                return Ok((Vec::new(), w, h));
+            }
+        };
         // YOLOv8 output shape: (1, 84, 8400). 4 box coords + 80 class scores.
         let preds = view.index_axis(Axis(0), 0); // (84, 8400)
         let n = preds.shape()[1];

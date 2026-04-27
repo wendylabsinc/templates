@@ -11,11 +11,15 @@ serde_json = "1"
 gstreamer = "0.23"
 gstreamer-app = "0.23"
 tower-http = { version = "0.6", features = ["fs"] }
-# Pinned to rc.9 (the rc that wraps ORT 1.20) to match the libonnxruntime.so
-# we link/load — both Microsoft's prebuilt 1.20.0 and the dustynv 1.20.x image.
-# `=` (not `^`) because Cargo's caret on pre-releases happily resolves rc.10+
-# (which target ORT 1.22/1.23/1.24) and breaks ABI / fails to compile.
+# rc.9 is the ort that wraps ORT 1.20, matching the libonnxruntime.so we
+# link/load (Microsoft's prebuilt 1.20.0 + the dustynv 1.20.x image). Both
+# `ort` and `ort-sys` need exact pins because Cargo's caret on pre-releases
+# treats `^2.0.0-rc.9` as "any 2.0.0-rc.X >= 9", and ort-sys flipped its
+# OrtApi field types from `Option<extern fn>` to bare `extern fn` after rc.9
+# — leaving rc.9's `.unwrap_or_else()` callers to fail to compile against
+# any later ort-sys.
 ort = { version = "=2.0.0-rc.9", default-features = false, features = ["load-dynamic", "ndarray"] }
+ort-sys = "=2.0.0-rc.9"
 ndarray = "0.16"
 turbojpeg = "1.1"
 

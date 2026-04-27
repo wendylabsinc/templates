@@ -91,13 +91,15 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
 WORKDIR /app
 COPY Cargo.toml ./
 COPY src ./src
+# index.html is embedded into the binary via `include_str!("../index.html")`
+# in src/main.rs, so it must be present before `cargo build`.
+COPY index.html ./
 
 RUN cargo build --release \
  && cp target/release/{{.APP_ID}} /usr/local/bin/{{.APP_ID}} \
  && rm -rf target
 
 COPY --from=model-export /export/yolov8n.onnx ./yolov8n.onnx
-COPY index.html ./
 COPY assets/ ./assets/
 
 EXPOSE {{.PORT}}

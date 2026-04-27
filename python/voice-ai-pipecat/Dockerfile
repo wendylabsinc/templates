@@ -16,12 +16,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    python3-dev \
+    gcc \
     alsa-utils \
+    libasound2 \
+    portaudio19-dev \
     libsndfile1 \
     ffmpeg \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Route ALSA "default" through the `plug` plugin to the PowerConf at hw:2,0.
+# The PowerConf only supports 48 kHz capture/playback at the hardware level,
+# so PortAudio direct-hw access fails when Silero VAD asks for 16 kHz. The
+# `plug` plugin adds in-kernel rate conversion, which is what makes
+# `arecord -D plughw:2,0 -r 16000` work. Keeping the override at the
+# default PCM means the app can use AUDIO_INPUT_DEVICE=default and stay at
+# 16 kHz everywhere. Adjust the slave card if your USB mic is on a
+# different ALSA card number — `arecord -l` inside the container shows the
+# enumeration.
+RUN printf 'pcm.!default {\n    type plug\n    slave.pcm "hw:2,0"\n}\nctl.!default {\n    type hw\n    card 2\n}\n' > /etc/asound.conf
 
 WORKDIR /app
 
@@ -57,6 +72,12 @@ COPY --from=frontend /frontend/dist ./static
 ENV GOOGLE_API_KEY={{.GOOGLE_API_KEY}}
 ENV PORT={{.PORT}}
 ENV PYTHONUNBUFFERED=1
+
+# PyAudio device indexes for the local audio path. "default" means PyAudio's
+# system default. After first deploy, look at the "PyAudio devices:" log line
+# main.py prints on startup and override these via `wendy run --var ...`.
+ENV AUDIO_INPUT_DEVICE={{.AUDIO_INPUT_DEVICE}}
+ENV AUDIO_OUTPUT_DEVICE={{.AUDIO_OUTPUT_DEVICE}}
 
 EXPOSE {{.PORT}}
 

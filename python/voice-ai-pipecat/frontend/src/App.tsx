@@ -22,14 +22,22 @@ function resolveBotWsUrl(): string {
 function App() {
   const [selection, setSelection] = React.useState<MicrophoneSelection | null>(null)
   const [muted, setMuted] = React.useState(false)
+  // When true the browser pipeline is intentionally disconnected so the
+  // server can resume its local mic+speaker. Re-arms automatically whenever
+  // the user picks a different mic.
+  const [handedOff, setHandedOff] = React.useState(false)
 
   // Only the browser mic source is wired up today; wendyos-sourced audio lands
   // once the agent client exists (see useWendyosMicrophones).
   const browserDeviceId = selection?.kind === "browser" ? selection.id : null
 
+  React.useEffect(() => {
+    setHandedOff(false)
+  }, [browserDeviceId])
+
   const botWsUrl = React.useMemo(resolveBotWsUrl, [])
   const client = usePipecatClient({
-    url: browserDeviceId ? botWsUrl : null,
+    url: browserDeviceId && !handedOff ? botWsUrl : null,
     inputDeviceId: browserDeviceId,
     muted,
   })
@@ -66,7 +74,23 @@ function App() {
               )}
             </div>
 
-            <div className="pointer-events-auto">
+            <div className="pointer-events-auto flex items-center gap-2">
+              {client.status === "active" && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => setHandedOff(true)}
+                      className="rounded-full border border-emerald-500/40 bg-black/60 px-3 py-1.5 text-sm text-emerald-300 transition-colors hover:bg-emerald-500/10 focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
+                    >
+                      Hand back to local mic
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={8}>
+                    Disconnect the browser so the device's local mic+speaker takes over.
+                  </TooltipContent>
+                </Tooltip>
+              )}
               <MicrophoneSelector onDeviceSelect={setSelection} />
             </div>
           </header>
@@ -110,10 +134,12 @@ function App() {
             <div className="max-w-md">
               <p className="text-emerald-300/40 text-xs italic">
                 {!selection
-                  ? "Please select a microphone"
-                  : muted
-                    ? "Microphone is muted"
-                    : "Speak to interact"}
+                  ? "Please select a microphone (or talk to the device directly)"
+                  : handedOff
+                    ? "Handed off to local mic — pick a microphone to take over"
+                    : muted
+                      ? "Microphone is muted"
+                      : "Speak to interact"}
               </p>
             </div>
 

@@ -23,6 +23,20 @@
             "type": "string",
             "required": true,
             "prompt": "Google API key"
+        },
+        {
+            "name": "AUDIO_INPUT_DEVICE",
+            "description": "PyAudio input device index for the local mic, or 'default'. main.py logs the enumeration on startup so you can pick the right index for your USB mic.",
+            "type": "string",
+            "default": "default",
+            "prompt": "Local mic device (PyAudio index or 'default')"
+        },
+        {
+            "name": "AUDIO_OUTPUT_DEVICE",
+            "description": "PyAudio output device index for the local speaker, or 'default'.",
+            "type": "string",
+            "default": "default",
+            "prompt": "Local speaker device (PyAudio index or 'default')"
         }
     ]
 }

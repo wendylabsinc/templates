@@ -71,7 +71,12 @@ def build_pipeline_task(transport: BaseTransport) -> PipelineTask:
     return PipelineTask(
         pipeline,
         params=PipelineParams(
-            allow_interruptions=True,
+            # Bot finishes its reply before listening again. Without this,
+            # near-field mic+speaker setups (e.g. PowerConf on a desk) pick
+            # up the bot's own TTS through residual leakage past hardware
+            # AEC, trigger VAD's "User started speaking", and self-cancel
+            # mid-sentence — so the user never hears a complete reply.
+            allow_interruptions=False,
             enable_metrics=True,
         ),
     )

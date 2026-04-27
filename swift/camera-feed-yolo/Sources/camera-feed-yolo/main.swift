@@ -420,11 +420,20 @@ actor MJPEGCamera {
     private func broadcast(_ frame: Data) async {
         latestJpeg = frame
         let meta = latestMetaJson
-        for (_, handler) in subscribers {
-            await handler(frame, meta)
-        }
-        if let cb = inferenceCallback {
-            await cb(frame)
+        let handlers = Array(subscribers.values)
+        let cb = inferenceCallback
+
+        await withTaskGroup(of: Void.self) { group in
+            for handler in handlers {
+                group.addTask {
+                    await handler(frame, meta)
+                }
+            }
+            if let cb {
+                group.addTask {
+                    await cb(frame)
+                }
+            }
         }
     }
 
@@ -580,10 +589,30 @@ struct CameraFeedYoloApp {
                 body: .init(byteBuffer: buffer))
         }
         router.get("/assets/*") { request, _ -> Response in
-            let p = request.uri.path
-            let filePath = String(p.dropFirst())
+            let requestPath = request.uri.path
+            let prefix = "/assets/"
+            guard requestPath.hasPrefix(prefix) else { return Response(status: .badRequest) }
+
+            let relativePath = String(requestPath.dropFirst(prefix.count))
+            guard !relativePath.isEmpty, !relativePath.hasPrefix("/") else {
+                return Response(status: .badRequest)
+            }
+
+            let pathComponents = (relativePath as NSString).pathComponents
+            guard !pathComponents.contains("..") else {
+                return Response(status: .badRequest)
+            }
+
+            let assetsBaseURL = URL(fileURLWithPath: "./assets", isDirectory: true).standardizedFileURL
+            let fileURL = assetsBaseURL.appendingPathComponent(relativePath).standardizedFileURL
+            let assetsBasePath = assetsBaseURL.path.hasSuffix("/") ? assetsBaseURL.path : assetsBaseURL.path + "/"
+            guard fileURL.path.hasPrefix(assetsBasePath) else {
+                return Response(status: .badRequest)
+            }
+
+            let filePath = fileURL.path
             guard FileManager.default.fileExists(atPath: filePath) else { return Response(status: .notFound) }
-            let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
+            let data = try Data(contentsOf: fileURL)
             let ct: String = filePath.hasSuffix(".svg") ? "image/svg+xml"
                 : filePath.hasSuffix(".png") ? "image/png"
                 : filePath.hasSuffix(".jpg") || filePath.hasSuffix(".jpeg") ? "image/jpeg"

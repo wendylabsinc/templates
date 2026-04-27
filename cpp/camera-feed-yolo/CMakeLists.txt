@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Drogon REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-app-1.0)
-find_package(JPEG REQUIRED)
+pkg_check_modules(TURBOJPEG REQUIRED libturbojpeg)
 
 # ONNX Runtime is installed under /usr/local by both Dockerfile bases.
 find_path(ONNXRUNTIME_INCLUDE_DIR
@@ -22,11 +22,12 @@ find_library(ONNXRUNTIME_LIB onnxruntime
 add_executable({{.APP_ID}} main.cpp)
 target_include_directories({{.APP_ID}} PRIVATE
     ${GST_INCLUDE_DIRS}
+    ${TURBOJPEG_INCLUDE_DIRS}
     ${ONNXRUNTIME_INCLUDE_DIR}
     ${ONNXRUNTIME_INCLUDE_DIR}/onnxruntime)
 target_link_libraries({{.APP_ID}} PRIVATE
     Drogon::Drogon
     ${GST_LIBRARIES}
     ${ONNXRUNTIME_LIB}
-    JPEG::JPEG
+    ${TURBOJPEG_LIBRARIES}
     pthread)

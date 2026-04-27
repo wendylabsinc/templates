@@ -9,11 +9,14 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>

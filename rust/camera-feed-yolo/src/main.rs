@@ -457,6 +457,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
         }
     }
 
+    drop(rx);
     if state.frames_tx.receiver_count() == 0 {
         let mut cam = state.camera.lock().unwrap();
         cam.stop();

@@ -11,7 +11,11 @@ serde_json = "1"
 gstreamer = "0.23"
 gstreamer-app = "0.23"
 tower-http = { version = "0.6", features = ["fs"] }
-ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "ndarray"] }
+# Pinned to rc.9 (the rc that wraps ORT 1.20) to match the libonnxruntime.so
+# we link/load — both Microsoft's prebuilt 1.20.0 and the dustynv 1.20.x image.
+# `=` (not `^`) because Cargo's caret on pre-releases happily resolves rc.10+
+# (which target ORT 1.22/1.23/1.24) and breaks ABI / fails to compile.
+ort = { version = "=2.0.0-rc.9", default-features = false, features = ["load-dynamic", "ndarray"] }
 ndarray = "0.16"
 turbojpeg = "1.1"
 

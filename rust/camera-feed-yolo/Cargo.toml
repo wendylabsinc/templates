@@ -1,0 +1,20 @@
+[package]
+name = "{{.APP_ID}}"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = { version = "0.8.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+gstreamer = "0.23"
+gstreamer-app = "0.23"
+tower-http = { version = "0.6", features = ["fs"] }
+ort = { version = "2.0.0-rc.10", default-features = false, features = ["load-dynamic", "ndarray"] }
+ndarray = "0.16"
+turbojpeg = "1.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

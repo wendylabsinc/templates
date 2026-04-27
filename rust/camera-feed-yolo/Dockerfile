@@ -25,13 +25,14 @@ FROM dustynv/onnxruntime:1.20.0-r36.4.0 AS base-nvidia-jetson
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates pkg-config build-essential \
+    cmake nasm \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
-    v4l-utils libturbojpeg0-dev \
+    v4l-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust via rustup (dustynv's base has no Rust toolchain).
@@ -51,14 +52,15 @@ RUN LIB=$(find / -name "libonnxruntime.so*" 2>/dev/null | grep -v __pycache__ | 
 FROM rust:1.88-slim AS base-generic
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates pkg-config \
+    curl ca-certificates pkg-config build-essential \
+    cmake nasm \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
-    v4l-utils libturbojpeg0-dev \
+    v4l-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Microsoft prebuilt onnxruntime CPU release. asset name uses x64 / aarch64.
@@ -85,7 +87,7 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
     WENDY_HAS_GPU=${WENDY_HAS_GPU} \
     WENDY_GPU_VENDOR=${WENDY_GPU_VENDOR} \
     ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so \
-    TURBOJPEG_SOURCE=pkg-config
+    TURBOJPEG_SOURCE=vendor
 
 WORKDIR /app
 COPY Cargo.toml ./

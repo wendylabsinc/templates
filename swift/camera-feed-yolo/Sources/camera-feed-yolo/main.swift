@@ -92,12 +92,12 @@ private func checkStatus(_ status: OpaquePointer?, _ api: UnsafePointer<OrtApi>)
     throw NSError(domain: "ort", code: 1, userInfo: [NSLocalizedDescriptionKey: msg])
 }
 
-actor YoloEngine {
-    // `api` is the process-wide ORT function table — immutable and safe to read
-    // from any context (including init closures and deinit, both of which the
-    // compiler treats as nonisolated). nonisolated(unsafe) sidesteps the
-    // Sendable check on UnsafePointer<OrtApi>.
-    nonisolated(unsafe) private let api: UnsafePointer<OrtApi>
+// Wraps the synchronous ORT C API. Driven by a single Task.detached consumer,
+// so a `final class` (vs. an `actor`) is the right shape — it avoids Swift 6
+// strict-concurrency errors on the non-Sendable raw pointers stored here, and
+// the C-API state isn't safe to call concurrently anyway.
+final class YoloEngine: @unchecked Sendable {
+    private let api: UnsafePointer<OrtApi>
     private var env: OpaquePointer?
     private var session: OpaquePointer?
     private var memInfo: OpaquePointer?
@@ -236,9 +236,9 @@ actor YoloEngine {
 
         // Build the const-char-pointer arrays Swift-side; ORT expects
         // (input_names, inputs, input_len, output_names, output_names_len, outputs).
-        var inNames: [UnsafePointer<CChar>?] = [inputName.map { UnsafePointer($0) }]
-        var outNames: [UnsafePointer<CChar>?] = [outputName.map { UnsafePointer($0) }]
-        var inValues: [OpaquePointer?] = [inTensor]
+        let inNames: [UnsafePointer<CChar>?] = [inputName.map { UnsafePointer($0) }]
+        let outNames: [UnsafePointer<CChar>?] = [outputName.map { UnsafePointer($0) }]
+        let inValues: [OpaquePointer?] = [inTensor]
         var outValues: [OpaquePointer?] = [nil]
 
         let runOk = inNames.withUnsafeBufferPointer { inNamesBuf -> Bool in
@@ -575,7 +575,7 @@ struct CameraFeedYoloApp {
                 }
                 let conf = await confidence.get()
                 let t0 = Date()
-                let result = await engine.infer(jpeg: frame, confThreshold: conf)
+                let result = engine.infer(jpeg: frame, confThreshold: conf)
                 let inferenceMs = Date().timeIntervalSince(t0) * 1000
                 lastRun = Date()
                 guard let (boxes, w, h) = result else { continue }

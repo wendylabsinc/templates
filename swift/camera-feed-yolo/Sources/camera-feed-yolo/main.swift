@@ -92,10 +92,11 @@ private func checkStatus(_ status: OpaquePointer?, _ api: UnsafePointer<OrtApi>)
     throw NSError(domain: "ort", code: 1, userInfo: [NSLocalizedDescriptionKey: msg])
 }
 
-// Wraps the synchronous ORT C API. Driven by a single Task.detached consumer,
-// so a `final class` (vs. an `actor`) is the right shape — it avoids Swift 6
-// strict-concurrency errors on the non-Sendable raw pointers stored here, and
-// the C-API state isn't safe to call concurrently anyway.
+// `final class` (not `actor`): actor's init and deinit are nonisolated, so
+// once `withCString` captures self mid-init the remaining stored-property
+// writes cross actor isolation, and deinit can't reach the C handles to
+// release them. Single consumer (the Task.detached in main); @unchecked
+// Sendable is the social contract that lets the engine move into that task.
 final class YoloEngine: @unchecked Sendable {
     private let api: UnsafePointer<OrtApi>
     private var env: OpaquePointer?

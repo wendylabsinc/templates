@@ -15,7 +15,10 @@ use ort::execution_providers::{CPUExecutionProvider, CUDAExecutionProvider};
 use ort::session::{builder::GraphOptimizationLevel, Session};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, RwLock,
+};
 use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, watch};
 
@@ -46,6 +49,8 @@ struct MJPEGCamera {
     pipeline: Option<gstreamer::Pipeline>,
     device: String,
     use_passthrough: bool,
+    last_frame_at: Arc<Mutex<Option<Instant>>>,
+    has_frames: Arc<AtomicBool>,
 }
 
 impl MJPEGCamera {
@@ -54,6 +59,8 @@ impl MJPEGCamera {
             pipeline: None,
             device: "/dev/video0".to_string(),
             use_passthrough,
+            last_frame_at: Arc::new(Mutex::new(None)),
+            has_frames: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -99,6 +106,8 @@ impl MJPEGCamera {
             return;
         };
 
+        let last_frame_at = self.last_frame_at.clone();
+        let has_frames = self.has_frames.clone();
         sink.set_callbacks(
             gstreamer_app::AppSinkCallbacks::builder()
                 .new_sample(move |appsink| {
@@ -112,6 +121,8 @@ impl MJPEGCamera {
                         let bytes = map.as_slice().to_vec();
                         let _ = frames_tx.send(bytes.clone());
                         let _ = latest_tx.send(Some(bytes));
+                        *last_frame_at.lock().unwrap() = Some(Instant::now());
+                        has_frames.store(true, Ordering::Release);
                     }
                     Ok(gstreamer::FlowSuccess::Ok)
                 })
@@ -120,9 +131,10 @@ impl MJPEGCamera {
 
         if let Err(err) = pipeline.set_state(gstreamer::State::Playing) {
             eprintln!("[gst] set_state(Playing) failed: {err}");
-        } else {
-            println!("[gst] pipeline started on {device} (passthrough={})", self.use_passthrough);
+            let _ = pipeline.set_state(gstreamer::State::Null);
+            return;
         }
+        println!("[gst] pipeline started on {device} (passthrough={})", self.use_passthrough);
         self.pipeline = Some(pipeline);
     }
 
@@ -130,6 +142,12 @@ impl MJPEGCamera {
         if let Some(pipeline) = self.pipeline.take() {
             let _ = pipeline.set_state(gstreamer::State::Null);
         }
+        *self.last_frame_at.lock().unwrap() = None;
+        self.has_frames.store(false, Ordering::Release);
+    }
+
+    fn last_frame_at(&self) -> Option<Instant> {
+        *self.last_frame_at.lock().unwrap()
     }
 }
 
@@ -216,7 +234,10 @@ impl YoloEngine {
 
         let input_value = ort::value::Tensor::from_array(input)?;
         let outputs = self.session.run(ort::inputs!["images" => input_value])?;
-        let output = outputs.iter().next().unwrap().1;
+        let Some((_, output)) = outputs.iter().next() else {
+            eprintln!("[yolo] inference returned no outputs");
+            return Ok((Vec::new(), w, h));
+        };
         let view = output.try_extract_tensor::<f32>()?.into_dimensionality::<ndarray::Ix3>()?;
         // YOLOv8 output shape: (1, 84, 8400). 4 box coords + 80 class scores.
         let preds = view.index_axis(Axis(0), 0); // (84, 8400)
@@ -322,26 +343,73 @@ impl Default for MetaState {
 }
 
 // ---------------------------------------------------------------------------
+// Watchdog: restart pipeline with backoff if it failed to start or stalled
+// while clients are connected. Mirrors python's _restart_until_available.
+// ---------------------------------------------------------------------------
+
+fn spawn_watchdog(state: AppState) {
+    tokio::spawn(async move {
+        let stall_timeout = Duration::from_secs(2);
+        let mut delay = Duration::from_millis(1000);
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            if state.frames_tx.receiver_count() == 0 {
+                delay = Duration::from_millis(1000);
+                continue;
+            }
+
+            let mut cam = state.camera.lock().unwrap();
+            let pipeline_alive = cam.pipeline.is_some();
+            let stalled = pipeline_alive
+                && cam
+                    .last_frame_at()
+                    .map(|t| t.elapsed() > stall_timeout)
+                    .unwrap_or(false);
+            if stalled {
+                eprintln!("[gst] pipeline stalled — restarting");
+                cam.stop();
+            }
+
+            if cam.pipeline.is_none() {
+                let device = cam.device.clone();
+                cam.start(&device, state.frames_tx.clone(), state.latest_tx.clone());
+                if cam.pipeline.is_some() {
+                    delay = Duration::from_millis(1000);
+                } else {
+                    drop(cam);
+                    eprintln!("[gst] retry in {}ms", delay.as_millis());
+                    tokio::time::sleep(delay).await;
+                    delay = (delay.mul_f32(1.5)).min(Duration::from_secs(5));
+                }
+            }
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Inference task
 // ---------------------------------------------------------------------------
 
-fn spawn_inference_task(state: AppState, mut latest_rx: watch::Receiver<Option<Vec<u8>>>, use_gpu: bool) {
+fn spawn_inference_task(
+    state: AppState,
+    mut latest_rx: watch::Receiver<Option<Vec<u8>>>,
+    mut engine: YoloEngine,
+    use_gpu: bool,
+) {
     std::thread::spawn(move || {
-        let mut engine = match YoloEngine::new(use_gpu) {
-            Ok(e) => e,
-            Err(err) => {
-                eprintln!("[yolo] failed to load model: {err}");
-                return;
-            }
-        };
         let min_interval = if use_gpu {
             Duration::from_millis(1000 / 15)
         } else {
             Duration::from_millis(1000 / 3)
         };
         let mut last_run = Instant::now() - min_interval;
-        // Tokio runtime not needed in this thread; block on watch updates via std.
-        let rt = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        let rt = match tokio::runtime::Builder::new_current_thread().enable_time().build() {
+            Ok(rt) => rt,
+            Err(err) => {
+                eprintln!("[yolo] inference runtime failed: {err}");
+                return;
+            }
+        };
         rt.block_on(async move {
             loop {
                 if latest_rx.changed().await.is_err() {
@@ -558,7 +626,16 @@ async fn main() {
         confidence: Arc::new(RwLock::new(0.25)),
     };
 
-    spawn_inference_task(state.clone(), latest_rx, use_gpu);
+    let engine = match YoloEngine::new(use_gpu) {
+        Ok(e) => e,
+        Err(err) => {
+            eprintln!("[yolo] failed to load model: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    spawn_inference_task(state.clone(), latest_rx, engine, use_gpu);
+    spawn_watchdog(state.clone());
 
     let app = Router::new()
         .route("/", get(index))

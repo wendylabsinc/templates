@@ -343,31 +343,10 @@ def build_source(device_id: str | None = None) -> str:
     return src
 
 
-_rng = np.random.default_rng(42)
-_COLORS = [tuple(int(c) for c in row) for row in _rng.integers(60, 255, size=(80, 3))]
-
-
-def _draw_detections(frame, detections, det_shape, names):
-    if not detections:
-        return
-    h, w = frame.shape[:2]
-    dh, dw = det_shape
-    sx, sy = w / dw, h / dh
-    for x1, y1, x2, y2, conf, cls_id in detections:
-        ix1, iy1 = int(x1 * sx), int(y1 * sy)
-        ix2, iy2 = int(x2 * sx), int(y2 * sy)
-        color = _COLORS[cls_id % 80]
-        cv2.rectangle(frame, (ix1, iy1), (ix2, iy2), color, 2)
-        label = f"{names[cls_id]} {conf:.2f}"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-        cv2.rectangle(frame, (ix1, iy1 - th - 8), (ix1 + tw + 4, iy1), color, -1)
-        cv2.putText(frame, label, (ix1 + 2, iy1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
-
-
 class YOLOCamera:
-    """Display runs at camera rate by drawing cached boxes each frame; inference runs in a
-    background thread at its own (lower) rate and updates the cache — so slow YOLO never
-    stalls the stream."""
+    """Camera frames stream at camera rate; inference runs in a background thread at
+    its own (lower) rate and publishes box metadata that the client overlays as a canvas
+    on top of the raw JPEG — so slow YOLO never stalls the stream."""
 
     def __init__(self):
         self.pipeline = None
@@ -381,11 +360,8 @@ class YOLOCamera:
         self._confidence = 0.25
         self._latest_raw: bytes | None = None
         self._raw_event = threading.Event()
-        self._cached_dets: list[tuple] = []
-        self._cached_det_shape: tuple[int, int] = (1, 1)
-        self._cached_meta: str = '{"detections":0,"inference_ms":0,"classes":{}}'
-        self._last_meta: dict = {"detections": 0, "inference_ms": 0, "classes": {}}
-        self._annotated_jpeg: bytes | None = None
+        self._cached_meta: str = '{"detections":0,"inference_ms":0,"classes":{},"boxes":[],"frame_w":0,"frame_h":0}'
+        self._last_meta: dict = {"detections": 0, "inference_ms": 0, "classes": {}, "boxes": [], "frame_w": 0, "frame_h": 0}
         self._capture_mode: str = "opencv" if _FORCE_OPENCV else "gstreamer"
         self._opencv_thread: threading.Thread | None = None
         self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
@@ -586,14 +562,11 @@ class YOLOCamera:
             return
         with self._lock:
             has_clients = bool(self.queues)
-            annotated = self._annotated_jpeg
             meta = self._cached_meta
             queues = list(self.queues.values())
 
         if not has_clients:
             return
-
-        out_bytes = annotated if annotated is not None else raw_jpeg
 
         def _do_push():
             for q in queues:
@@ -603,7 +576,7 @@ class YOLOCamera:
                     except asyncio.QueueEmpty:
                         pass
                 try:
-                    q.put_nowait((out_bytes, meta))
+                    q.put_nowait((raw_jpeg, meta))
                 except asyncio.QueueFull:
                     pass
 
@@ -740,36 +713,35 @@ class YOLOCamera:
             inference_ms = (time.monotonic() - t0) * 1000
             last_inference = time.monotonic()
 
-            dets = []
+            boxes_out: list[dict] = []
             classes: dict[str, int] = {}
             for box in results[0].boxes:
                 xyxy = box.xyxy[0].tolist() if hasattr(box.xyxy, 'tolist') else list(box.xyxy[0])
                 cls_id = int(box.cls)
                 c = float(box.conf)
-                dets.append((xyxy[0], xyxy[1], xyxy[2], xyxy[3], c, cls_id))
                 cls_name = model.names[cls_id]
+                boxes_out.append({
+                    "x1": float(xyxy[0]), "y1": float(xyxy[1]),
+                    "x2": float(xyxy[2]), "y2": float(xyxy[3]),
+                    "conf": c, "cls": cls_id, "name": cls_name,
+                })
                 classes[cls_name] = classes.get(cls_name, 0) + 1
 
-            meta = json.dumps({
-                "detections": len(dets),
+            meta_dict = {
+                "detections": len(boxes_out),
                 "inference_ms": round(inference_ms, 1),
                 "classes": classes,
-            })
-
-            if dets:
-                _draw_detections(frame, dets, (h, w), model.names)
-            ok_enc, jpeg_buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
-            annotated = jpeg_buf.tobytes() if ok_enc else None
+                "boxes": boxes_out,
+                "frame_w": w,
+                "frame_h": h,
+            }
 
             with self._lock:
-                self._cached_dets = dets
-                self._cached_det_shape = (h, w)
-                self._cached_meta = meta
-                self._last_meta = {"detections": len(dets), "inference_ms": round(inference_ms, 1), "classes": classes}
-                self._annotated_jpeg = annotated
+                self._cached_meta = json.dumps(meta_dict)
+                self._last_meta = meta_dict
 
             if _FORCE_OPENCV:
-                self._distribute_frame(annotated if annotated is not None else raw)
+                self._distribute_frame(raw)
 
     async def add_client(self, ws: WebSocket) -> asyncio.Queue:
         self._loop = asyncio.get_running_loop()
@@ -802,8 +774,6 @@ class YOLOCamera:
     async def switch_camera(self, device_id: str):
         with self._lock:
             self._current_device = device_id
-            self._cached_dets = []
-            self._annotated_jpeg = None
             if self._capture_mode == "gstreamer":
                 self._clear_pipeline_locked()
 

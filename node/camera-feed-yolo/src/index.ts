@@ -68,6 +68,8 @@ class MJPEGCamera {
   private clients: Set<WebSocket> = new Set();
   private buffer: Buffer = Buffer.alloc(0);
   private listeners: Set<FrameListener> = new Set();
+  private retryDelayMs = 1000;
+  private retryTimer: NodeJS.Timeout | null = null;
 
   addClient(ws: WebSocket): void {
     this.clients.add(ws);
@@ -82,6 +84,25 @@ class MJPEGCamera {
   switchCamera(device: string): void {
     this.stopPipeline();
     this.startPipeline(device);
+  }
+
+  private scheduleRetry(): void {
+    if (this.retryTimer || this.clients.size === 0) return;
+    const delay = this.retryDelayMs;
+    this.retryDelayMs = Math.min(this.retryDelayMs * 1.5, 5000);
+    console.log(`[gst] retrying pipeline in ${delay}ms`);
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      if (this.clients.size > 0 && !this.process) this.startPipeline(this.device);
+    }, delay);
+  }
+
+  private resetRetryBackoff(): void {
+    this.retryDelayMs = 1000;
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
   }
 
   onFrame(cb: FrameListener): () => void {
@@ -103,7 +124,17 @@ class MJPEGCamera {
     console.log(`[gst] starting pipeline for ${device} (passthrough=${USE_PASSTHROUGH})`);
 
     this.process = spawn("gst-launch-1.0", args);
+    let gotFrame = false;
+    this.process.on("error", (err) => {
+      console.error("[gst] spawn failed:", err);
+      this.process = null;
+      this.scheduleRetry();
+    });
     this.process.stdout?.on("data", (chunk: Buffer) => {
+      if (!gotFrame) {
+        gotFrame = true;
+        this.resetRetryBackoff();
+      }
       this.buffer = Buffer.concat([this.buffer, chunk]);
       this.extractFrames();
     });
@@ -113,10 +144,12 @@ class MJPEGCamera {
     this.process.on("close", (code) => {
       console.log(`[gst] process exited with code ${code}`);
       this.process = null;
+      this.scheduleRetry();
     });
   }
 
   private stopPipeline(): void {
+    this.resetRetryBackoff();
     if (this.process) {
       this.process.kill("SIGTERM");
       this.process = null;
@@ -128,7 +161,11 @@ class MJPEGCamera {
     while (true) {
       const start = this.findMarker(0xff, 0xd8);
       if (start === -1) {
-        this.buffer = Buffer.alloc(0);
+        // Keep the trailing byte in case it's the leading 0xFF of an SOI
+        // marker split across chunks; otherwise we'd lose the next frame.
+        if (this.buffer.length > 0) {
+          this.buffer = this.buffer.subarray(this.buffer.length - 1);
+        }
         break;
       }
       if (start > 0) this.buffer = this.buffer.subarray(start);
@@ -306,13 +343,17 @@ let pendingJpeg: Buffer | null = null;
 let inferenceBusy = false;
 let lastInferenceTs = 0;
 
+// If a slow client lets bufferedAmount grow past this we skip frames for that
+// client until it drains, instead of letting memory balloon.
+const WS_BACKPRESSURE_BYTES = 4 * 1024 * 1024;
+
 camera.onFrame((jpeg) => {
   latestRawJpeg = jpeg;
   pendingJpeg = jpeg;
-  // Broadcast to clients immediately at camera rate.
   const metaText = JSON.stringify(latestMeta);
   for (const client of camera.clientList) {
     if (client.readyState !== WebSocket.OPEN) continue;
+    if (client.bufferedAmount > WS_BACKPRESSURE_BYTES) continue;
     try {
       client.send(metaText);
       client.send(jpeg);
@@ -320,7 +361,6 @@ camera.onFrame((jpeg) => {
       console.error("[ws] send failed", e);
     }
   }
-  // Schedule inference (debounced).
   void runInferenceIfReady();
 });
 
@@ -349,6 +389,7 @@ async function runInferenceIfReady(): Promise<void> {
     };
   } catch (e) {
     console.error("[yolo] inference error", e);
+    lastInferenceTs = performance.now();
   } finally {
     inferenceBusy = false;
   }
@@ -365,25 +406,31 @@ const wss = new WebSocketServer({ server, path: "/stream" });
 wss.on("connection", (ws) => {
   console.log("[ws] client connected");
   camera.addClient(ws);
-  // Prime the new client with the most recent frame + meta if we have one.
   if (latestRawJpeg) {
     try {
       ws.send(JSON.stringify(latestMeta));
       ws.send(latestRawJpeg);
-    } catch {}
+    } catch (e) {
+      console.error("[ws] prime send failed", e);
+    }
   }
   ws.on("message", (msg) => {
+    let data: unknown;
     try {
-      const data = JSON.parse(msg.toString());
-      if (typeof data.switch_camera === "string") {
-        console.log(`[ws] switching camera to ${data.switch_camera}`);
-        camera.switchCamera(data.switch_camera);
-      }
-      if (typeof data.confidence === "number") {
-        confidence = clamp(data.confidence, 0.05, 0.95);
-        console.log(`[yolo] confidence -> ${confidence.toFixed(2)}`);
-      }
-    } catch {}
+      data = JSON.parse(msg.toString());
+    } catch (e) {
+      console.warn("[ws] malformed client message:", e);
+      return;
+    }
+    const cmd = data as { switch_camera?: unknown; confidence?: unknown };
+    if (typeof cmd.switch_camera === "string") {
+      console.log(`[ws] switching camera to ${cmd.switch_camera}`);
+      camera.switchCamera(cmd.switch_camera);
+    }
+    if (typeof cmd.confidence === "number") {
+      confidence = clamp(cmd.confidence, 0.05, 0.95);
+      console.log(`[yolo] confidence -> ${confidence.toFixed(2)}`);
+    }
   });
   ws.on("close", () => {
     console.log("[ws] client disconnected");
@@ -428,6 +475,7 @@ app.get("/cameras", (_req, res) => {
     console.log("[yolo] model loaded");
   } catch (e) {
     console.error("[yolo] failed to load model:", e);
+    process.exit(1);
   }
   server.listen(PORT, () => {
     console.log(`Camera feed (YOLO) server listening on http://${WENDY_HOSTNAME}:${PORT}`);

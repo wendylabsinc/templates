@@ -1,9 +1,9 @@
 # syntax=docker/dockerfile:1.6
 #
 # Multi-stage build keyed on WENDY_PLATFORM.
-#   nvidia-jetson -> dustynv/onnxruntime + Node 22 (CUDA EP via system libonnxruntime;
-#                    onnxruntime-node will use its bundled CPU EP on aarch64,
-#                    same fallback the Python path takes when CUDA isn't usable).
+#   nvidia-jetson -> dustynv/onnxruntime + Node 22.
+#                    Requested providers are ["cuda","cpu"]; ORT picks CPU when
+#                    the bundled binary doesn't include a CUDA EP for the host.
 #   generic       -> node:22-slim + Microsoft prebuilt CPU onnxruntime.
 
 ARG WENDY_PLATFORM=generic

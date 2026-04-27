@@ -130,7 +130,6 @@ class YoloEngine
             tjDestroy(decoder_);
     }
 
-    // Returns (detections, original_w, original_h). Empty vec on decode failure.
     bool infer(const std::vector<uint8_t> &jpeg, float confThreshold,
                std::vector<Detection> &out, int &origW, int &origH)
     {
@@ -275,14 +274,7 @@ class YoloCamera
     {
         useGpu_ = useGpu;
         usePassthrough_ = usePassthrough;
-        try
-        {
-            engine_ = std::make_unique<YoloEngine>("yolov8n.onnx", useGpu_);
-        }
-        catch (const std::exception &e)
-        {
-            LOG_ERROR << "[yolo] failed to load model: " << e.what();
-        }
+        engine_ = std::make_unique<YoloEngine>("yolov8n.onnx", useGpu_);
         inferenceThread_ = std::thread(&YoloCamera::inferenceLoop, this);
     }
 
@@ -299,34 +291,71 @@ class YoloCamera
 
     void addClient(const drogon::WebSocketConnectionPtr &conn)
     {
-        std::lock_guard<std::mutex> lock(clientsMutex_);
-        clients_.insert(conn);
-        if (clients_.size() == 1)
+        bool firstClient = false;
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex_);
+            clients_.insert(conn);
+            firstClient = clients_.size() == 1;
+        }
+        if (firstClient)
+        {
+            retryDelayMs_ = 1000;
+            nextRetryAt_ = {};
             startPipeline();
+            if (pipeline_ == nullptr)
+            {
+                nextRetryAt_ = std::chrono::steady_clock::now() +
+                               std::chrono::milliseconds(retryDelayMs_);
+                retryDelayMs_ = std::min<int64_t>(
+                    static_cast<int64_t>(retryDelayMs_ * 1.5), 5000);
+            }
+        }
     }
 
     void removeClient(const drogon::WebSocketConnectionPtr &conn)
     {
-        std::lock_guard<std::mutex> lock(clientsMutex_);
-        clients_.erase(conn);
-        if (clients_.empty())
+        bool lastClient = false;
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex_);
+            clients_.erase(conn);
+            lastClient = clients_.empty();
+        }
+        if (lastClient)
             stopPipeline();
     }
 
     void switchDevice(const std::string &device)
     {
-        std::lock_guard<std::mutex> lock(clientsMutex_);
-        device_ = device;
-        if (!clients_.empty())
+        bool hadClients = false;
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex_);
+            device_ = device;
+            hadClients = !clients_.empty();
+        }
+        if (hadClients)
         {
             stopPipeline();
             startPipeline();
         }
     }
 
-    // Called by Drogon on the main loop: send latest meta + JPEG to every client.
     void broadcast()
     {
+        std::vector<drogon::WebSocketConnectionPtr> targets;
+        {
+            std::lock_guard<std::mutex> lock(clientsMutex_);
+            if (clients_.empty())
+                return;
+            targets.reserve(clients_.size());
+            for (auto &conn : clients_)
+                if (conn->connected())
+                    targets.push_back(conn);
+        }
+        if (targets.empty())
+            return;
+
+        watchdogTick();
+
         std::vector<uint8_t> frame;
         std::string meta;
         {
@@ -336,14 +365,47 @@ class YoloCamera
         }
         if (frame.empty())
             return;
-        std::lock_guard<std::mutex> lock(clientsMutex_);
-        for (auto &conn : clients_)
+
+        for (auto &conn : targets)
         {
-            if (!conn->connected())
-                continue;
             conn->send(meta, drogon::WebSocketMessageType::Text);
             conn->send(reinterpret_cast<const char *>(frame.data()), frame.size(),
                        drogon::WebSocketMessageType::Binary);
+        }
+    }
+
+    void watchdogTick()
+    {
+        using clock = std::chrono::steady_clock;
+        const auto now = clock::now();
+        const auto stallTimeout = std::chrono::seconds(2);
+
+        bool pipelineAlive;
+        clock::time_point lastFrame;
+        {
+            std::lock_guard<std::mutex> lock(frameMutex_);
+            pipelineAlive = (pipeline_ != nullptr);
+            lastFrame = lastFrameTime_;
+        }
+
+        if (pipelineAlive && lastFrame.time_since_epoch().count() != 0 &&
+            now - lastFrame > stallTimeout)
+        {
+            LOG_WARN << "[gst] pipeline stalled (no frames for "
+                     << std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFrame).count()
+                     << "ms) — restarting";
+            stopPipeline();
+        }
+
+        if (pipeline_ == nullptr && now >= nextRetryAt_)
+        {
+            startPipeline();
+            if (pipeline_ == nullptr)
+            {
+                LOG_INFO << "[gst] retry in " << retryDelayMs_ << "ms";
+                nextRetryAt_ = now + std::chrono::milliseconds(retryDelayMs_);
+                retryDelayMs_ = std::min<int64_t>(static_cast<int64_t>(retryDelayMs_ * 1.5), 5000);
+            }
         }
     }
 
@@ -374,6 +436,7 @@ class YoloCamera
                     self->latestFrame_.assign(map.data, map.data + map.size);
                     self->latestForInference_.assign(map.data, map.data + map.size);
                     self->haveNewFrame_ = true;
+                    self->lastFrameTime_ = std::chrono::steady_clock::now();
                 }
                 self->cv_.notify_one();
                 gst_buffer_unmap(buffer, &map);
@@ -388,6 +451,9 @@ class YoloCamera
         if (pipeline_)
             return;
 
+        // Passthrough on RPi/CPU avoids a 30fps decode/re-encode brown-out under
+        // GStreamer + inference load. Jetson keeps the decode/encode for quality
+        // since it has hardware JPEG codecs.
         std::string inner = usePassthrough_
                                 ? "image/jpeg ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
                                 : "image/jpeg ! jpegdec ! jpegenc quality=85 ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false";
@@ -413,6 +479,12 @@ class YoloCamera
         g_signal_connect(sink, "new-sample", G_CALLBACK(&YoloCamera::onNewSample), this);
         gst_object_unref(sink);
         gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+        retryDelayMs_ = 1000;
+        nextRetryAt_ = std::chrono::steady_clock::time_point{};
+        {
+            std::lock_guard<std::mutex> lock(frameMutex_);
+            lastFrameTime_ = std::chrono::steady_clock::now();
+        }
         LOG_INFO << "GStreamer pipeline started on " << device_
                  << " (passthrough=" << usePassthrough_ << ")";
     }
@@ -424,6 +496,11 @@ class YoloCamera
         gst_element_set_state(pipeline_, GST_STATE_NULL);
         gst_object_unref(pipeline_);
         pipeline_ = nullptr;
+        std::lock_guard<std::mutex> lock(frameMutex_);
+        latestFrame_.clear();
+        latestForInference_.clear();
+        haveNewFrame_ = false;
+        lastFrameTime_ = {};
     }
 
     void inferenceLoop()
@@ -434,19 +511,22 @@ class YoloCamera
 
         while (running_)
         {
-            std::vector<uint8_t> jpeg;
             {
                 std::unique_lock<std::mutex> lock(frameMutex_);
                 cv_.wait(lock, [this] { return !running_ || haveNewFrame_; });
                 if (!running_)
                     return;
+            }
+
+            auto sinceLast = clock::now() - lastRun;
+            if (sinceLast < minInterval)
+                std::this_thread::sleep_for(minInterval - sinceLast);
+
+            std::vector<uint8_t> jpeg;
+            {
+                std::lock_guard<std::mutex> lock(frameMutex_);
                 jpeg = std::move(latestForInference_);
                 haveNewFrame_ = false;
-            }
-            auto now = clock::now();
-            if (now - lastRun < minInterval)
-            {
-                std::this_thread::sleep_for(minInterval - (now - lastRun));
             }
             if (!engine_ || jpeg.empty())
                 continue;
@@ -454,7 +534,17 @@ class YoloCamera
             std::vector<Detection> dets;
             int w = 0, h = 0;
             auto t0 = clock::now();
-            bool ok = engine_->infer(jpeg, confidence_.load(), dets, w, h);
+            bool ok = false;
+            try
+            {
+                ok = engine_->infer(jpeg, confidence_.load(), dets, w, h);
+            }
+            catch (const std::exception &e)
+            {
+                LOG_ERROR << "[yolo] inference error: " << e.what();
+                lastRun = clock::now();
+                continue;
+            }
             auto t1 = clock::now();
             lastRun = t1;
             double inferMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
@@ -508,6 +598,7 @@ class YoloCamera
     std::vector<uint8_t> latestForInference_;
     std::string latestMeta_;
     bool haveNewFrame_ = false;
+    std::chrono::steady_clock::time_point lastFrameTime_{};
     std::condition_variable cv_;
 
     std::mutex clientsMutex_;
@@ -515,6 +606,9 @@ class YoloCamera
 
     GstElement *pipeline_ = nullptr;
     std::string device_ = "/dev/video0";
+
+    int64_t retryDelayMs_ = 1000;
+    std::chrono::steady_clock::time_point nextRetryAt_{};
 };
 
 // ---------------------------------------------------------------------------
@@ -592,7 +686,15 @@ int main()
     LOG_INFO << "Startup: has_gpu=" << useGpu << " is_rpi=" << rpi
              << " capture=" << (usePassthrough ? "passthrough" : "decode-encode");
 
-    YoloCamera::instance().init(useGpu, usePassthrough);
+    try
+    {
+        YoloCamera::instance().init(useGpu, usePassthrough);
+    }
+    catch (const std::exception &e)
+    {
+        LOG_ERROR << "[yolo] failed to initialize: " << e.what();
+        return 1;
+    }
 
     std::thread glibThread(glibMainLoopThread);
     glibThread.detach();

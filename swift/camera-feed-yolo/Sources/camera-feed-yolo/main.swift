@@ -306,20 +306,18 @@ actor YoloEngine {
     }
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// JPEG frame parser (same as camera-feed)
-// ───────────────────────────────────────────────────────────────────────────
-
 struct JPEGFrameParser: Sendable {
     private var buffer = Data()
     mutating func append(_ data: Data) -> [Data] {
+        // Cap before append so a malformed source can't grow the buffer past
+        // the limit before the next reset.
+        if buffer.count + data.count > 10_000_000 { buffer.removeAll() }
         buffer.append(data)
         var frames: [Data] = []
         while let range = findFrame() {
             frames.append(Data(buffer[range]))
             buffer.removeSubrange(buffer.startIndex...range.upperBound)
         }
-        if buffer.count > 10_000_000 { buffer.removeAll() }
         return frames
     }
     private func findFrame() -> ClosedRange<Int>? {
@@ -442,11 +440,28 @@ actor MJPEGCamera {
         let passthrough = usePassthrough
         pipelineTask = Task { [weak self] in
             guard let self else { return }
-            do { try await self.runGStreamerPipeline(device: device, passthrough: passthrough) }
-            catch is CancellationError {}
-            catch { print("Pipeline error: \(error)") }
+            var delayMs: UInt64 = 1000
+            while !Task.isCancelled {
+                let stillNeeded = await self.hasSubscribers()
+                if !stillNeeded { return }
+                do {
+                    try await self.runGStreamerPipeline(device: device, passthrough: passthrough)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    print("[gst] pipeline error: \(error)")
+                }
+                if Task.isCancelled { return }
+                let nowNeeded = await self.hasSubscribers()
+                if !nowNeeded { return }
+                print("[gst] retrying pipeline in \(delayMs)ms")
+                try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
+                delayMs = min(UInt64(Double(delayMs) * 1.5), 5000)
+            }
         }
     }
+
+    private func hasSubscribers() -> Bool { !subscribers.isEmpty }
 
     private func stopPipeline() {
         pipelineTask?.cancel()
@@ -456,6 +471,9 @@ actor MJPEGCamera {
     private func runGStreamerPipeline(device: String, passthrough: Bool) async throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/gst-launch-1.0")
+        // Passthrough on RPi/CPU avoids a 30fps decode/re-encode brown-out under
+        // GStreamer + inference load. Jetson keeps the decode/encode for quality
+        // since it has hardware JPEG codecs.
         if passthrough {
             process.arguments = [
                 "v4l2src", "device=\(device)", "!",
@@ -525,50 +543,50 @@ struct CameraFeedYoloApp {
         let camera = MJPEGCamera(device: "/dev/video0", usePassthrough: usePassthrough)
         let confidence = ConfidenceState()
 
-        // Load YOLO engine. If it fails (e.g. missing libonnxruntime), we still
-        // serve frames; meta just stays at its default (no boxes drawn).
-        let engine: YoloEngine?
+        let engine: YoloEngine
         do {
             engine = try YoloEngine(modelPath: "yolov8n.onnx", useGpu: useGpu)
             print("[yolo] model loaded")
         } catch {
             print("[yolo] failed to load model: \(error)")
-            engine = nil
+            exit(1)
         }
 
-        // Inference task: serialize calls, debounce per minIntervalMs.
-        if let engine = engine {
-            let pendingFrames = AsyncStream.makeStream(of: Data.self, bufferingPolicy: .bufferingNewest(1))
-            let cont = pendingFrames.continuation
-            await camera.setInferenceCallback { frame in
-                cont.yield(frame)
-            }
-            Task.detached {
-                var lastRun = Date.distantPast
-                for await frame in pendingFrames.stream {
-                    let now = Date()
-                    let elapsedMs = UInt64(max(0, now.timeIntervalSince(lastRun) * 1000))
-                    if elapsedMs < minIntervalMs {
-                        try? await Task.sleep(nanoseconds: (minIntervalMs - elapsedMs) * 1_000_000)
-                    }
-                    let conf = await confidence.get()
-                    let t0 = Date()
-                    let result = await engine.infer(jpeg: frame, confThreshold: conf)
-                    let inferenceMs = Date().timeIntervalSince(t0) * 1000
-                    lastRun = Date()
-                    guard let (boxes, w, h) = result else { continue }
-                    var classes: [String: Int] = [:]
-                    for b in boxes { classes[b.name, default: 0] += 1 }
-                    let meta = Meta(
-                        detections: boxes.count,
-                        inference_ms: (inferenceMs * 10).rounded() / 10,
-                        classes: classes,
-                        boxes: boxes,
-                        frame_w: w,
-                        frame_h: h)
-                    if let json = try? JSONEncoder().encode(meta), let s = String(data: json, encoding: .utf8) {
+        let pendingFrames = AsyncStream.makeStream(of: Data.self, bufferingPolicy: .bufferingNewest(1))
+        let cont = pendingFrames.continuation
+        await camera.setInferenceCallback { frame in
+            cont.yield(frame)
+        }
+        Task.detached {
+            var lastRun = Date.distantPast
+            for await frame in pendingFrames.stream {
+                let now = Date()
+                let elapsedMs = UInt64(max(0, now.timeIntervalSince(lastRun) * 1000))
+                if elapsedMs < minIntervalMs {
+                    try? await Task.sleep(nanoseconds: (minIntervalMs - elapsedMs) * 1_000_000)
+                }
+                let conf = await confidence.get()
+                let t0 = Date()
+                let result = await engine.infer(jpeg: frame, confThreshold: conf)
+                let inferenceMs = Date().timeIntervalSince(t0) * 1000
+                lastRun = Date()
+                guard let (boxes, w, h) = result else { continue }
+                var classes: [String: Int] = [:]
+                for b in boxes { classes[b.name, default: 0] += 1 }
+                let meta = Meta(
+                    detections: boxes.count,
+                    inference_ms: (inferenceMs * 10).rounded() / 10,
+                    classes: classes,
+                    boxes: boxes,
+                    frame_w: w,
+                    frame_h: h)
+                do {
+                    let json = try JSONEncoder().encode(meta)
+                    if let s = String(data: json, encoding: .utf8) {
                         await camera.updateMeta(s)
                     }
+                } catch {
+                    print("[yolo] meta encode failed: \(error)")
                 }
             }
         }
@@ -639,25 +657,36 @@ struct CameraFeedYoloApp {
             let id = ObjectIdentifier(connID)
 
             await camera.subscribe(id: id) { frame, metaJson in
-                try? await outbound.write(.text(metaJson))
-                var buffer = ByteBufferAllocator().buffer(capacity: frame.count)
-                buffer.writeBytes(frame)
-                try? await outbound.write(.binary(buffer))
+                do {
+                    try await outbound.write(.text(metaJson))
+                    var buffer = ByteBufferAllocator().buffer(capacity: frame.count)
+                    buffer.writeBytes(frame)
+                    try await outbound.write(.binary(buffer))
+                } catch {
+                    print("[ws] write failed: \(error)")
+                }
             }
 
-            for try await message in inbound.messages(maxSize: 1_048_576) {
-                if case .text(let text) = message {
-                    if let data = text.data(using: .utf8),
-                       let cmd = try? JSONDecoder().decode(ClientCommand.self, from: data) {
-                        if let dev = cmd.switch_camera {
-                            await camera.switchCamera(to: dev)
-                        }
-                        if let c = cmd.confidence {
-                            await confidence.set(c)
-                            print("[yolo] confidence -> \(c)")
+            do {
+                for try await message in inbound.messages(maxSize: 1_048_576) {
+                    if case .text(let text) = message {
+                        guard let data = text.data(using: .utf8) else { continue }
+                        do {
+                            let cmd = try JSONDecoder().decode(ClientCommand.self, from: data)
+                            if let dev = cmd.switch_camera {
+                                await camera.switchCamera(to: dev)
+                            }
+                            if let c = cmd.confidence {
+                                await confidence.set(c)
+                                print("[yolo] confidence -> \(c)")
+                            }
+                        } catch {
+                            print("[ws] malformed client message: \(error)")
                         }
                     }
                 }
+            } catch {
+                print("[ws] inbound loop error: \(error)")
             }
 
             await camera.unsubscribe(id: id)

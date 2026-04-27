@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust via rustup (dustynv's base has no Rust toolchain).
-# 1.88+ required by ort 2.0.0-rc.12 (transitive: libloading 0.9 needs 1.88).
+# 1.88+ required by ort's libloading 0.9 transitive dep.
 RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
@@ -47,7 +47,7 @@ RUN LIB=$(find / -name "libonnxruntime.so*" 2>/dev/null | grep -v __pycache__ | 
  && ldconfig
 
 # ── Stage B-generic: CPU onnxruntime + Rust ──────────────────────────────────
-# 1.88+ required by ort 2.0.0-rc.12 (transitive: libloading 0.9 needs 1.88).
+# 1.88+ required by ort's libloading 0.9 transitive dep.
 FROM rust:1.88-slim AS base-generic
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

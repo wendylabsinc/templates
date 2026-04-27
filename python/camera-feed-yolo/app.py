@@ -672,8 +672,7 @@ class YOLOCamera:
                     with self._lock:
                         self._latest_raw = raw_jpeg
                     self._raw_event.set()
-                    if not _FORCE_OPENCV:
-                        self._distribute_frame(raw_jpeg)
+                    self._distribute_frame(raw_jpeg)
             finally:
                 cap.release()
 
@@ -739,9 +738,6 @@ class YOLOCamera:
             with self._lock:
                 self._cached_meta = json.dumps(meta_dict)
                 self._last_meta = meta_dict
-
-            if _FORCE_OPENCV:
-                self._distribute_frame(raw)
 
     async def add_client(self, ws: WebSocket) -> asyncio.Queue:
         self._loop = asyncio.get_running_loop()

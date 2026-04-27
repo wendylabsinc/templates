@@ -72,69 +72,19 @@ impl MJPEGCamera {
     ) {
         self.stop();
         self.device = device.to_string();
-
-        // Passthrough on RPi/CPU avoids a 30fps decode/re-encode brown-out under
-        // GStreamer + inference load. Jetson keeps the decode/encode for quality
-        // since it has hardware JPEG codecs.
-        let inner = if self.use_passthrough {
-            "image/jpeg ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
-        } else {
-            "image/jpeg ! jpegdec ! jpegenc quality=85 ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
-        };
-        let launch = format!("v4l2src device={device} ! {inner}");
-
-        let element = match gstreamer::parse::launch(&launch) {
-            Ok(e) => e,
-            Err(err) => {
-                eprintln!("[gst] parse_launch failed: {err}");
-                return;
-            }
-        };
-        let pipeline = match element.dynamic_cast::<gstreamer::Pipeline>() {
-            Ok(p) => p,
-            Err(_) => {
-                eprintln!("[gst] not a pipeline");
-                return;
-            }
-        };
-
-        let sink = pipeline
-            .by_name("sink")
-            .and_then(|el| el.dynamic_cast::<AppSink>().ok());
-        let Some(sink) = sink else {
-            eprintln!("[gst] sink element missing");
-            return;
-        };
-
-        let last_frame_at = self.last_frame_at.clone();
-        let has_frames = self.has_frames.clone();
-        sink.set_callbacks(
-            gstreamer_app::AppSinkCallbacks::builder()
-                .new_sample(move |appsink| {
-                    let sample = appsink
-                        .pull_sample()
-                        .map_err(|_| gstreamer::FlowError::Eos)?;
-                    if let Some(buffer) = sample.buffer() {
-                        let map = buffer
-                            .map_readable()
-                            .map_err(|_| gstreamer::FlowError::Error)?;
-                        let bytes = map.as_slice().to_vec();
-                        let _ = frames_tx.send(bytes.clone());
-                        let _ = latest_tx.send(Some(bytes));
-                        *last_frame_at.lock().unwrap() = Some(Instant::now());
-                        has_frames.store(true, Ordering::Release);
-                    }
-                    Ok(gstreamer::FlowSuccess::Ok)
-                })
-                .build(),
-        );
-
-        if let Err(err) = pipeline.set_state(gstreamer::State::Playing) {
-            eprintln!("[gst] set_state(Playing) failed: {err}");
-            let _ = pipeline.set_state(gstreamer::State::Null);
-            return;
+        if let Some(pipeline) = build_pipeline(
+            device,
+            self.use_passthrough,
+            self.last_frame_at.clone(),
+            self.has_frames.clone(),
+            frames_tx,
+            latest_tx,
+        ) {
+            self.pipeline = Some(pipeline);
         }
-        println!("[gst] pipeline started on {device} (passthrough={})", self.use_passthrough);
+    }
+
+    fn install(&mut self, pipeline: gstreamer::Pipeline) {
         self.pipeline = Some(pipeline);
     }
 
@@ -149,6 +99,82 @@ impl MJPEGCamera {
     fn last_frame_at(&self) -> Option<Instant> {
         *self.last_frame_at.lock().unwrap()
     }
+}
+
+// Build a started gstreamer pipeline. Pure function: doesn't touch shared state
+// beyond the channels/atomics it's given, so it's safe to call without holding
+// the camera mutex.
+fn build_pipeline(
+    device: &str,
+    use_passthrough: bool,
+    last_frame_at: Arc<Mutex<Option<Instant>>>,
+    has_frames: Arc<AtomicBool>,
+    frames_tx: broadcast::Sender<Vec<u8>>,
+    latest_tx: watch::Sender<Option<Vec<u8>>>,
+) -> Option<gstreamer::Pipeline> {
+    // Passthrough on RPi/CPU avoids a 30fps decode/re-encode brown-out under
+    // GStreamer + inference load. Jetson keeps the decode/encode for quality
+    // since it has hardware JPEG codecs.
+    let inner = if use_passthrough {
+        "image/jpeg ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
+    } else {
+        "image/jpeg ! jpegdec ! jpegenc quality=85 ! appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
+    };
+    let launch = format!("v4l2src device={device} ! {inner}");
+
+    let element = match gstreamer::parse::launch(&launch) {
+        Ok(e) => e,
+        Err(err) => {
+            eprintln!("[gst] parse_launch failed: {err}");
+            return None;
+        }
+    };
+    let pipeline = match element.dynamic_cast::<gstreamer::Pipeline>() {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("[gst] not a pipeline");
+            return None;
+        }
+    };
+
+    let sink = pipeline
+        .by_name("sink")
+        .and_then(|el| el.dynamic_cast::<AppSink>().ok());
+    let Some(sink) = sink else {
+        eprintln!("[gst] sink element missing");
+        return None;
+    };
+
+    sink.set_callbacks(
+        gstreamer_app::AppSinkCallbacks::builder()
+            .new_sample(move |appsink| {
+                let sample = appsink
+                    .pull_sample()
+                    .map_err(|_| gstreamer::FlowError::Eos)?;
+                if let Some(buffer) = sample.buffer() {
+                    let map = buffer
+                        .map_readable()
+                        .map_err(|_| gstreamer::FlowError::Error)?;
+                    let bytes = map.as_slice().to_vec();
+                    let _ = frames_tx.send(bytes.clone());
+                    let _ = latest_tx.send(Some(bytes));
+                    if let Ok(mut guard) = last_frame_at.lock() {
+                        *guard = Some(Instant::now());
+                    }
+                    has_frames.store(true, Ordering::Release);
+                }
+                Ok(gstreamer::FlowSuccess::Ok)
+            })
+            .build(),
+    );
+
+    if let Err(err) = pipeline.set_state(gstreamer::State::Playing) {
+        eprintln!("[gst] set_state(Playing) failed: {err}");
+        let _ = pipeline.set_state(gstreamer::State::Null);
+        return None;
+    }
+    println!("[gst] pipeline started on {device} (passthrough={use_passthrough})");
+    Some(pipeline)
 }
 
 // ---------------------------------------------------------------------------
@@ -358,30 +384,60 @@ fn spawn_watchdog(state: AppState) {
                 continue;
             }
 
-            let mut cam = state.camera.lock().unwrap();
-            let pipeline_alive = cam.pipeline.is_some();
-            let stalled = pipeline_alive
-                && cam
-                    .last_frame_at()
-                    .map(|t| t.elapsed() > stall_timeout)
-                    .unwrap_or(false);
-            if stalled {
-                eprintln!("[gst] pipeline stalled — restarting");
-                cam.stop();
+            // Phase 1: snapshot state under the lock and stop a stalled pipeline.
+            let (need_start, device, use_passthrough, last_frame_at, has_frames) = {
+                let mut cam = state.camera.lock().unwrap();
+                let pipeline_alive = cam.pipeline.is_some();
+                let stalled = pipeline_alive
+                    && cam
+                        .last_frame_at()
+                        .map(|t| t.elapsed() > stall_timeout)
+                        .unwrap_or(false);
+                if stalled {
+                    eprintln!("[gst] pipeline stalled — restarting");
+                    cam.stop();
+                }
+                (
+                    cam.pipeline.is_none(),
+                    cam.device.clone(),
+                    cam.use_passthrough,
+                    cam.last_frame_at.clone(),
+                    cam.has_frames.clone(),
+                )
+            };
+
+            if !need_start {
+                delay = Duration::from_millis(1000);
+                continue;
             }
 
-            if cam.pipeline.is_none() {
-                let device = cam.device.clone();
-                cam.start(&device, state.frames_tx.clone(), state.latest_tx.clone());
-                if cam.pipeline.is_some() {
-                    delay = Duration::from_millis(1000);
+            // Phase 2: build the pipeline OUTSIDE the lock so WS handlers don't
+            // block on the synchronous gstreamer setup (parse_launch, set_state).
+            let built = build_pipeline(
+                &device,
+                use_passthrough,
+                last_frame_at,
+                has_frames,
+                state.frames_tx.clone(),
+                state.latest_tx.clone(),
+            );
+
+            // Phase 3: re-acquire the lock to install — but if subscribers vanished
+            // or someone else installed a pipeline meanwhile, throw ours away.
+            if let Some(pipeline) = built {
+                let mut cam = state.camera.lock().unwrap();
+                if state.frames_tx.receiver_count() == 0 || cam.pipeline.is_some() {
+                    let _ = pipeline.set_state(gstreamer::State::Null);
                 } else {
-                    drop(cam);
-                    eprintln!("[gst] retry in {}ms", delay.as_millis());
-                    tokio::time::sleep(delay).await;
-                    delay = (delay.mul_f32(1.5)).min(Duration::from_secs(5));
+                    cam.install(pipeline);
+                    delay = Duration::from_millis(1000);
+                    continue;
                 }
             }
+
+            eprintln!("[gst] retry in {}ms", delay.as_millis());
+            tokio::time::sleep(delay).await;
+            delay = (delay.mul_f32(1.5)).min(Duration::from_secs(5));
         }
     });
 }
@@ -504,17 +560,22 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(cmd) = serde_json::from_str::<ClientMsg>(&text) {
-                            match cmd {
-                                ClientMsg::Switch { switch_camera } => {
-                                    let mut cam = state.camera.lock().unwrap();
-                                    cam.start(&switch_camera, state.frames_tx.clone(), state.latest_tx.clone());
-                                }
-                                ClientMsg::Confidence { confidence } => {
+                        match serde_json::from_str::<ClientMsg>(&text) {
+                            Ok(ClientMsg::Switch { switch_camera }) => {
+                                let mut cam = state.camera.lock().unwrap();
+                                cam.start(&switch_camera, state.frames_tx.clone(), state.latest_tx.clone());
+                            }
+                            Ok(ClientMsg::Confidence { confidence }) => {
+                                if !confidence.is_finite() {
+                                    eprintln!("[ws] confidence not finite: {confidence}");
+                                } else {
                                     let v = confidence.clamp(0.05, 0.95);
                                     *state.confidence.write().unwrap() = v;
                                     println!("[yolo] confidence -> {v:.2}");
                                 }
+                            }
+                            Err(err) => {
+                                eprintln!("[ws] malformed client message: {err}");
                             }
                         }
                     }

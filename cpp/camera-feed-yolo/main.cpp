@@ -284,7 +284,8 @@ class YoloCamera
         cv_.notify_all();
         if (inferenceThread_.joinable())
             inferenceThread_.join();
-        stopPipeline();
+        std::lock_guard<std::mutex> pipelineLock(pipelineMutex_);
+        stopPipelineLocked();
     }
 
     void setConfidence(float c) { confidence_.store(std::clamp(c, 0.05f, 0.95f)); }
@@ -299,16 +300,12 @@ class YoloCamera
         }
         if (firstClient)
         {
+            std::lock_guard<std::mutex> pipelineLock(pipelineMutex_);
             retryDelayMs_ = 1000;
             nextRetryAt_ = {};
-            startPipeline();
+            startPipelineLocked();
             if (pipeline_ == nullptr)
-            {
-                nextRetryAt_ = std::chrono::steady_clock::now() +
-                               std::chrono::milliseconds(retryDelayMs_);
-                retryDelayMs_ = std::min<int64_t>(
-                    static_cast<int64_t>(retryDelayMs_ * 1.5), 5000);
-            }
+                bumpRetryLocked();
         }
     }
 
@@ -321,21 +318,29 @@ class YoloCamera
             lastClient = clients_.empty();
         }
         if (lastClient)
-            stopPipeline();
+        {
+            std::lock_guard<std::mutex> pipelineLock(pipelineMutex_);
+            stopPipelineLocked();
+        }
     }
 
     void switchDevice(const std::string &device)
     {
-        bool hadClients = false;
+        bool hadClients;
         {
             std::lock_guard<std::mutex> lock(clientsMutex_);
-            device_ = device;
             hadClients = !clients_.empty();
         }
+        std::lock_guard<std::mutex> pipelineLock(pipelineMutex_);
+        device_ = device;
         if (hadClients)
         {
-            stopPipeline();
-            startPipeline();
+            stopPipelineLocked();
+            retryDelayMs_ = 1000;
+            nextRetryAt_ = {};
+            startPipelineLocked();
+            if (pipeline_ == nullptr)
+                bumpRetryLocked();
         }
     }
 
@@ -380,33 +385,38 @@ class YoloCamera
         const auto now = clock::now();
         const auto stallTimeout = std::chrono::seconds(2);
 
-        bool pipelineAlive;
         clock::time_point lastFrame;
         {
             std::lock_guard<std::mutex> lock(frameMutex_);
-            pipelineAlive = (pipeline_ != nullptr);
             lastFrame = lastFrameTime_;
         }
 
-        if (pipelineAlive && lastFrame.time_since_epoch().count() != 0 &&
+        std::lock_guard<std::mutex> pipelineLock(pipelineMutex_);
+
+        if (pipeline_ != nullptr && lastFrame.time_since_epoch().count() != 0 &&
             now - lastFrame > stallTimeout)
         {
             LOG_WARN << "[gst] pipeline stalled (no frames for "
                      << std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFrame).count()
                      << "ms) — restarting";
-            stopPipeline();
+            stopPipelineLocked();
         }
 
         if (pipeline_ == nullptr && now >= nextRetryAt_)
         {
-            startPipeline();
+            startPipelineLocked();
             if (pipeline_ == nullptr)
-            {
-                LOG_INFO << "[gst] retry in " << retryDelayMs_ << "ms";
-                nextRetryAt_ = now + std::chrono::milliseconds(retryDelayMs_);
-                retryDelayMs_ = std::min<int64_t>(static_cast<int64_t>(retryDelayMs_ * 1.5), 5000);
-            }
+                bumpRetryLocked();
         }
+    }
+
+    void bumpRetryLocked()
+    {
+        LOG_INFO << "[gst] retry in " << retryDelayMs_ << "ms";
+        nextRetryAt_ = std::chrono::steady_clock::now() +
+                       std::chrono::milliseconds(retryDelayMs_);
+        retryDelayMs_ = std::min<int64_t>(
+            (retryDelayMs_ * 3) / 2, 5000);
     }
 
   private:
@@ -446,7 +456,8 @@ class YoloCamera
         return GST_FLOW_OK;
     }
 
-    void startPipeline()
+    // Caller must hold pipelineMutex_.
+    void startPipelineLocked()
     {
         if (pipeline_)
             return;
@@ -460,25 +471,31 @@ class YoloCamera
         std::string desc = "v4l2src device=" + device_ + " ! " + inner;
 
         GError *err = nullptr;
-        pipeline_ = gst_parse_launch(desc.c_str(), &err);
+        GstElement *pipeline = gst_parse_launch(desc.c_str(), &err);
         if (err)
         {
             LOG_ERROR << "GStreamer pipeline error: " << err->message;
             g_error_free(err);
-            pipeline_ = nullptr;
             return;
         }
-        GstElement *sink = gst_bin_get_by_name(GST_BIN(pipeline_), "sink");
+        GstElement *sink = gst_bin_get_by_name(GST_BIN(pipeline), "sink");
         if (!sink)
         {
             LOG_ERROR << "appsink missing";
-            gst_object_unref(pipeline_);
-            pipeline_ = nullptr;
+            gst_object_unref(pipeline);
             return;
         }
         g_signal_connect(sink, "new-sample", G_CALLBACK(&YoloCamera::onNewSample), this);
         gst_object_unref(sink);
-        gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+        GstStateChangeReturn ret = gst_element_set_state(pipeline, GST_STATE_PLAYING);
+        if (ret == GST_STATE_CHANGE_FAILURE)
+        {
+            LOG_ERROR << "GStreamer set_state(PLAYING) failed";
+            gst_element_set_state(pipeline, GST_STATE_NULL);
+            gst_object_unref(pipeline);
+            return;
+        }
+        pipeline_ = pipeline;
         retryDelayMs_ = 1000;
         nextRetryAt_ = std::chrono::steady_clock::time_point{};
         {
@@ -489,7 +506,8 @@ class YoloCamera
                  << " (passthrough=" << usePassthrough_ << ")";
     }
 
-    void stopPipeline()
+    // Caller must hold pipelineMutex_.
+    void stopPipelineLocked()
     {
         if (!pipeline_)
             return;
@@ -604,9 +622,10 @@ class YoloCamera
     std::mutex clientsMutex_;
     std::set<drogon::WebSocketConnectionPtr> clients_;
 
+    // pipelineMutex_ guards: pipeline_, device_, retryDelayMs_, nextRetryAt_.
+    std::mutex pipelineMutex_;
     GstElement *pipeline_ = nullptr;
     std::string device_ = "/dev/video0";
-
     int64_t retryDelayMs_ = 1000;
     std::chrono::steady_clock::time_point nextRetryAt_{};
 };

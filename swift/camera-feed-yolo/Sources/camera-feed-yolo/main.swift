@@ -455,7 +455,11 @@ actor MJPEGCamera {
                 let nowNeeded = await self.hasSubscribers()
                 if !nowNeeded { return }
                 print("[gst] retrying pipeline in \(delayMs)ms")
-                try? await Task.sleep(nanoseconds: delayMs * 1_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: delayMs * 1_000_000)
+                } catch {
+                    return
+                }
                 delayMs = min(UInt64(Double(delayMs) * 1.5), 5000)
             }
         }

@@ -123,14 +123,20 @@ class MJPEGCamera {
 
     console.log(`[gst] starting pipeline for ${device} (passthrough=${USE_PASSTHROUGH})`);
 
-    this.process = spawn("gst-launch-1.0", args);
+    const proc = spawn("gst-launch-1.0", args);
+    this.process = proc;
     let gotFrame = false;
-    this.process.on("error", (err) => {
+    // Capture `proc` so handlers from a previous incarnation can't clobber the
+    // current `this.process` after a switchCamera/restart. Each handler bails
+    // out unless the field still points at the process it was registered for.
+    proc.on("error", (err) => {
       console.error("[gst] spawn failed:", err);
+      if (this.process !== proc) return;
       this.process = null;
       this.scheduleRetry();
     });
-    this.process.stdout?.on("data", (chunk: Buffer) => {
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      if (this.process !== proc) return;
       if (!gotFrame) {
         gotFrame = true;
         this.resetRetryBackoff();
@@ -138,11 +144,12 @@ class MJPEGCamera {
       this.buffer = Buffer.concat([this.buffer, chunk]);
       this.extractFrames();
     });
-    this.process.stderr?.on("data", (data: Buffer) => {
+    proc.stderr?.on("data", (data: Buffer) => {
       console.error(`[gst] ${data.toString()}`);
     });
-    this.process.on("close", (code) => {
+    proc.on("close", (code) => {
       console.log(`[gst] process exited with code ${code}`);
+      if (this.process !== proc) return;
       this.process = null;
       this.scheduleRetry();
     });
@@ -427,7 +434,7 @@ wss.on("connection", (ws) => {
       console.log(`[ws] switching camera to ${cmd.switch_camera}`);
       camera.switchCamera(cmd.switch_camera);
     }
-    if (typeof cmd.confidence === "number") {
+    if (typeof cmd.confidence === "number" && Number.isFinite(cmd.confidence)) {
       confidence = clamp(cmd.confidence, 0.05, 0.95);
       console.log(`[yolo] confidence -> ${confidence.toFixed(2)}`);
     }

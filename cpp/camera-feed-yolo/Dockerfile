@@ -20,7 +20,7 @@ RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='o
  && [ "$(stat -c %s /export/yolov8n.onnx)" -gt 5000000 ]
 
 # ── Stage B-jetson ──────────────────────────────────────────────────────────
-FROM dustynv/onnxruntime:1.20.0-r36.4.0 AS base-nvidia-jetson
+FROM dustynv/onnxruntime:1.20.2-r36.4.0 AS base-nvidia-jetson
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake git pkg-config ca-certificates \

@@ -84,7 +84,8 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
     WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE} \
     WENDY_HAS_GPU=${WENDY_HAS_GPU} \
     WENDY_GPU_VENDOR=${WENDY_GPU_VENDOR} \
-    ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so
+    ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so \
+    TURBOJPEG_SOURCE=pkg-config
 
 WORKDIR /app
 COPY Cargo.toml ./

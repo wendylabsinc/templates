@@ -10,7 +10,7 @@
   "dependencies": {
     "express": "^4",
     "ws": "^8",
-    "onnxruntime-node": "^1.20.0",
+    "onnxruntime-node": "~1.20.0",
     "sharp": "^0.33.5"
   },
   "devDependencies": {

@@ -93,11 +93,15 @@ private func checkStatus(_ status: OpaquePointer?, _ api: UnsafePointer<OrtApi>)
 }
 
 actor YoloEngine {
-    private let api: UnsafePointer<OrtApi>
+    // `api` is the process-wide ORT function table — immutable and safe to read
+    // from any context (including init closures and deinit, both of which the
+    // compiler treats as nonisolated). nonisolated(unsafe) sidesteps the
+    // Sendable check on UnsafePointer<OrtApi>.
+    nonisolated(unsafe) private let api: UnsafePointer<OrtApi>
     private var env: OpaquePointer?
     private var session: OpaquePointer?
     private var memInfo: OpaquePointer?
-    private var allocator: OpaquePointer?
+    private var allocator: UnsafeMutablePointer<OrtAllocator>?
     private var inputName: UnsafeMutablePointer<CChar>?
     private var outputName: UnsafeMutablePointer<CChar>?
     private var inputNameStr: String = "images"
@@ -140,7 +144,7 @@ actor YoloEngine {
         }
         self.session = sessionPtr
 
-        var allocPtr: OpaquePointer?
+        var allocPtr: UnsafeMutablePointer<OrtAllocator>?
         try checkStatus(api.pointee.GetAllocatorWithDefaultOptions(&allocPtr), api)
         self.allocator = allocPtr
 
@@ -219,9 +223,9 @@ actor YoloEngine {
                 let st = api.pointee.CreateTensorWithDataAsOrtValue(
                     memInfo,
                     ibuf.baseAddress,
-                    UInt(ibuf.count) * UInt(MemoryLayout<Float>.size),
+                    ibuf.count * MemoryLayout<Float>.size,
                     sbuf.baseAddress,
-                    UInt(sbuf.count),
+                    sbuf.count,
                     ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
                     &inputTensor)
                 return st == nil
@@ -263,10 +267,10 @@ actor YoloEngine {
         guard api.pointee.GetTensorTypeAndShape(outVal, &info) == nil, let infoPtr = info else { return nil }
         defer { api.pointee.ReleaseTensorTypeAndShapeInfo(infoPtr) }
 
-        var dimCount: UInt = 0
+        var dimCount: Int = 0
         _ = api.pointee.GetDimensionsCount(infoPtr, &dimCount)
         guard dimCount == 3 else { return nil }
-        var dims = [Int64](repeating: 0, count: Int(dimCount))
+        var dims = [Int64](repeating: 0, count: dimCount)
         _ = dims.withUnsafeMutableBufferPointer { api.pointee.GetDimensions(infoPtr, $0.baseAddress, dimCount) }
         guard dims[1] >= 84 else { return nil }
         let numAnchors = Int(dims[2])

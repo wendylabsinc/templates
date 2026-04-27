@@ -2,14 +2,19 @@
 #
 # Multi-stage build keyed on WENDY_PLATFORM (injected by `wendy run`).
 #   nvidia-jetson -> dustynv/onnxruntime (CUDA-built libonnxruntime.so)
-#   generic       -> rust:1.85-slim + Microsoft prebuilt CPU onnxruntime
+#   generic       -> rust:1.88-slim + Microsoft prebuilt CPU onnxruntime
 # Falls back to "generic" when no build arg is supplied.
 
 ARG WENDY_PLATFORM=generic
 
 # ── Stage A: export yolov8n.onnx ─────────────────────────────────────────────
 FROM python:3.11-slim-bookworm AS model-export
-RUN pip install --no-cache-dir ultralytics onnx
+# ultralytics pulls in opencv-python (not headless), which dlopens libxcb/libgl
+# at import time — slim doesn't ship them, so cv2 fails to load before export runs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxcb1 libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir ultralytics onnx
 WORKDIR /export
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=True, dynamic=False)" \
  && [ -s /export/yolov8n.onnx ] \
@@ -30,7 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust via rustup (dustynv's base has no Rust toolchain).
-RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.85.0 --profile minimal
+# 1.88+ required by ort 2.0.0-rc.12 (transitive: libloading 0.9 needs 1.88).
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 # dustynv installs onnxruntime as a Python wheel; expose libonnxruntime.so under
@@ -41,7 +47,8 @@ RUN LIB=$(find / -name "libonnxruntime.so*" 2>/dev/null | grep -v __pycache__ | 
  && ldconfig
 
 # ── Stage B-generic: CPU onnxruntime + Rust ──────────────────────────────────
-FROM rust:1.85-slim AS base-generic
+# 1.88+ required by ort 2.0.0-rc.12 (transitive: libloading 0.9 needs 1.88).
+FROM rust:1.88-slim AS base-generic
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates pkg-config \

@@ -8,7 +8,12 @@ ARG WENDY_PLATFORM=generic
 
 # ── Stage A: export yolov8n.onnx ─────────────────────────────────────────────
 FROM python:3.11-slim-bookworm AS model-export
-RUN pip install --no-cache-dir ultralytics onnx
+# ultralytics pulls in opencv-python (not headless), which dlopens libxcb/libgl
+# at import time — slim doesn't ship them, so cv2 fails to load before export runs.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxcb1 libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir ultralytics onnx
 WORKDIR /export
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=True, dynamic=False)" \
  && [ -s /export/yolov8n.onnx ] \

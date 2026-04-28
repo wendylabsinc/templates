@@ -26,4 +26,4 @@ dependencies = [
 ]
 
 [project.scripts]
-{{.APP_ID}} = "{{.APP_ID}}:main"
+{{.APP_ID}} = "voice_assistant:main"

@@ -5,11 +5,29 @@
 import os
 import signal
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 def _shutdown(sig, frame):
     print("Shutting down gracefully...")
     sys.exit(0)
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def log_message(self, *args):
+        pass
+
+
+def _start_health_server(port: int) -> None:
+    server = HTTPServer(("", port), _HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
 
 
 {{if eq .INFERENCE_MODE "local"}}
@@ -49,6 +67,7 @@ def main():
 
     print("Starting {{.APP_ID}} ({{.PROJECT_KIND}})...")
     port = int(os.environ.get("PORT", "{{.PORT}}"))
+    _start_health_server(port)
 
 {{if eq .INFERENCE_MODE "local"}}
     model, recognizer_cls = _load_model()

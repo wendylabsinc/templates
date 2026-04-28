@@ -16,6 +16,38 @@
             "default": 6010,
             "prompt": "HTTP port",
             "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "INFERENCE_MODE",
+            "description": "Inference backend mode",
+            "type": "string",
+            "default": "local",
+            "prompt": "Inference mode",
+            "validate": { "enum": ["local", "cloud"] }
+        },
+        {
+            "name": "LOCAL_MODEL",
+            "description": "Local model to use when INFERENCE_MODE is local",
+            "type": "string",
+            "default": "whisper_base",
+            "prompt": "Local model",
+            "validate": { "enum": ["whisper_tiny", "whisper_base", "whisper_small", "vosk"] }
+        },
+        {
+            "name": "CLOUD_PROVIDER",
+            "description": "Cloud inference provider to use when INFERENCE_MODE is cloud",
+            "type": "string",
+            "default": "openai",
+            "prompt": "Cloud provider",
+            "validate": { "enum": ["openai", "anthropic", "google", "deepgram"] }
+        },
+        {
+            "name": "PROJECT_KIND",
+            "description": "Project variant to generate",
+            "type": "string",
+            "default": "smart_speaker",
+            "prompt": "Project kind",
+            "validate": { "enum": ["smart_speaker", "voice_robot", "voice_drone"] }
         }
     ]
 }

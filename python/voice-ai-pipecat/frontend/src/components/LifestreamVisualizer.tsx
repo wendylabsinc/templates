@@ -144,10 +144,12 @@ function LifeLine({
 function Scene({
   micAnalyser,
   botAnalyser,
+  botSpeaking,
   lineCount,
 }: {
   micAnalyser: AnalyserNode | null
   botAnalyser: AnalyserNode | null
+  botSpeaking: boolean
   lineCount: number
 }) {
   const micDataArray = React.useMemo(
@@ -158,14 +160,38 @@ function Scene({
     () => (botAnalyser ? new Uint8Array(botAnalyser.frequencyBinCount) : null),
     [botAnalyser],
   )
+  // Synthetic spectrum we drive ourselves when there's no real bot
+  // AnalyserNode — Pipecat's WebSocket transport plays bot TTS through
+  // an internal AudioContext that we can't reach, but we know when the
+  // bot is speaking from `onBotStartedSpeaking`/`onBotStoppedSpeaking`
+  // events. Fill this with a wandering sine pattern so the emerald
+  // lines move in time with playback.
+  const syntheticBotData = React.useMemo(() => new Uint8Array(64), [])
+  const syntheticDecay = React.useRef(0)
 
-  useFrame(() => {
+  useFrame((state) => {
     if (micAnalyser && micDataArray) micAnalyser.getByteFrequencyData(micDataArray)
     if (botAnalyser && botDataArray) botAnalyser.getByteFrequencyData(botDataArray)
+
+    if (!botAnalyser) {
+      const target = botSpeaking ? 1 : 0
+      // Smooth on/off so the lines fade in/out instead of snapping.
+      syntheticDecay.current += (target - syntheticDecay.current) * 0.1
+      const t = state.clock.getElapsedTime()
+      const amp = syntheticDecay.current
+      for (let i = 0; i < syntheticBotData.length; i++) {
+        const phase = t * 4 + i * 0.35
+        // Combine two sines so different lines see different magnitudes
+        // (mimics the variation a real spectrum produces).
+        const v = (Math.sin(phase) * 0.5 + 0.5) * (0.6 + Math.sin(t + i) * 0.4)
+        syntheticBotData[i] = Math.floor(v * amp * 220)
+      }
+    }
   })
 
   const perGroup = Math.max(1, Math.floor(lineCount / 2))
   const emptyData = React.useMemo(() => new Uint8Array(0), [])
+  const botData = botDataArray ?? syntheticBotData
 
   return (
     <>
@@ -186,7 +212,7 @@ function Scene({
           key={`bot-${i}`}
           index={i}
           total={perGroup}
-          audioData={botDataArray || emptyData}
+          audioData={botData || emptyData}
           color={BOT_COLOR}
         />
       ))}
@@ -208,12 +234,17 @@ function Scene({
 export function LifestreamVisualizer({
   micAnalyser,
   botAnalyser,
+  botSpeaking = false,
   lineCount = 40,
 }: {
   /** AnalyserNode for the user's microphone input. Lines rendered in blue. */
   micAnalyser: AnalyserNode | null
-  /** AnalyserNode for the bot's TTS output (typically from useWebSocketSource). Lines rendered in emerald. */
+  /** AnalyserNode for the bot's TTS output, when one is available. Lines rendered in emerald. */
   botAnalyser: AnalyserNode | null
+  /** Fallback signal: when there's no botAnalyser but the bot is producing
+   *  TTS, drive the emerald lines with synthetic data so the visualizer
+   *  still reflects bot speech. */
+  botSpeaking?: boolean
   /** Total line count, split evenly between mic and bot groups. */
   lineCount?: number
 }) {
@@ -226,7 +257,12 @@ export function LifestreamVisualizer({
           toneMapping: THREE.NoToneMapping,
         }}
       >
-        <Scene micAnalyser={micAnalyser} botAnalyser={botAnalyser} lineCount={lineCount} />
+        <Scene
+          micAnalyser={micAnalyser}
+          botAnalyser={botAnalyser}
+          botSpeaking={botSpeaking}
+          lineCount={lineCount}
+        />
       </Canvas>
     </div>
   )

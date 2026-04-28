@@ -17,6 +17,11 @@ export interface PipecatClientOptions {
 export interface PipecatClientState {
   micAnalyser: AnalyserNode | null
   botAnalyser: AnalyserNode | null
+  /** True while the server reports the bot is producing TTS audio.
+   *  Used to drive the bot visualizer when the WebSocket transport
+   *  doesn't expose bot audio as a MediaStreamTrack (so botAnalyser
+   *  stays null). */
+  botSpeaking: boolean
   status: AudioSourceStatus
   error: Error | null
 }
@@ -30,6 +35,7 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
 
   const [micAnalyser, setMicAnalyser] = React.useState<AnalyserNode | null>(null)
   const [botAnalyser, setBotAnalyser] = React.useState<AnalyserNode | null>(null)
+  const [botSpeaking, setBotSpeaking] = React.useState(false)
   const [status, setStatus] = React.useState<AudioSourceStatus>("idle")
   const [error, setError] = React.useState<Error | null>(null)
 
@@ -78,14 +84,21 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
         },
         onTrackStarted: (track, participant) => {
           if (disposed || track.kind !== "audio") return
-          const analyser = buildAnalyser(track)
-          if (participant?.local) setMicAnalyser(analyser)
-          else setBotAnalyser(analyser)
+          if (participant?.local) setMicAnalyser(buildAnalyser(track))
+          else setBotAnalyser(buildAnalyser(track))
         },
         onTrackStopped: (track, participant) => {
           if (disposed || track.kind !== "audio") return
           if (participant?.local) setMicAnalyser(null)
           else setBotAnalyser(null)
+        },
+        onBotStartedSpeaking: () => {
+          if (disposed) return
+          setBotSpeaking(true)
+        },
+        onBotStoppedSpeaking: () => {
+          if (disposed) return
+          setBotSpeaking(false)
         },
         onError: (message) => {
           if (disposed) return
@@ -119,6 +132,7 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
       audioContextRef.current = null
       setMicAnalyser(null)
       setBotAnalyser(null)
+      setBotSpeaking(false)
       setStatus("idle")
     }
   }, [url, fftSize])
@@ -141,5 +155,5 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
     client.enableMic(!muted)
   }, [muted])
 
-  return { micAnalyser, botAnalyser, status, error }
+  return { micAnalyser, botAnalyser, botSpeaking, status, error }
 }

@@ -1,30 +1,128 @@
 import * as React from "react"
 
 export interface WendyosMicrophone {
-  /** Opaque device id understood by the wendy-agent RPC (e.g., ALSA `hw:1,0`). */
+  /** Stable handle for the device-side selector (the device's `name`). */
   id: string
   /** Human-readable label surfaced in the selector UI. */
   label: string
+  /** Whether the device can capture audio (input_channels > 0). */
+  hasInput: boolean
+  /** Whether the device can play audio (output_channels > 0). */
+  hasOutput: boolean
+}
+
+export interface WendyosStatus {
+  mode: string
+  inputName: string | null
+  outputName: string | null
+  deviceMissing: boolean
+  error: string | null
 }
 
 export interface WendyosMicrophonesState {
+  /** Input-capable host devices reported by /api/audio-devices. */
   devices: WendyosMicrophone[]
+  /** Backend session status (mode, current device, last error). */
+  status: WendyosStatus | null
+  /** Last fetch error from /api/audio-devices or /api/status. */
   error: Error | null
+  /** POSTs /api/local-audio/select. Returns when the backend has switched. */
+  selectInput: (id: string) => Promise<void>
+}
+
+const POLL_MS = 3_000
+
+interface BackendDevice {
+  id: number
+  name: string
+  input_channels: number
+  output_channels: number
+  default_sample_rate: number
+}
+
+interface BackendStatus {
+  mode: string
+  input_name: string | null
+  output_name: string | null
+  device_missing: boolean
+  error: string | null
 }
 
 /**
- * Enumerate microphones reported by the wendy-agent running on the host device
- * (as opposed to the browser's own `navigator.mediaDevices.enumerateDevices`).
- *
- * TODO(WDY-936 follow-up): wire up the wendy-agent RPC client. For now this
- * returns an empty list so the selector falls back to browser mics only. When
- * the agent client lands, fetch the device list here and subscribe to hot-plug
- * events so the combobox refreshes on plug/unplug.
+ * Polls the Pipecat backend for host-side audio devices (PyAudio enumeration)
+ * and exposes a `selectInput` action that asks the backend to restart its
+ * local pipeline against the chosen device. Polling at POLL_MS doubles as
+ * hot-plug detection — when the user plugs/unplugs a USB mic the next tick
+ * picks up the change.
  */
 export function useWendyosMicrophones(): WendyosMicrophonesState {
-  const [state] = React.useState<WendyosMicrophonesState>({
-    devices: [],
-    error: null,
-  })
-  return state
+  const [devices, setDevices] = React.useState<WendyosMicrophone[]>([])
+  const [status, setStatus] = React.useState<WendyosStatus | null>(null)
+  const [error, setError] = React.useState<Error | null>(null)
+
+  const tick = React.useCallback(async () => {
+    try {
+      const [devicesRes, statusRes] = await Promise.all([
+        fetch("/api/audio-devices").then((r) => r.json()),
+        fetch("/api/status").then((r) => r.json()),
+      ])
+      const raw: BackendDevice[] = devicesRes.devices ?? []
+      const inputs: WendyosMicrophone[] = raw
+        .filter((d) => d.input_channels > 0)
+        .map((d) => ({
+          id: d.name,
+          // Relabel the ALSA "default" alias so it's obvious this is the
+          // recommended pick — it routes through asound.conf's plug to the
+          // USB mic with rate conversion. Raw `(hw:N,M)` entries stay
+          // visible for power users but show a "raw" hint.
+          label:
+            d.name === "default"
+              ? "Default (auto-routed to USB mic)"
+              : /\(hw:\d+,\d+\)/.test(d.name)
+                ? `${d.name} — raw, may not work at 16 kHz`
+                : d.name,
+          hasInput: true,
+          hasOutput: d.output_channels > 0,
+        }))
+      setDevices(inputs)
+      const s: BackendStatus = statusRes
+      setStatus({
+        mode: s.mode,
+        inputName: s.input_name,
+        outputName: s.output_name,
+        deviceMissing: s.device_missing,
+        error: s.error,
+      })
+      setError(null)
+    } catch (err) {
+      setError(err as Error)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void tick()
+    const id = window.setInterval(() => void tick(), POLL_MS)
+    return () => window.clearInterval(id)
+  }, [tick])
+
+  const selectInput = React.useCallback(
+    async (id: string) => {
+      const res = await fetch("/api/local-audio/select", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        // Use the device name for both input & output; for USB speakerphones
+        // (e.g. PowerConf) the same hardware does mic + speaker. Users with
+        // separate mic/speaker devices can still drive this via env vars at
+        // boot — we keep the API symmetric for now.
+        body: JSON.stringify({ input_id: id, output_id: id }),
+      })
+      if (!res.ok) {
+        throw new Error(`Failed to select input: ${res.status}`)
+      }
+      await tick()
+    },
+    [tick],
+  )
+
+  return { devices, status, error, selectInput }
 }

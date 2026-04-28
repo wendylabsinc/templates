@@ -9,7 +9,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./components/ui/tooltip"
-import { usePipecatClient } from "./audio"
+import { usePipecatClient, useWendyosMicrophones } from "./audio"
 
 function resolveBotWsUrl(): string {
   const override = (import.meta.env.VITE_BOT_WS_URL as string | undefined) ?? null
@@ -42,13 +42,23 @@ function App() {
     muted,
   })
 
-  const wendyosNotice =
-    selection?.kind === "wendyos"
-      ? new Error(
-          "WendyOS-sourced microphones are selected but the agent client isn't wired up yet. " +
-            "Pick a Browser mic, or see useWendyosMicrophones for the integration TODO.",
-        )
-      : null
+  // Surface backend-side audio errors (hot-plug events, pipeline crashes)
+  // even when the user is on a browser mic — a USB unplug on the device
+  // matters either way.
+  const { status: wendyosStatus, error: wendyosFetchError } = useWendyosMicrophones()
+  const wendyosNotice = React.useMemo<Error | null>(() => {
+    if (wendyosFetchError) return wendyosFetchError
+    if (!wendyosStatus) return null
+    if (wendyosStatus.deviceMissing) {
+      return new Error(
+        wendyosStatus.error ?? "Host audio device disconnected. Plug it back in.",
+      )
+    }
+    if (wendyosStatus.error && selection?.kind === "wendyos") {
+      return new Error(wendyosStatus.error)
+    }
+    return null
+  }, [wendyosFetchError, wendyosStatus, selection])
 
   return (
     <TooltipProvider>
@@ -57,6 +67,7 @@ function App() {
         <LifestreamVisualizer
           micAnalyser={client.micAnalyser}
           botAnalyser={client.botAnalyser}
+          botSpeaking={client.botSpeaking}
           lineCount={40}
         />
 
@@ -133,13 +144,15 @@ function App() {
           <footer className="mt-auto flex w-full items-end justify-between">
             <div className="max-w-md">
               <p className="text-emerald-300/40 text-xs italic">
-                {!selection
-                  ? "Please select a microphone (or talk to the device directly)"
-                  : handedOff
-                    ? "Handed off to local mic — pick a microphone to take over"
-                    : muted
-                      ? "Microphone is muted"
-                      : "Speak to interact"}
+                {selection?.kind === "wendyos"
+                  ? `Listening on ${selection.id} — speak to interact`
+                  : !selection
+                    ? "Please select a microphone (or talk to the device directly)"
+                    : handedOff
+                      ? "Handed off to local mic — pick a microphone to take over"
+                      : muted
+                        ? "Microphone is muted"
+                        : "Speak to interact"}
               </p>
             </div>
 

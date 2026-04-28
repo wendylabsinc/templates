@@ -1,0 +1,76 @@
+{
+    "phases": [
+        {
+            "id": "project-type",
+            "title": "Project Type",
+            "questions": [
+                {
+                    "id": "PROJECT_KIND",
+                    "label": "What kind of voice project do you want?",
+                    "type": "radio",
+                    "required": true,
+                    "options": [
+                        { "value": "smart_speaker", "label": "Smart Speaker" },
+                        { "value": "voice_robot",   "label": "Voice Control Robot" },
+                        { "value": "voice_drone",   "label": "Voice Control Drone" }
+                    ]
+                },
+                {
+                    "id": "INFERENCE_MODE",
+                    "label": "Local inference or cloud?",
+                    "type": "radio",
+                    "required": true,
+                    "options": [
+                        { "value": "local", "label": "Local (on-device)" },
+                        { "value": "cloud", "label": "Cloud (API)" }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "local-config",
+            "title": "Local Model",
+            "when": { "questionId": "INFERENCE_MODE", "equals": "local" },
+            "questions": [
+                {
+                    "id": "LOCAL_MODEL",
+                    "label": "Which local model?",
+                    "type": "radio",
+                    "required": true,
+                    "options": [
+                        { "value": "whisper_tiny",  "label": "Whisper Tiny  — fast, less accurate" },
+                        { "value": "whisper_base",  "label": "Whisper Base  — balanced" },
+                        { "value": "whisper_small", "label": "Whisper Small — accurate, slower" },
+                        { "value": "vosk",          "label": "Vosk          — lightweight, fully offline" }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "cloud-config",
+            "title": "Cloud Provider",
+            "when": { "questionId": "INFERENCE_MODE", "equals": "cloud" },
+            "questions": [
+                {
+                    "id": "CLOUD_PROVIDER",
+                    "label": "Model provider?",
+                    "type": "radio",
+                    "required": true,
+                    "options": [
+                        { "value": "openai",    "label": "OpenAI" },
+                        { "value": "anthropic", "label": "Anthropic" },
+                        { "value": "google",    "label": "Google Cloud Speech" },
+                        { "value": "deepgram",  "label": "Deepgram" }
+                    ]
+                },
+                {
+                    "id": "API_TOKEN",
+                    "label": "API token",
+                    "type": "input",
+                    "required": true,
+                    "secret": true
+                }
+            ]
+        }
+    ]
+}

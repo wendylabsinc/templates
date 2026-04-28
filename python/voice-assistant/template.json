@@ -1,0 +1,21 @@
+{
+    "name": "voice-assistant",
+    "description": "Voice assistant with configurable inference backend",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port for the web UI",
+            "type": "integer",
+            "default": 6010,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

@@ -1,0 +1,28 @@
+services:
+  {{.APP_ID}}:
+    build: .
+    ports:
+      - "{{.PORT}}:{{.PORT}}"
+    environment:
+      - PORT={{.PORT}}
+{{if eq .INFERENCE_MODE "local"}}
+      - LOCAL_MODEL={{.LOCAL_MODEL}}
+    depends_on:
+      - model-server
+
+  model-server:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+{{end}}
+{{if eq .INFERENCE_MODE "cloud"}}
+      - CLOUD_PROVIDER={{.CLOUD_PROVIDER}}
+      - API_TOKEN={{.API_TOKEN}}
+{{end}}
+
+{{if eq .INFERENCE_MODE "local"}}
+volumes:
+  ollama-data:
+{{end}}

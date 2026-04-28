@@ -1,0 +1,29 @@
+[project]
+name = "{{.APP_ID}}"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "sounddevice>=0.5",
+    "numpy>=2.0",
+{{if eq .INFERENCE_MODE "local"}}
+{{if eq .LOCAL_MODEL "vosk"}}
+    "vosk>=0.3",
+{{else}}
+    "openai-whisper>=20240930",
+{{end}}
+{{end}}
+{{if eq .INFERENCE_MODE "cloud"}}
+{{if eq .CLOUD_PROVIDER "openai"}}
+    "openai>=1.0",
+{{else if eq .CLOUD_PROVIDER "anthropic"}}
+    "anthropic>=0.40",
+{{else if eq .CLOUD_PROVIDER "google"}}
+    "google-cloud-speech>=2.0",
+{{else if eq .CLOUD_PROVIDER "deepgram"}}
+    "deepgram-sdk>=3.0",
+{{end}}
+{{end}}
+]
+
+[project.scripts]
+{{.APP_ID}} = "{{.APP_ID}}:main"

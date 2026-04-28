@@ -19,6 +19,10 @@
         {
             "name": "camera-feed-yolo",
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
+        },
+        {
+            "name": "voice-assistant",
+            "description": "Voice assistant: local Whisper/Vosk or cloud STT (OpenAI, Anthropic, Google, Deepgram)"
         }
     ],
     "languages": [

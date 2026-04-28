@@ -22,6 +22,10 @@ export interface PipecatClientState {
    *  doesn't expose bot audio as a MediaStreamTrack (so botAnalyser
    *  stays null). */
   botSpeaking: boolean
+  /** Most recent finalized user STT transcript. */
+  userTranscript: string | null
+  /** Most recent bot reply text (assembled from TTS chunks). */
+  botTranscript: string | null
   status: AudioSourceStatus
   error: Error | null
 }
@@ -36,6 +40,8 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
   const [micAnalyser, setMicAnalyser] = React.useState<AnalyserNode | null>(null)
   const [botAnalyser, setBotAnalyser] = React.useState<AnalyserNode | null>(null)
   const [botSpeaking, setBotSpeaking] = React.useState(false)
+  const [userTranscript, setUserTranscript] = React.useState<string | null>(null)
+  const [botTranscript, setBotTranscript] = React.useState<string | null>(null)
   const [status, setStatus] = React.useState<AudioSourceStatus>("idle")
   const [error, setError] = React.useState<Error | null>(null)
 
@@ -95,10 +101,26 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
         onBotStartedSpeaking: () => {
           if (disposed) return
           setBotSpeaking(true)
+          // New bot turn — clear the previous transcript so it doesn't
+          // linger across replies.
+          setBotTranscript("")
         },
         onBotStoppedSpeaking: () => {
           if (disposed) return
           setBotSpeaking(false)
+        },
+        onUserTranscript: (data: { text?: string; final?: boolean } = {}) => {
+          if (disposed) return
+          if (data.final && data.text) setUserTranscript(data.text)
+        },
+        onBotTranscript: (data: { text?: string } = {}) => {
+          if (disposed) return
+          if (data.text) {
+            // Bot transcript arrives in chunks as TTS streams. Append
+            // unless we just reset on bot-started-speaking (in which
+            // case we're at "" and the chunk becomes the start).
+            setBotTranscript((prev) => (prev ? prev + data.text : data.text ?? null))
+          }
         },
         onError: (message) => {
           if (disposed) return
@@ -133,6 +155,8 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
       setMicAnalyser(null)
       setBotAnalyser(null)
       setBotSpeaking(false)
+      setUserTranscript(null)
+      setBotTranscript(null)
       setStatus("idle")
     }
   }, [url, fftSize])
@@ -155,5 +179,13 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
     client.enableMic(!muted)
   }, [muted])
 
-  return { micAnalyser, botAnalyser, botSpeaking, status, error }
+  return {
+    micAnalyser,
+    botAnalyser,
+    botSpeaking,
+    userTranscript,
+    botTranscript,
+    status,
+    error,
+  }
 }

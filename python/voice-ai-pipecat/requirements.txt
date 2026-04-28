@@ -1,11 +1,14 @@
-pipecat-ai[websocket,google,whisper,piper,silero,local]<1.0
+pipecat-ai[websocket,google,openai,anthropic,groq,whisper,deepgram,piper,silero,local]<1.0
 faster-whisper
+simpleeval
 piper-tts
 pyaudio
 fastapi
 uvicorn[standard]
 websockets
 python-dotenv
+openwakeword
+numpy
 # pipecat-ai 0.0.108+ no longer pulls nltk as a transitive dep; the Dockerfile
 # pre-downloads punkt_tab for Piper TTS sentence tokenization, so add it here.
 nltk

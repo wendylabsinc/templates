@@ -17,6 +17,19 @@ export interface WendyosStatus {
   outputName: string | null
   deviceMissing: boolean
   error: string | null
+  /** True between user-stopped-speaking and bot-started-speaking — i.e.
+   *  while STT/LLM/TTS-startup is running. Drives the "Thinking" pill. */
+  processing: boolean
+  /** Round-trip ms from end-of-user-speech to bot's first audio.
+   *  Cleared until the first turn lands. */
+  lastResponseTimeMs: number | null
+  /** Epoch seconds when the wake word last fired, or null. */
+  lastWakeAt: number | null
+  /** Monotonically-increasing counter — frontend triggers a flash on
+   *  every increment. More reliable than diffing a timestamp because
+   *  it survives across polling intervals where timestamp may not yet
+   *  have updated server-side. */
+  wakePulse: number
 }
 
 export interface WendyosMicrophonesState {
@@ -30,7 +43,10 @@ export interface WendyosMicrophonesState {
   selectInput: (id: string) => Promise<void>
 }
 
-const POLL_MS = 3_000
+// 1.2s gives a wake-flash latency the user actually notices; the
+// payloads are small (a couple hundred bytes each) and on localhost
+// so cost is negligible.
+const POLL_MS = 1_200
 
 interface BackendDevice {
   id: number
@@ -46,6 +62,10 @@ interface BackendStatus {
   output_name: string | null
   device_missing: boolean
   error: string | null
+  processing: boolean
+  last_response_time_ms: number | null
+  last_wake_at: number | null
+  wake_pulse: number
 }
 
 /**
@@ -92,6 +112,10 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
         outputName: s.output_name,
         deviceMissing: s.device_missing,
         error: s.error,
+        processing: s.processing,
+        lastResponseTimeMs: s.last_response_time_ms,
+        lastWakeAt: s.last_wake_at,
+        wakePulse: s.wake_pulse ?? 0,
       })
       setError(null)
     } catch (err) {

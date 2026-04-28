@@ -37,6 +37,27 @@
             "type": "string",
             "default": "default",
             "prompt": "Local speaker device (PyAudio index or 'default')"
+        },
+        {
+            "name": "WAKE_WORD_MODELS",
+            "description": "Comma-separated openWakeWord models to listen for. Pretrained options: alexa, hey_jarvis, hey_mycroft, hey_rhasspy, ok_nabu. Custom 'Hey Wendy' requires training a model.",
+            "type": "string",
+            "default": "hey_jarvis",
+            "prompt": "Wake word model(s)"
+        },
+        {
+            "name": "WAKE_WORD_THRESHOLD",
+            "description": "Detection confidence (0.0 to 1.0). Lower = more sensitive but more false triggers.",
+            "type": "string",
+            "default": "0.5",
+            "prompt": "Wake word threshold"
+        },
+        {
+            "name": "WAKE_LISTEN_SECS",
+            "description": "Max seconds to keep the mic open after the wake word fires before auto-closing.",
+            "type": "string",
+            "default": "8.0",
+            "prompt": "Listen window (seconds)"
         }
     ]
 }

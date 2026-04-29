@@ -124,7 +124,17 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
         },
         onError: (message) => {
           if (disposed) return
-          setError(new Error(typeof message === "string" ? message : JSON.stringify(message)))
+          let text: string
+          if (typeof message === "string") {
+            text = message
+          } else if (message instanceof Error) {
+            text = message.message
+          } else if (message && typeof message === "object" && "message" in message) {
+            text = String((message as { message: unknown }).message)
+          } else {
+            text = String(message)
+          }
+          setError(new Error(text))
           setStatus("error")
         },
       },
@@ -143,14 +153,25 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
     })()
 
     if (audioContext.state === "suspended") {
-      void audioContext.resume().catch(() => {})
+      void audioContext.resume().catch((err) => {
+        if (disposed) return
+        // Most often a browser autoplay-policy block — without surfacing
+        // it the user sees a flat visualizer with no error to act on.
+        setError(err instanceof Error ? err : new Error(String(err)))
+      })
     }
 
     return () => {
       disposed = true
       clientRef.current = null
-      void client.disconnect().catch(() => {})
-      void audioContext.close().catch(() => {})
+      void client.disconnect().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn("PipecatClient disconnect failed", err)
+      })
+      void audioContext.close().catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn("AudioContext close failed", err)
+      })
       audioContextRef.current = null
       setMicAnalyser(null)
       setBotAnalyser(null)
@@ -161,23 +182,44 @@ export function usePipecatClient(options: PipecatClientOptions): PipecatClientSt
     }
   }, [url, fftSize])
 
-  // Switch input device when the user picks a different mic.
+  // Switch input device when the user picks a different mic. The client
+  // throws if updateMic is called pre-connect, and a failure halfway
+  // through leaves the previous mic active — disable it so the UI's
+  // "switched device" state matches reality.
   React.useEffect(() => {
     const client = clientRef.current
-    if (!client || !inputDeviceId) return
+    if (!client || !inputDeviceId || status !== "active") return
     try {
       client.updateMic(inputDeviceId)
     } catch (err) {
-      setError(err as Error)
+      try {
+        client.enableMic(false)
+      } catch {
+        // already torn down — nothing to do
+      }
+      setError(
+        new Error(
+          `Failed to switch microphone to ${inputDeviceId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      )
     }
-  }, [inputDeviceId])
+  }, [inputDeviceId, status])
 
-  // Toggle the mic without tearing down the connection.
+  // Toggle the mic without tearing down the connection. Gated on status
+  // because @pipecat-ai/client-js throws if enableMic is called before
+  // connect() resolves; without this guard the first mute toggle on
+  // mount silently breaks the WebSocket.
   React.useEffect(() => {
     const client = clientRef.current
-    if (!client) return
-    client.enableMic(!muted)
-  }, [muted])
+    if (!client || status !== "active") return
+    try {
+      client.enableMic(!muted)
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error(String(err)))
+    }
+  }, [muted, status])
 
   return {
     micAnalyser,

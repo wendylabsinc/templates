@@ -267,60 +267,6 @@ def _builtin_function_tools() -> list[tuple]:
     ]
 
 
-async def make_web_search_handler(brave_api_key: str):
-    """Create a Pipecat function handler that calls Brave Search.
-
-    Returned coroutine accepts Pipecat's `FunctionCallParams` and pushes
-    a result back to the LLM. We wrap it in a closure so the API key
-    can be captured at pipeline-build time without a global lookup.
-    """
-    import httpx
-
-    async def web_search(params) -> None:  # pragma: no cover (integration)
-        query = (params.arguments or {}).get("query", "")
-        if not brave_api_key:
-            await params.result_callback(
-                {"error": "Web search not configured. Set a Brave API key in settings."}
-            )
-            return
-        if not query:
-            await params.result_callback({"error": "Empty query"})
-            return
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(
-                    "https://api.search.brave.com/res/v1/web/search",
-                    headers={
-                        "X-Subscription-Token": brave_api_key,
-                        "Accept": "application/json",
-                    },
-                    params={"q": query, "count": 3},
-                )
-            if resp.status_code != 200:
-                _log.warning("Brave search %s: %s", resp.status_code, resp.text[:200])
-                await params.result_callback(
-                    {"error": f"Search returned {resp.status_code}"}
-                )
-                return
-            data = resp.json()
-            results = data.get("web", {}).get("results", [])
-            top = []
-            for r in results[:3]:
-                top.append(
-                    {
-                        "title": r.get("title", ""),
-                        "url": r.get("url", ""),
-                        "snippet": r.get("description", ""),
-                    }
-                )
-            await params.result_callback({"results": top, "query": query})
-        except Exception as exc:
-            _log.exception("Brave search failed")
-            await params.result_callback({"error": f"Search failed: {exc}"})
-
-    return web_search
-
-
 def _build_llm_service(
     provider: str,
     model: str,
@@ -332,12 +278,19 @@ def _build_llm_service(
 ):
     """Construct the right Pipecat LLM service for `provider`.
 
-    Returns `(service, tools_schema, function_handler_or_None)`:
-      - `service`: the LLMService instance to insert in the pipeline
-      - `tools_schema`: ToolsSchema for OpenAI-style providers (None
-        when google_search is being used natively)
-      - `function_handler`: when present, must be registered via
-        `service.register_function("web_search", handler)` after build
+    Returns ``(service, tools_schema, handlers)``:
+      - ``service``: the LLMService instance to insert in the pipeline.
+      - ``tools_schema``: ToolsSchema covering all built-in tools for
+        OpenAI-style providers, or None when Google's native
+        google_search grounding is in use.
+      - ``handlers``: list of ``(tool_name, handler_or_marker)`` pairs
+        the caller must register on the service. ``handler_or_marker``
+        is either an async callable wrapped by ``_trace_tool``, or a
+        ``("__brave__", api_key)`` marker telling the caller to build
+        a Brave-search closure with the captured key. Markers exist
+        because the closure can't be constructed at factory time
+        without leaking the key out of this function. None when no
+        function tools apply (Google with native search).
     """
     if provider == "google":
         kwargs = {

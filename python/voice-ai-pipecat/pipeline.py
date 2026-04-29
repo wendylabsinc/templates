@@ -436,85 +436,55 @@ class PipelineStateTracker(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
-class ConversationLogger(FrameProcessor):
-    """Snapshot completed user/assistant turns for persistence.
-
-    Watches for the most recent finalized user transcription, then
-    accumulates LLM-emitted text frames, and on bot-stopped-speaking
-    fires a callback with `(user_text, bot_text)`. main.py's callback
-    persists to disk if `persist_conversation` is on.
-    """
-
-    def __init__(self, on_turn_complete: callable) -> None:  # type: ignore[type-arg]
-        super().__init__()
-        self._on_turn_complete = on_turn_complete
-        self._pending_user: Optional[str] = None
-        self._bot_chunks: list[str] = []
-
-    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame):
-            text = (getattr(frame, "text", "") or "").strip()
-            if text:
-                self._pending_user = text
-                # Surface what STT actually heard so debugging "the bot
-                # got it wrong" doesn't require re-running with DEBUG.
-                _log.info("STT ▸ %s", text)
-        elif isinstance(frame, BotStartedSpeakingFrame):
-            self._bot_chunks = []
-        elif isinstance(frame, TextFrame):
-            text = (getattr(frame, "text", "") or "")
-            if self._pending_user is not None and text:
-                self._bot_chunks.append(text)
-        elif isinstance(frame, BotStoppedSpeakingFrame):
-            if self._pending_user and self._bot_chunks:
-                bot_text = "".join(self._bot_chunks).strip()
-                if bot_text:
-                    # Log the full bot reply (= what TTS spoke) so the
-                    # user can compare it against what they asked for.
-                    _log.info("TTS ▸ %s", bot_text)
-                    try:
-                        self._on_turn_complete(self._pending_user, bot_text)
-                    except Exception:
-                        _log.exception("ConversationLogger: persist failed")
-            self._pending_user = None
-            self._bot_chunks = []
-        await self.push_frame(frame, direction)
-
-
-class STTTranscriptLogger(FrameProcessor):
-    """Logs the STT result the moment Whisper / Deepgram emits it.
+class STTUserTextCapture(FrameProcessor):
+    """Logs each finalized user transcription and stashes the last one.
 
     Place RIGHT AFTER the STT service. The user-context aggregator
     downstream consumes TranscriptionFrame to build the LLM's message
-    list, so a logger placed at the end of the pipeline never sees
-    these frames — the aggregator eats them. Sit before the aggregator
-    and we catch them on their way through.
+    list, so a logger placed past it never sees these frames. The
+    captured text is exposed via ``last_user_text`` so a downstream
+    BotResponseLogger can pair it with the bot's reply for persistence.
     """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.last_user_text: Optional[str] = None
+
+    def consume_user_text(self) -> Optional[str]:
+        text = self.last_user_text
+        self.last_user_text = None
+        return text
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         if isinstance(frame, TranscriptionFrame):
             text = (getattr(frame, "text", "") or "").strip()
             if text:
+                self.last_user_text = text
                 _log.info("STT ▸ %s", text)
         await self.push_frame(frame, direction)
 
 
 class BotResponseLogger(FrameProcessor):
-    """Logs the full bot reply text by accumulating LLM-emitted chunks.
+    """Accumulates LLM-emitted text per turn, logs it, and optionally
+    persists the (user, bot) pair via ``on_turn_complete``.
 
-    Place RIGHT AFTER the LLM service, before TTS. LLM streams its
-    response as a series of TextFrame chunks; we concatenate them
-    between BotStartedSpeakingFrame and BotStoppedSpeakingFrame and
-    emit a single 'TTS ▸' line per turn. The bot-stopped frame
-    propagates back from the output transport — by the time we see
-    it here, all the LLM TextFrames have flowed past on their way to
-    TTS, so the chunks list is complete.
+    Place RIGHT AFTER the LLM service, before TTS — LLM streams TextFrame
+    chunks on their way to TTS, and the assistant context aggregator
+    placed at the tail of the pipeline consumes them, so a processor
+    placed any later never sees them. The user transcript is read at
+    bot-stopped time from a paired ``STTUserTextCapture`` so we don't
+    need a second processor placement.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        user_capture: Optional["STTUserTextCapture"] = None,
+        on_turn_complete: Optional[callable] = None,  # type: ignore[type-arg]
+    ) -> None:
         super().__init__()
+        self._user_capture = user_capture
+        self._on_turn_complete = on_turn_complete
         self._chunks: list[str] = []
         self._collecting = False
 
@@ -532,6 +502,13 @@ class BotResponseLogger(FrameProcessor):
                 full = "".join(self._chunks).strip()
                 if full:
                     _log.info("TTS ▸ %s", full)
+                    if self._on_turn_complete and self._user_capture is not None:
+                        user_text = self._user_capture.consume_user_text()
+                        if user_text:
+                            try:
+                                self._on_turn_complete(user_text, full)
+                            except Exception:
+                                _log.exception("BotResponseLogger: on_turn_complete failed")
             self._chunks = []
             self._collecting = False
         await self.push_frame(frame, direction)
@@ -1111,26 +1088,29 @@ def build_pipeline_task(
                 on_bot_stopped=on_bot_stopped,
             )
         )
+    user_capture = STTUserTextCapture()
     processors.extend(
         [
             stt,
-            # Per-turn timing + transcript logger. Both must sit
+            # Per-turn timing + transcript capture. Both must sit
             # AFTER STT so they see TranscriptionFrame, and BEFORE
             # the user-context aggregator which consumes it.
             TurnTelemetry(),
-            STTTranscriptLogger(),
+            user_capture,
             context_aggregator.user(),
             llm,
             # Catch the LLM's streamed TextFrame chunks here, on their
-            # way to TTS. Logged as a single line on bot-stopped.
-            BotResponseLogger(),
+            # way to TTS. Logged as a single line on bot-stopped, and
+            # paired with the captured user text for persistence.
+            BotResponseLogger(
+                user_capture=user_capture,
+                on_turn_complete=on_turn_complete,
+            ),
             tts,
             transport.output(),
             context_aggregator.assistant(),
         ]
     )
-    if on_turn_complete:
-        processors.append(ConversationLogger(on_turn_complete))
 
     pipeline = Pipeline(processors)
 

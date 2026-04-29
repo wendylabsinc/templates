@@ -38,6 +38,7 @@ from starlette.websockets import WebSocketState
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.frames.frames import Frame, InterruptionFrame, TTSStoppedFrame
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.serializers.protobuf import ProtobufFrameSerializer
 from pipecat.transports.base_transport import BaseTransport
@@ -465,6 +466,27 @@ def _build_vad_analyzer() -> SileroVADAnalyzer:
     )
 
 
+class _InterruptAwareProtobufSerializer(ProtobufFrameSerializer):
+    """ProtobufFrameSerializer that translates InterruptionFrame to
+    TTSStoppedFrame on the way to the browser.
+
+    Pipecat 0.0.108's protobuf schema doesn't include InterruptionFrame,
+    so the serializer drops it with a warning when the bot is
+    interrupted mid-reply. The browser keeps playing whatever audio is
+    already buffered (~1–2 s), making interruption feel laggy. The
+    @pipecat-ai/client-js SDK does honor TTSStoppedFrame though — when
+    it sees one it stops its AudioBufferSourceNode chain. Mapping
+    InterruptionFrame → TTSStoppedFrame is benign on the frame stream
+    (TTS would emit a TTSStoppedFrame at end of utterance anyway) and
+    cuts the audio tail to ~50 ms.
+    """
+
+    async def serialize(self, frame: Frame):
+        if isinstance(frame, InterruptionFrame):
+            return await super().serialize(TTSStoppedFrame())
+        return await super().serialize(frame)
+
+
 class AppSettings:
     """User-editable settings, persisted across container restarts.
 
@@ -819,6 +841,11 @@ class SessionManager:
         # settings change can rebuild the browser pipeline in place
         # without forcing the user to reconnect.
         self._active_browser_ws: Optional[WebSocket] = None
+        # Bot-speaking state for WakeWordGate to consult — set when
+        # PipelineStateTracker fires on_bot_started, cleared (with a
+        # 500 ms tail) on on_bot_stopped.
+        self._bot_speaking_at: Optional[float] = None
+        self._bot_quiet_at: Optional[float] = None
 
     @property
     def mode(self) -> str:
@@ -854,6 +881,23 @@ class SessionManager:
             )
         self._processing = False
         self._processing_started_mono = None
+        self._bot_speaking_at = time.monotonic()
+
+    def on_bot_stopped(self) -> None:
+        # 500 ms grace after bot stops so any in-flight audio has time
+        # to leave the speaker before the wake detector re-arms.
+        self._bot_quiet_at = time.monotonic() + 0.5
+
+    def is_bot_currently_speaking(self) -> bool:
+        # WakeWordGate uses this to skip wake-word inference while the
+        # bot's TTS is playing. The frame events that fire bot started/
+        # stopped only flow downstream, so the wake gate (which sits at
+        # the front of the pipeline) can't observe them directly.
+        if self._bot_speaking_at is None:
+            return False
+        if self._bot_quiet_at is not None and time.monotonic() >= self._bot_quiet_at:
+            return False
+        return True
 
     def on_wake_fired(self) -> None:
         self._wake_pulse += 1
@@ -943,7 +987,7 @@ class SessionManager:
                 audio_out_sample_rate=16000,
                 add_wav_header=False,
                 vad_analyzer=_build_vad_analyzer(),
-                serializer=ProtobufFrameSerializer(),
+                serializer=_InterruptAwareProtobufSerializer(),
             ),
         )
         self._active_browser_ws = websocket
@@ -1033,7 +1077,9 @@ class SessionManager:
             conversation_history=history,
             on_user_stopped=self.on_user_stopped,
             on_bot_started=self.on_bot_started,
+            on_bot_stopped=self.on_bot_stopped,
             on_wake_fired=self.on_wake_fired,
+            is_bot_speaking=self.is_bot_currently_speaking,
             on_turn_complete=_on_turn_complete,
             llm_provider=settings_store.llm_provider,
             llm_model=settings_store.llm_model,

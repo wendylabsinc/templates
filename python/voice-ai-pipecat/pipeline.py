@@ -409,10 +409,12 @@ class PipelineStateTracker(FrameProcessor):
         self,
         on_user_stopped: Optional[callable] = None,  # type: ignore[type-arg]
         on_bot_started: Optional[callable] = None,  # type: ignore[type-arg]
+        on_bot_stopped: Optional[callable] = None,  # type: ignore[type-arg]
     ) -> None:
         super().__init__()
         self._on_user_stopped = on_user_stopped
         self._on_bot_started = on_bot_started
+        self._on_bot_stopped = on_bot_stopped
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -426,6 +428,11 @@ class PipelineStateTracker(FrameProcessor):
                 self._on_bot_started()
             except Exception:
                 _log.exception("PipelineStateTracker: bot-started callback failed")
+        elif isinstance(frame, BotStoppedSpeakingFrame) and self._on_bot_stopped:
+            try:
+                self._on_bot_stopped()
+            except Exception:
+                _log.exception("PipelineStateTracker: bot-stopped callback failed")
         await self.push_frame(frame, direction)
 
 
@@ -472,6 +479,61 @@ class ConversationLogger(FrameProcessor):
                         _log.exception("ConversationLogger: persist failed")
             self._pending_user = None
             self._bot_chunks = []
+        await self.push_frame(frame, direction)
+
+
+class STTTranscriptLogger(FrameProcessor):
+    """Logs the STT result the moment Whisper / Deepgram emits it.
+
+    Place RIGHT AFTER the STT service. The user-context aggregator
+    downstream consumes TranscriptionFrame to build the LLM's message
+    list, so a logger placed at the end of the pipeline never sees
+    these frames — the aggregator eats them. Sit before the aggregator
+    and we catch them on their way through.
+    """
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame):
+            text = (getattr(frame, "text", "") or "").strip()
+            if text:
+                _log.info("STT ▸ %s", text)
+        await self.push_frame(frame, direction)
+
+
+class BotResponseLogger(FrameProcessor):
+    """Logs the full bot reply text by accumulating LLM-emitted chunks.
+
+    Place RIGHT AFTER the LLM service, before TTS. LLM streams its
+    response as a series of TextFrame chunks; we concatenate them
+    between BotStartedSpeakingFrame and BotStoppedSpeakingFrame and
+    emit a single 'TTS ▸' line per turn. The bot-stopped frame
+    propagates back from the output transport — by the time we see
+    it here, all the LLM TextFrames have flowed past on their way to
+    TTS, so the chunks list is complete.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._chunks: list[str] = []
+        self._collecting = False
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._chunks = []
+            self._collecting = True
+        elif isinstance(frame, TextFrame) and self._collecting:
+            text = getattr(frame, "text", None)
+            if text:
+                self._chunks.append(text)
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            if self._chunks:
+                full = "".join(self._chunks).strip()
+                if full:
+                    _log.info("TTS ▸ %s", full)
+            self._chunks = []
+            self._collecting = False
         await self.push_frame(frame, direction)
 
 
@@ -628,6 +690,7 @@ class WakeWordGate(FrameProcessor):
         input_sample_rate: int = 16000,
         output_sample_rate: int = 48000,
         on_wake_fired: Optional[callable] = None,  # type: ignore[type-arg]
+        is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
     ) -> None:
         super().__init__()
         from openwakeword.model import Model as OWWModel
@@ -652,6 +715,15 @@ class WakeWordGate(FrameProcessor):
         # Gate the wake-word inference itself for ~250 ms after we play
         # the chime so the chime doesn't echo back into the detector.
         self._mute_oww_until: float = 0.0
+        # Callable that reports whether the bot is currently producing
+        # TTS audio. The frame events (BotStartedSpeakingFrame /
+        # BotStoppedSpeakingFrame) flow downstream from the output
+        # transport and never reach this gate, which sits at the front
+        # of the pipeline. So we ask the SessionManager via callback
+        # instead. Without this guard, the bot's own TTS leaks back
+        # through the mic and openWakeWord matches phonemes in it as
+        # "hey jarvis" at score 0.99–1.00 every ~8 s.
+        self._is_bot_speaking = is_bot_speaking
 
     @property
     def _in_window(self) -> bool:
@@ -686,9 +758,17 @@ class WakeWordGate(FrameProcessor):
         if self._listening_until is not None and now >= self._listening_until:
             await self._close_window()
 
+        bot_speaking = bool(self._is_bot_speaking and self._is_bot_speaking())
+
         if isinstance(frame, InputAudioRawFrame):
-            # Always run wake word unless we just played a chime.
-            if now >= self._mute_oww_until and not self._in_window:
+            # Run wake detector unless we just played a chime, are
+            # already inside a listening window, or the bot is
+            # currently speaking (its TTS leaks back into the mic).
+            if (
+                now >= self._mute_oww_until
+                and not self._in_window
+                and not bot_speaking
+            ):
                 audio = np.frombuffer(frame.audio, dtype=np.int16)
                 try:
                     prediction = self._oww.predict(audio)
@@ -843,8 +923,10 @@ def build_pipeline_task(
     conversation_history: Optional[list[dict[str, str]]] = None,
     on_user_stopped: Optional[callable] = None,  # type: ignore[type-arg]
     on_bot_started: Optional[callable] = None,  # type: ignore[type-arg]
+    on_bot_stopped: Optional[callable] = None,  # type: ignore[type-arg]
     on_wake_fired: Optional[callable] = None,  # type: ignore[type-arg]
     on_turn_complete: Optional[callable] = None,  # type: ignore[type-arg]
+    is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
     llm_provider: str = "google",
     llm_model: str = "gemini-2.5-flash",
     llm_api_key: str = "",
@@ -1016,24 +1098,32 @@ def build_pipeline_task(
                 threshold=wake_threshold,
                 max_listen_secs=wake_listen_secs,
                 on_wake_fired=on_wake_fired,
+                is_bot_speaking=is_bot_speaking,
             )
         )
     if greeting_message:
         processors.append(GreetingAnnouncer(greeting_message))
-    if on_user_stopped or on_bot_started:
+    if on_user_stopped or on_bot_started or on_bot_stopped:
         processors.append(
             PipelineStateTracker(
                 on_user_stopped=on_user_stopped,
                 on_bot_started=on_bot_started,
+                on_bot_stopped=on_bot_stopped,
             )
         )
-    # Always-on per-turn timing log. Cheap (no I/O, just timestamps).
-    processors.append(TurnTelemetry())
     processors.extend(
         [
             stt,
+            # Per-turn timing + transcript logger. Both must sit
+            # AFTER STT so they see TranscriptionFrame, and BEFORE
+            # the user-context aggregator which consumes it.
+            TurnTelemetry(),
+            STTTranscriptLogger(),
             context_aggregator.user(),
             llm,
+            # Catch the LLM's streamed TextFrame chunks here, on their
+            # way to TTS. Logged as a single line on bot-stopped.
+            BotResponseLogger(),
             tts,
             transport.output(),
             context_aggregator.assistant(),

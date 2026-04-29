@@ -519,6 +519,11 @@ class AppSettings:
         # set here means existing GOOGLE_API_KEY users see no change.
         self.api_keys: dict[str, str] = {}
         self.brave_api_key: str = ""
+        # Set when _load found a settings file but couldn't parse it; the
+        # original is renamed aside so the next _save doesn't overwrite
+        # the user's data, and /api/status surfaces the path to the
+        # quarantined copy so the frontend can show a banner.
+        self.load_error: Optional[str] = None
         self._load()
 
     def _load(self) -> None:
@@ -575,8 +580,35 @@ class AppSettings:
             logger.info("Loaded settings from %s", SETTINGS_PATH)
         except FileNotFoundError:
             pass
-        except Exception:
-            logger.exception("Failed to load %s; using defaults", SETTINGS_PATH)
+        except Exception as exc:
+            # Quarantine the corrupt file so the next _save() doesn't
+            # overwrite whatever the user had before. Without this a
+            # one-time JSON error silently wipes prompt + voice + keys.
+            quarantine_path: Optional[Path] = None
+            try:
+                quarantine_path = SETTINGS_PATH.with_name(
+                    f"{SETTINGS_PATH.name}.corrupt-{int(time.time())}"
+                )
+                SETTINGS_PATH.rename(quarantine_path)
+            except Exception:
+                logger.exception(
+                    "Failed to quarantine corrupt settings file %s",
+                    SETTINGS_PATH,
+                )
+                quarantine_path = None
+            self.load_error = (
+                f"Settings file at {SETTINGS_PATH} could not be parsed "
+                f"({exc!s}); using defaults."
+            )
+            if quarantine_path is not None:
+                self.load_error += (
+                    f" The original was preserved at {quarantine_path}."
+                )
+            logger.exception(
+                "Failed to load %s; using defaults (quarantined to %s)",
+                SETTINGS_PATH,
+                quarantine_path,
+            )
 
     def has_api_key(self, provider: str) -> bool:
         """True if either the runtime store or the env var has a key."""
@@ -600,38 +632,40 @@ class AppSettings:
         return self.brave_api_key or os.environ.get(SEARCH_BACKEND_ENV, "")
 
     def _save(self) -> None:
-        try:
-            import json
+        """Persist the current settings; raises on disk/serialize failure
+        so callers can return an HTTP error instead of pretending success.
+        """
+        import json
 
-            SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            # Persist EVERYTHING including raw key material — to_dict()
-            # is for API responses (sanitized); this is the on-disk
-            # serialization that has to round-trip cleanly.
-            payload = {
-                "system_prompt": self.system_prompt,
-                "tts_voice": self.tts_voice,
-                "allow_interruptions": self.allow_interruptions,
-                "wake_word_models": list(self.wake_word_models),
-                "wake_word_disabled": self.wake_word_disabled,
-                "stt_language": self.stt_language,
-                "vad_confidence": self.vad_confidence,
-                "vad_min_volume": self.vad_min_volume,
-                "vad_stop_secs": self.vad_stop_secs,
-                "vad_start_secs": self.vad_start_secs,
-                "google_search_enabled": self.google_search_enabled,
-                "greeting_enabled": self.greeting_enabled,
-                "greeting_message": self.greeting_message,
-                "persist_conversation": self.persist_conversation,
-                "llm_provider": self.llm_provider,
-                "llm_model": self.llm_model,
-                "stt_provider": self.stt_provider,
-                "stt_model": self.stt_model,
-                "api_keys": dict(self.api_keys),
-                "brave_api_key": self.brave_api_key,
-            }
-            SETTINGS_PATH.write_text(json.dumps(payload, indent=2))
-        except Exception:
-            logger.exception("Failed to persist settings to %s", SETTINGS_PATH)
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        # Persist EVERYTHING including raw key material — to_dict()
+        # is for API responses (sanitized); this is the on-disk
+        # serialization that has to round-trip cleanly.
+        payload = {
+            "system_prompt": self.system_prompt,
+            "tts_voice": self.tts_voice,
+            "allow_interruptions": self.allow_interruptions,
+            "wake_word_models": list(self.wake_word_models),
+            "wake_word_disabled": self.wake_word_disabled,
+            "stt_language": self.stt_language,
+            "vad_confidence": self.vad_confidence,
+            "vad_min_volume": self.vad_min_volume,
+            "vad_stop_secs": self.vad_stop_secs,
+            "vad_start_secs": self.vad_start_secs,
+            "google_search_enabled": self.google_search_enabled,
+            "greeting_enabled": self.greeting_enabled,
+            "greeting_message": self.greeting_message,
+            "persist_conversation": self.persist_conversation,
+            "llm_provider": self.llm_provider,
+            "llm_model": self.llm_model,
+            "stt_provider": self.stt_provider,
+            "stt_model": self.stt_model,
+            "api_keys": dict(self.api_keys),
+            "brave_api_key": self.brave_api_key,
+        }
+        SETTINGS_PATH.write_text(json.dumps(payload, indent=2))
+        # Successful save invalidates any earlier load-time complaint.
+        self.load_error = None
 
     def update(
         self,
@@ -1196,6 +1230,7 @@ async def api_status() -> dict[str, Any]:
         "output_name": session.output_name,
         "device_missing": session.device_missing,
         "error": session.last_error,
+        "settings_load_error": settings_store.load_error,
         "processing": session._processing,  # noqa: SLF001
         "last_response_time_ms": session._last_response_time_ms,  # noqa: SLF001
         "last_wake_at": session._last_wake_at,  # noqa: SLF001
@@ -1306,29 +1341,38 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
     next_prompt = body.system_prompt
     if body.reset_to_default:
         next_prompt = DEFAULT_SYSTEM_PROMPT
-    changed = settings_store.update(
-        system_prompt=next_prompt,
-        tts_voice=body.tts_voice,
-        allow_interruptions=body.allow_interruptions,
-        wake_word_models=body.wake_word_models,
-        wake_word_disabled=body.wake_word_disabled,
-        stt_language=body.stt_language,
-        vad_confidence=body.vad_confidence,
-        vad_min_volume=body.vad_min_volume,
-        vad_stop_secs=body.vad_stop_secs,
-        vad_start_secs=body.vad_start_secs,
-        google_search_enabled=body.google_search_enabled,
-        greeting_enabled=body.greeting_enabled,
-        greeting_message=body.greeting_message,
-        persist_conversation=body.persist_conversation,
-        llm_provider=body.llm_provider,
-        llm_model=body.llm_model,
-        stt_provider=body.stt_provider,
-        stt_model=body.stt_model,
-        api_keys=body.api_keys,
-        api_keys_clear=body.api_keys_clear,
-        brave_api_key=body.brave_api_key,
-    )
+    try:
+        changed = settings_store.update(
+            system_prompt=next_prompt,
+            tts_voice=body.tts_voice,
+            allow_interruptions=body.allow_interruptions,
+            wake_word_models=body.wake_word_models,
+            wake_word_disabled=body.wake_word_disabled,
+            stt_language=body.stt_language,
+            vad_confidence=body.vad_confidence,
+            vad_min_volume=body.vad_min_volume,
+            vad_stop_secs=body.vad_stop_secs,
+            vad_start_secs=body.vad_start_secs,
+            google_search_enabled=body.google_search_enabled,
+            greeting_enabled=body.greeting_enabled,
+            greeting_message=body.greeting_message,
+            persist_conversation=body.persist_conversation,
+            llm_provider=body.llm_provider,
+            llm_model=body.llm_model,
+            stt_provider=body.stt_provider,
+            stt_model=body.stt_model,
+            api_keys=body.api_keys,
+            api_keys_clear=body.api_keys_clear,
+            brave_api_key=body.brave_api_key,
+        )
+    except OSError as exc:
+        # Disk full / read-only filesystem / permission denied — surface
+        # to the UI instead of letting the drawer's "Saved" toast lie.
+        logger.exception("Failed to persist settings to %s", SETTINGS_PATH)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not persist settings to {SETTINGS_PATH}: {exc}",
+        )
     if changed:
         # Compute a rough diff for logging — diff what the user POSTed
         # against what's now committed to the store. Skip the keys

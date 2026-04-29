@@ -40,8 +40,11 @@ export interface AppSettingsState {
   clearApiKeys: (providers: string[]) => Promise<void>
   /** Set or clear the Brave search key. */
   saveBraveKey: (key: string) => Promise<void>
-  /** PUT settings to the backend. Returns when the change has been applied
-   *  (and the active local pipeline restarted, if one was running). */
+  /** POST settings to the backend. Returns when the change has been
+   *  persisted to disk (and the active local pipeline restarted, if one
+   *  was running). Rejects with the server's error detail on save
+   *  failure so the drawer can show a real error instead of a stale
+   *  "Saved" toast. */
   save: (next: Partial<AppSettings>) => Promise<void>
   /** Restore the prompt to the template's built-in default. */
   resetToDefault: () => Promise<void>
@@ -173,65 +176,82 @@ export function useAppSettings(): AppSettingsState {
     void refresh()
   }, [refresh])
 
-  const save = React.useCallback(async (next: Partial<AppSettings>) => {
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(toBackendPayload(next)),
-    })
-    if (!res.ok) throw new Error(`/api/settings ${res.status}`)
-    const data = (await res.json()) as BackendResponse
-    setSettings(fromBackend(data.settings))
-  }, [])
+  // Centralize the POST-and-handle-response path so every mutator
+  // (save, resetToDefault, saveApiKeys, ...) surfaces server errors
+  // identically and clears any stale load-time error on success.
+  const postSettings = React.useCallback(
+    async (path: string, payload: Record<string, unknown>) => {
+      const res = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) {
+        // Backend returns FastAPI HTTPException JSON ({detail: "..."})
+        // for known failure modes (disk full, validation). Prefer that
+        // over the generic status code so users see "Could not persist
+        // settings: Read-only file system" instead of "500".
+        let detail = `${path} ${res.status}`
+        try {
+          const body = (await res.json()) as { detail?: unknown }
+          if (typeof body?.detail === "string" && body.detail) detail = body.detail
+        } catch {
+          // non-JSON body — keep status-based detail
+        }
+        throw new Error(detail)
+      }
+      const data = (await res.json()) as BackendResponse
+      setSettings(fromBackend(data.settings))
+      setError(null)
+    },
+    [],
+  )
+
+  const save = React.useCallback(
+    async (next: Partial<AppSettings>) => {
+      await postSettings("/api/settings", toBackendPayload(next))
+    },
+    [postSettings],
+  )
 
   const resetToDefault = React.useCallback(async () => {
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ reset_to_default: true }),
-    })
-    if (!res.ok) throw new Error(`/api/settings ${res.status}`)
-    const data = (await res.json()) as BackendResponse
-    setSettings(fromBackend(data.settings))
-  }, [])
+    await postSettings("/api/settings", { reset_to_default: true })
+  }, [postSettings])
 
   const resetConversation = React.useCallback(async () => {
     const res = await fetch("/api/conversation/reset", { method: "POST" })
-    if (!res.ok) throw new Error(`/api/conversation/reset ${res.status}`)
+    if (!res.ok) {
+      let detail = `/api/conversation/reset ${res.status}`
+      try {
+        const body = (await res.json()) as { detail?: unknown }
+        if (typeof body?.detail === "string" && body.detail) detail = body.detail
+      } catch {
+        // non-JSON body
+      }
+      throw new Error(detail)
+    }
   }, [])
 
-  const saveApiKeys = React.useCallback(async (keys: Record<string, string>) => {
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ api_keys: keys }),
-    })
-    if (!res.ok) throw new Error(`/api/settings ${res.status}`)
-    const data = (await res.json()) as BackendResponse
-    setSettings(fromBackend(data.settings))
-  }, [])
+  const saveApiKeys = React.useCallback(
+    async (keys: Record<string, string>) => {
+      await postSettings("/api/settings", { api_keys: keys })
+    },
+    [postSettings],
+  )
 
-  const clearApiKeys = React.useCallback(async (providers: string[]) => {
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ api_keys_clear: providers }),
-    })
-    if (!res.ok) throw new Error(`/api/settings ${res.status}`)
-    const data = (await res.json()) as BackendResponse
-    setSettings(fromBackend(data.settings))
-  }, [])
+  const clearApiKeys = React.useCallback(
+    async (providers: string[]) => {
+      await postSettings("/api/settings", { api_keys_clear: providers })
+    },
+    [postSettings],
+  )
 
-  const saveBraveKey = React.useCallback(async (key: string) => {
-    const res = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ brave_api_key: key }),
-    })
-    if (!res.ok) throw new Error(`/api/settings ${res.status}`)
-    const data = (await res.json()) as BackendResponse
-    setSettings(fromBackend(data.settings))
-  }, [])
+  const saveBraveKey = React.useCallback(
+    async (key: string) => {
+      await postSettings("/api/settings", { brave_api_key: key })
+    },
+    [postSettings],
+  )
 
   return {
     settings,

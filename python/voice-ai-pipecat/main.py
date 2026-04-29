@@ -347,18 +347,17 @@ LLM_PROVIDERS: dict[str, list[str]] = {
     "openai": [
         "gpt-4o-mini",
         "gpt-4o",
-        "gpt-5-mini",
-        "gpt-5",
+        "gpt-4-turbo",
     ],
     "anthropic": [
         "claude-haiku-4-5",
-        "claude-sonnet-4-7",
+        "claude-sonnet-4-6",
         "claude-opus-4-7",
     ],
     "groq": [
         "llama-3.3-70b-versatile",
         "llama-3.1-8b-instant",
-        "qwen2.5-72b-instruct",
+        "gemma2-9b-it",
     ],
 }
 # Maps provider key → env var name. We fall back to the env var when no

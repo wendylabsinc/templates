@@ -313,6 +313,11 @@ DEFAULT_ALLOW_INTERRUPTIONS = False
 DEFAULT_WAKE_WORD_MODELS = ["hey_jarvis"]
 DEFAULT_WAKE_WORD_DISABLED = False
 DEFAULT_STT_LANGUAGE = "auto"
+# Silero VAD tuning. These three are 0..1 sensitivity dials; the right
+# values depend on mic gain and room noise more than the algorithm.
+# 0.7 / 0.6 split picked empirically on a PowerConf in a quiet room.
+# Lower confidence → more false-positive triggers; higher min-volume
+# → users near the room edge get cut off mid-sentence.
 DEFAULT_VAD_CONFIDENCE = 0.7
 DEFAULT_VAD_MIN_VOLUME = 0.6
 # How long of a silence after speech before VAD considers you done.
@@ -320,6 +325,9 @@ DEFAULT_VAD_MIN_VOLUME = 0.6
 # natural pauses. 1.0 s gives time to gather your thoughts without
 # making the bot feel sluggish at the end of a snappy reply.
 DEFAULT_VAD_STOP_SECS = 1.0
+# Lead-in: how much speech VAD needs before flipping into "speaking".
+# Short enough that the first phoneme isn't lost, long enough that a
+# single keyboard click doesn't open a turn.
 DEFAULT_VAD_START_SECS = 0.2
 DEFAULT_GOOGLE_SEARCH_ENABLED = True
 DEFAULT_GREETING_ENABLED = True
@@ -954,6 +962,18 @@ class SessionManager:
         self._wake_pulse += 1
         self._last_wake_at = time.time()
 
+    def on_wake_predict_error(self, message: str) -> None:
+        """Surface a sustained openWakeWord failure to /api/status.
+
+        Called once after N consecutive predict() exceptions; without
+        this the gate stays closed forever and the device looks dead.
+        """
+        self._last_error = (
+            "Wake-word detection has been failing — say a phrase to "
+            f"verify the mic, then check the server logs. ({message})"
+        )
+        logger.warning("SessionManager: wake-word predict failures — %s", message)
+
     async def start_local(
         self,
         *,
@@ -1130,6 +1150,7 @@ class SessionManager:
             on_bot_started=self.on_bot_started,
             on_bot_stopped=self.on_bot_stopped,
             on_wake_fired=self.on_wake_fired,
+            on_wake_predict_error=self.on_wake_predict_error,
             is_bot_speaking=self.is_bot_currently_speaking,
             on_turn_complete=_on_turn_complete,
             llm_provider=settings_store.llm_provider,
@@ -1269,15 +1290,28 @@ def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
 
 
 @app.get("/")
-async def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+async def index():
+    # Frontend may not have been built (dev runs that skip the npm build
+    # stage of the Dockerfile, or volume mounts). Without this check
+    # FileResponse raises a generic 500; users see no clue that the
+    # static dir is empty.
+    index_path = STATIC_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"Frontend bundle not found at {STATIC_DIR}. Run "
+                "`npm run build` in frontend/ or rebuild the container."
+            ),
+        )
+    return FileResponse(index_path)
 
 
 if STATIC_DIR.exists():
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
 
-# --- Audio device API for the frontend "WendyOS devices" combobox -----------
+# --- Audio device API for the frontend MicrophoneSelector --------------------
 
 
 @app.get("/api/audio-devices")

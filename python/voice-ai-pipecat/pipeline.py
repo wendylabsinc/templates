@@ -107,9 +107,6 @@ def _build_stt_service(
             "api_key": api_key,
             "sample_rate": 16000,
         }
-        # Pipecat's Deepgram service exposes model + language via the
-        # `live_options` arg. Some 0.0.108 builds also accept `model`
-        # directly — try both.
         if model:
             kwargs["model"] = model
         if language and language.lower() not in {"auto", ""}:
@@ -606,6 +603,19 @@ class GreetingAnnouncer(FrameProcessor):
         except Exception:
             _log.exception("GreetingAnnouncer: failed to push greeting")
 
+    async def cleanup(self) -> None:
+        """Cancel a pending greeting if the pipeline tears down before it
+        fires. Without this the leaked task can wake into a torn-down
+        transport and raise "Task was destroyed but it is pending"."""
+        await super().cleanup()
+        if self._delayed_task is not None and not self._delayed_task.done():
+            self._delayed_task.cancel()
+            try:
+                await self._delayed_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._delayed_task = None
+
 
 class WakeWordGate(FrameProcessor):
     """Wake-word activated audio gate.
@@ -622,9 +632,17 @@ class WakeWordGate(FrameProcessor):
     listening.
 
     Models come from openwakeword's pretrained set: "alexa",
-    "hey_jarvis", "hey_mycroft", "hey_rhasspy", "ok_nabu". Configure via
-    the WAKE_WORD_MODELS env var (comma-separated). There is no
-    pretrained "Hey Wendy" — that requires training a custom model.
+    "hey_jarvis", "hey_mycroft", "hey_rhasspy", "ok_nabu". Configure
+    them through the settings drawer (which writes to
+    /api/settings.wake_word_models); the WAKE_WORD_MODELS env var is a
+    fallback for first-boot before the user opens the drawer. There is
+    no pretrained "Hey Wendy" — that requires training a custom model.
+
+    If openwakeword's predict() starts raising every tick (model file
+    corrupt, ONNX runtime mismatch), the gate stays closed forever and
+    the user has no way to wake the bot. After ``predict_error_limit``
+    consecutive failures we invoke ``on_predict_error`` so the
+    SessionManager can surface the problem on /api/status.
     """
 
     def __init__(
@@ -636,6 +654,8 @@ class WakeWordGate(FrameProcessor):
         output_sample_rate: int = 48000,
         on_wake_fired: Optional[callable] = None,  # type: ignore[type-arg]
         is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
+        on_predict_error: Optional[callable] = None,  # type: ignore[type-arg]
+        predict_error_limit: int = 20,
     ) -> None:
         super().__init__()
         from openwakeword.model import Model as OWWModel
@@ -669,6 +689,10 @@ class WakeWordGate(FrameProcessor):
         # through the mic and openWakeWord matches phonemes in it as
         # "hey jarvis" at score 0.99–1.00 every ~8 s.
         self._is_bot_speaking = is_bot_speaking
+        self._on_predict_error = on_predict_error
+        self._predict_error_limit = max(1, predict_error_limit)
+        self._consecutive_predict_errors: int = 0
+        self._predict_error_notified: bool = False
 
     @property
     def _in_window(self) -> bool:
@@ -717,9 +741,24 @@ class WakeWordGate(FrameProcessor):
                 audio = np.frombuffer(frame.audio, dtype=np.int16)
                 try:
                     prediction = self._oww.predict(audio)
-                except Exception:
+                    self._consecutive_predict_errors = 0
+                except Exception as exc:
                     _log.exception("WakeWordGate: predict failed")
                     prediction = {}
+                    self._consecutive_predict_errors += 1
+                    if (
+                        self._consecutive_predict_errors >= self._predict_error_limit
+                        and not self._predict_error_notified
+                        and self._on_predict_error
+                    ):
+                        # Without this notification the gate stays closed
+                        # forever and the user has no signal — the device
+                        # appears unresponsive to the wake word.
+                        self._predict_error_notified = True
+                        try:
+                            self._on_predict_error(str(exc))
+                        except Exception:
+                            _log.exception("WakeWordGate: on_predict_error failed")
                 if prediction:
                     score = max(prediction.values())
                     if score >= self._threshold:
@@ -870,6 +909,7 @@ def build_pipeline_task(
     on_bot_started: Optional[callable] = None,  # type: ignore[type-arg]
     on_bot_stopped: Optional[callable] = None,  # type: ignore[type-arg]
     on_wake_fired: Optional[callable] = None,  # type: ignore[type-arg]
+    on_wake_predict_error: Optional[callable] = None,  # type: ignore[type-arg]
     on_turn_complete: Optional[callable] = None,  # type: ignore[type-arg]
     is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
     llm_provider: str = "google",
@@ -1044,6 +1084,7 @@ def build_pipeline_task(
                 max_listen_secs=wake_listen_secs,
                 on_wake_fired=on_wake_fired,
                 is_bot_speaking=is_bot_speaking,
+                on_predict_error=on_wake_predict_error,
             )
         )
     if greeting_message:

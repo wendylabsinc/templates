@@ -27,20 +27,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Route ALSA's "default" PCM to the PowerConf via `asym` + `dmix` (mix
-# shared playback) + `dsnoop` (shared capture), each fronted by `plug`
-# for in-kernel rate conversion. We address the device by USB card
-# *name* so the same setup works regardless of slot order — the PowerConf
-# can land on hw:0,0 or hw:2,0 depending on what else is plugged in.
+# Route ALSA's "default" PCM to the PowerConf via `asym` (split playback
+# and capture) with `plug` on each leg for in-kernel rate conversion. We
+# address the device by USB card *name* so the same setup works regardless
+# of slot order — the PowerConf can land on hw:0,0 or hw:2,0 depending on
+# what else is plugged in.
 #
-# Why this complexity:
+# Why plug-per-direction:
 #  - PowerConf only supports 48 kHz at the hardware level. Silero VAD
-#    insists on 16 kHz capture, so we need plug for rate conversion.
-#  - Using a single `plug → hw:` for both capture and playback hits a
-#    libasound bug (`Assertion 'status->appl_ptr == *pcm->appl.ptr'
-#    failed` in pcm_plugin.c) on pipeline restart, which aborts the
-#    Python process. dmix/dsnoop each allocate their own per-open
-#    buffers and tolerate concurrent open/close cycles cleanly.
+#    insists on 16 kHz capture, so plug is required for rate conversion.
+#  - We tried dmix/dsnoop here for shared access (the obvious fix to
+#    libasound's pipeline-restart `parameters->channelCount <= maxChans`
+#    error), but dmix's plug-reported max channel count (128) didn't
+#    roundtrip cleanly through PortAudio. Single-plug-per-direction is
+#    the simplest config that survives concurrent restart cycles — see
+#    the matching note inside the asound.conf heredoc below.
 #  - To target a different USB mic, change `CARD=PowerConf` to whatever
 #    `arecord -l` shows in `card N: <NAME> [...]`.
 COPY <<'ASOUND_CONF' /etc/asound.conf
@@ -112,8 +113,9 @@ RUN /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperMod
 
 # Pre-download openWakeWord models (~few MB each). The pretrained set
 # includes "alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy", "ok_nabu".
-# At runtime WAKE_WORD_MODELS picks which to load; "hey_jarvis" is the
-# closest stand-in for "Hey Wendy" until we train a custom model.
+# At runtime WAKE_WORD_MODELS picks which to load. There is no pretrained
+# "Hey Wendy" — that requires training a custom model; the settings
+# drawer's wake-word picker only exposes the pretrained set.
 RUN /app/venv/bin/python -c "import openwakeword.utils as u; u.download_models()"
 
 COPY main.py pipeline.py ./

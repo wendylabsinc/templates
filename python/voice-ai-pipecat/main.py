@@ -30,7 +30,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -61,6 +62,19 @@ HOTPLUG_POLL_SECS = float(os.environ.get("HOTPLUG_POLL_SECS", "3.0"))
 # process but resets on container restart, which is fine for a demo
 # template — for true persistence mount a volume and point this here.
 SETTINGS_PATH = Path(os.environ.get("SETTINGS_PATH", "/tmp/voice-ai-settings.json"))
+# Optional shared-secret gate on write routes (POST /api/settings,
+# /api/conversation/reset, /api/local-audio/select). When set, callers
+# must send `Authorization: Bearer <token>`; reads stay open since they
+# never return raw key material. Empty (default) leaves writes open,
+# matching the existing template behavior on a trusted LAN.
+WENDY_AUTH_TOKEN = os.environ.get("WENDY_AUTH_TOKEN", "").strip()
+# Comma-separated CORS origin allowlist. Empty (default) restricts
+# browsers to the same origin. Set e.g.
+# `WENDY_CORS_ORIGINS=https://wendy.local:3005,http://localhost:5173`
+# to allow the dev frontend during development.
+WENDY_CORS_ORIGINS = [
+    o.strip() for o in os.environ.get("WENDY_CORS_ORIGINS", "").split(",") if o.strip()
+]
 
 logging.basicConfig(
     level=logging.INFO,
@@ -834,6 +848,10 @@ class AppSettings:
 
 
 settings_store = AppSettings()
+# Serialize concurrent writes to SETTINGS_PATH. Multiple frontends on the
+# same LAN (e.g. desktop + mobile) can each POST /api/settings, and the
+# read-modify-write inside AppSettings.update isn't atomic on its own.
+_settings_write_lock = asyncio.Lock()
 
 
 class SessionManager:
@@ -1223,6 +1241,33 @@ async def lifespan(_: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
+if WENDY_CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=WENDY_CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+
+def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
+    """FastAPI dependency that gates write routes on a shared-secret token.
+
+    No-op when WENDY_AUTH_TOKEN is unset (the existing template default
+    on a trusted LAN). When set, expects ``Authorization: Bearer <token>``
+    and 401s otherwise. Applied only to routes that mutate state or could
+    be abused to extract API keys via the re-save flow.
+    """
+    if not WENDY_AUTH_TOKEN:
+        return
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    if token != WENDY_AUTH_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
+
+
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -1264,19 +1309,30 @@ async def api_status() -> dict[str, Any]:
     }
 
 
-@app.post("/api/conversation/reset")
+@app.post("/api/conversation/reset", dependencies=[Depends(require_auth)])
 async def api_conversation_reset() -> dict[str, Any]:
     """Drop the persisted conversation history and restart the local
     pipeline so the fresh context takes effect immediately."""
     try:
         CONVERSATION_PATH.unlink(missing_ok=True)
-    except Exception:
+    except Exception as exc:
         logger.exception("Failed to delete %s", CONVERSATION_PATH)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Could not delete conversation history: {exc}",
+        )
     if session.mode == "local":
         try:
             await session.start_local()
-        except Exception:
+        except Exception as exc:
             logger.exception("Failed to restart pipeline after conversation reset")
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Conversation history cleared, but the local pipeline "
+                    f"could not be restarted: {exc}"
+                ),
+            )
     return {"ok": True}
 
 
@@ -1285,7 +1341,7 @@ class LocalAudioSelectBody(BaseModel):
     output_id: Optional[str] = None
 
 
-@app.post("/api/local-audio/select")
+@app.post("/api/local-audio/select", dependencies=[Depends(require_auth)])
 async def api_local_audio_select(body: LocalAudioSelectBody) -> dict[str, Any]:
     """Restart the local pipeline using new input/output devices.
 
@@ -1358,39 +1414,101 @@ async def api_get_settings() -> dict[str, Any]:
     }
 
 
-@app.post("/api/settings")
+@app.post("/api/settings", dependencies=[Depends(require_auth)])
 async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
     """Apply settings changes. If anything changed AND a local pipeline
     is currently running, restart it so the new values take effect now.
     Browser sessions don't get bumped — the user's mid-conversation; the
     new settings apply on next session."""
+    # Validate before mutating the store so bad input becomes a clean 400
+    # instead of a silent no-op (empty wake list) or a session crash on
+    # next pipeline build (provider switch without a key).
+    if body.wake_word_models is not None:
+        valid_wake = [w for w in body.wake_word_models if w in AVAILABLE_WAKE_WORDS]
+        if not valid_wake:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "wake_word_models must contain at least one supported "
+                    f"wake word from {AVAILABLE_WAKE_WORDS}"
+                ),
+            )
+    # Provider switch with no key configured will crash the next pipeline
+    # build inside _run_pipeline, leaving /api/status reporting an error
+    # while the drawer's "Saved" toast lies. Reject up front. We check
+    # against api_keys *as they will be after this update*: if the user
+    # is sending a new key in the same payload, accept the switch.
+    incoming_keys = body.api_keys or {}
+    incoming_clear = set(body.api_keys_clear or [])
+
+    def _will_have_key(provider: str) -> bool:
+        if provider in incoming_clear:
+            # Caller is wiping this provider's key in the same call,
+            # but might have provided a fresh value too.
+            return bool(incoming_keys.get(provider))
+        if incoming_keys.get(provider):
+            return True
+        return settings_store.has_api_key(provider)
+
+    if body.llm_provider is not None and body.llm_provider != settings_store.llm_provider:
+        if body.llm_provider not in LLM_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown LLM provider {body.llm_provider!r}",
+            )
+        if not _will_have_key(body.llm_provider):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot switch to LLM provider {body.llm_provider!r}: "
+                    "no API key configured. Save the API key in the same "
+                    "request or set the corresponding env var."
+                ),
+            )
+    if body.stt_provider is not None and body.stt_provider != settings_store.stt_provider:
+        if body.stt_provider not in STT_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown STT provider {body.stt_provider!r}",
+            )
+        # Whisper is local — no key needed; only enforce for hosted STT.
+        if STT_API_KEY_ENV.get(body.stt_provider) and not _will_have_key(body.stt_provider):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot switch to STT provider {body.stt_provider!r}: "
+                    "no API key configured."
+                ),
+            )
+
     next_prompt = body.system_prompt
     if body.reset_to_default:
         next_prompt = DEFAULT_SYSTEM_PROMPT
     try:
-        changed = settings_store.update(
-            system_prompt=next_prompt,
-            tts_voice=body.tts_voice,
-            allow_interruptions=body.allow_interruptions,
-            wake_word_models=body.wake_word_models,
-            wake_word_disabled=body.wake_word_disabled,
-            stt_language=body.stt_language,
-            vad_confidence=body.vad_confidence,
-            vad_min_volume=body.vad_min_volume,
-            vad_stop_secs=body.vad_stop_secs,
-            vad_start_secs=body.vad_start_secs,
-            google_search_enabled=body.google_search_enabled,
-            greeting_enabled=body.greeting_enabled,
-            greeting_message=body.greeting_message,
-            persist_conversation=body.persist_conversation,
-            llm_provider=body.llm_provider,
-            llm_model=body.llm_model,
-            stt_provider=body.stt_provider,
-            stt_model=body.stt_model,
-            api_keys=body.api_keys,
-            api_keys_clear=body.api_keys_clear,
-            brave_api_key=body.brave_api_key,
-        )
+        async with _settings_write_lock:
+            changed = settings_store.update(
+                system_prompt=next_prompt,
+                tts_voice=body.tts_voice,
+                allow_interruptions=body.allow_interruptions,
+                wake_word_models=body.wake_word_models,
+                wake_word_disabled=body.wake_word_disabled,
+                stt_language=body.stt_language,
+                vad_confidence=body.vad_confidence,
+                vad_min_volume=body.vad_min_volume,
+                vad_stop_secs=body.vad_stop_secs,
+                vad_start_secs=body.vad_start_secs,
+                google_search_enabled=body.google_search_enabled,
+                greeting_enabled=body.greeting_enabled,
+                greeting_message=body.greeting_message,
+                persist_conversation=body.persist_conversation,
+                llm_provider=body.llm_provider,
+                llm_model=body.llm_model,
+                stt_provider=body.stt_provider,
+                stt_model=body.stt_model,
+                api_keys=body.api_keys,
+                api_keys_clear=body.api_keys_clear,
+                brave_api_key=body.brave_api_key,
+            )
     except OSError as exc:
         # Disk full / read-only filesystem / permission denied — surface
         # to the UI instead of letting the drawer's "Saved" toast lie.

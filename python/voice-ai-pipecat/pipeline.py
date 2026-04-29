@@ -42,28 +42,43 @@ from pipecat.services.piper.tts import PiperTTSService
 from pipecat.services.whisper.stt import WhisperSTTService, Model
 from pipecat.transports.base_transport import BaseTransport
 
+_log = logging.getLogger("voice-ai-pipecat.pipeline")
+
+
+# Lazy imports for optional providers — pipecat-ai's [deepgram], [openai],
+# [anthropic], and [groq] extras pull in real SDKs we want to import only
+# when used. Catch ImportError narrowly: a SyntaxError or AttributeError
+# inside the imported module means the package IS installed but broken,
+# and surfacing that is more useful than telling the user "extra not
+# installed" when they clearly have it.
 try:
     from pipecat.services.deepgram.stt import DeepgramSTTService
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     DeepgramSTTService = None  # type: ignore[assignment]
-
-# Lazy imports for optional providers — pipecat-ai's [openai], [anthropic],
-# and [groq] extras pull in real SDKs we want to import only when used.
+except Exception:  # pragma: no cover
+    _log.exception("Deepgram extra installed but failed to import")
+    DeepgramSTTService = None  # type: ignore[assignment]
 try:
     from pipecat.services.openai.llm import OpenAILLMService
+except ImportError:  # pragma: no cover
+    OpenAILLMService = None  # type: ignore[assignment]
 except Exception:  # pragma: no cover
+    _log.exception("OpenAI extra installed but failed to import")
     OpenAILLMService = None  # type: ignore[assignment]
 try:
     from pipecat.services.anthropic.llm import AnthropicLLMService
+except ImportError:  # pragma: no cover
+    AnthropicLLMService = None  # type: ignore[assignment]
 except Exception:  # pragma: no cover
+    _log.exception("Anthropic extra installed but failed to import")
     AnthropicLLMService = None  # type: ignore[assignment]
 try:
     from pipecat.services.groq.llm import GroqLLMService
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     GroqLLMService = None  # type: ignore[assignment]
-
-
-_log = logging.getLogger("voice-ai-pipecat.pipeline")
+except Exception:  # pragma: no cover
+    _log.exception("Groq extra installed but failed to import")
+    GroqLLMService = None  # type: ignore[assignment]
 
 
 def _build_stt_service(

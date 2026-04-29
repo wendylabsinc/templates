@@ -1150,27 +1150,53 @@ async def _hotplug_watchdog() -> None:
     while True:
         try:
             await asyncio.sleep(HOTPLUG_POLL_SECS)
-            spec = session._configured_input  # noqa: SLF001 — internal access
-            if not spec:
+            input_spec = session._configured_input  # noqa: SLF001 — internal access
+            output_spec = session._configured_output  # noqa: SLF001 — internal access
+            if not input_spec and not output_spec:
                 # No specific device was requested (PortAudio default).
                 # Nothing to watch for.
                 continue
             devices = _enumerate_devices()
-            in_idx, _in_name = _resolve_device(spec, devices)
-            present = in_idx is not None
+            in_idx, _in_name = (
+                _resolve_device(input_spec, devices)
+                if input_spec
+                else (None, None)
+            )
+            out_idx, _out_name = (
+                _resolve_device(output_spec, devices)
+                if output_spec
+                else (None, None)
+            )
+            input_present = (not input_spec) or in_idx is not None
+            output_present = (not output_spec) or out_idx is not None
+            present = input_present and output_present
 
             if session.mode == "local" and not present:
+                missing_spec = (
+                    input_spec if not input_present else output_spec
+                )
+                direction = "input" if not input_present else "output"
                 await session.mark_device_lost(
-                    f"Audio device {spec!r} disappeared (USB unplug?)"
+                    f"Audio {direction} device {missing_spec!r} disappeared "
+                    "(USB unplug?)"
                 )
             elif session.device_missing and present:
                 logger.info(
-                    "Hotplug: %r reappeared, restarting local pipeline", spec
+                    "Hotplug: device(s) reappeared, restarting local pipeline"
                 )
                 try:
                     await session.start_local()
-                except Exception:
-                    logger.exception("Hotplug: failed to restart local pipeline")
+                except Exception as exc:
+                    # start_local() may have already cleared device_missing
+                    # before raising; restore it so /api/status keeps
+                    # showing the Alert and the watchdog tries again on
+                    # the next tick instead of declaring success.
+                    logger.exception(
+                        "Hotplug: failed to restart local pipeline"
+                    )
+                    await session.mark_device_lost(
+                        f"Hot-plug recovery failed: {exc}"
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:

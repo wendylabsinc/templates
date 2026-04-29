@@ -61,11 +61,11 @@ export function MicrophoneSelector({ onDeviceSelect }: MicrophoneSelectorProps) 
       }
       // When the user picks a wendyos (host-side) mic, ask the backend
       // to switch its local pipeline to that device. Browser mics are
-      // handled by the Pipecat WS client in App.tsx instead.
+      // handled by the Pipecat WS client in App.tsx instead. The hook
+      // already setError()s on failure so ErrorAlerts surfaces it; this
+      // catch is just to keep the unhandled-rejection warning quiet.
       if (sel?.kind === "wendyos") {
-        void selectInput(sel.id).catch((err) =>
-          console.error("Failed to select wendyos device:", err),
-        )
+        void selectInput(sel.id).catch(() => {})
       }
     },
     [onDeviceSelect, selectInput],

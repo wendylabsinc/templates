@@ -141,7 +141,21 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
         body: JSON.stringify({ input_id: id, output_id: id }),
       })
       if (!res.ok) {
-        throw new Error(`Failed to select input: ${res.status}`)
+        // Prefer the FastAPI HTTPException detail over a bare status so
+        // the ErrorAlerts banner says e.g. "Audio device 'foo' not found"
+        // instead of "Failed to select input: 400".
+        let detail = `Failed to select input: ${res.status}`
+        try {
+          const body = (await res.json()) as { detail?: unknown }
+          if (typeof body?.detail === "string" && body.detail) detail = body.detail
+        } catch {
+          // non-JSON body — keep status-based detail
+        }
+        const err = new Error(detail)
+        // Surface to the same error state ErrorAlerts watches; the next
+        // successful tick() clears it.
+        setError(err)
+        throw err
       }
       await tick()
     },

@@ -68,8 +68,9 @@ function App() {
   // the user picks a different mic.
   const [handedOff, setHandedOff] = React.useState(false)
 
-  // Only the browser mic source is wired up today; wendyos-sourced audio lands
-  // once the agent client exists (see useWendyosMicrophones).
+  // The browser-mic path uses the Pipecat WS client; "wendyos" selection
+  // means the host pipeline is using its own USB mic and the browser
+  // doesn't open a session at all (see useWendyosMicrophones).
   const browserDeviceId = selection?.kind === "browser" ? selection.id : null
 
   React.useEffect(() => {

@@ -66,8 +66,9 @@ function Toggle({ id, checked, onChange, label, hint, disabled }: ToggleProps) {
 /**
  * Right-side slide-in panel for editing user settings. Keeps a local
  * `draft` state for everything; "Save" pushes the whole draft to
- * /api/settings (which restarts the local pipeline) and also persists
- * UI-only toggles (transcripts overlay) to localStorage.
+ * /api/settings (which restarts the local pipeline). UI-only toggles
+ * (transcripts overlay) write to localStorage independently the moment
+ * the checkbox flips, so they don't need to wait for "Save" to apply.
  */
 export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
   const {

@@ -1,0 +1,21 @@
+{
+    "name": "realsense-camera",
+    "description": "Live multi-stream viewer for Intel RealSense D415: color + 2x IR + depth as MJPEG",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port (serves the SPA and the MJPEG endpoints)",
+            "type": "integer",
+            "default": 8000,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

@@ -393,14 +393,39 @@ LLM_PROVIDERS: dict[str, list[str]] = {
         "llama-3.1-8b-instant",
         "gemma2-9b-it",
     ],
+    # On-device LLM via Ollama. Pipecat ships OLLamaLLMService which is
+    # a thin OpenAI-compat client pointing at the Ollama daemon. The
+    # Dockerfile.gpu variant pre-pulls one of these into the image so
+    # there's no first-boot download. Models picked for tool-calling
+    # reliability at <8GB unified memory (Jetson Orin NX target):
+    #   qwen2.5:3b      — best tool-calling small model, ~25 tok/s
+    #   llama3.2:3b     — Meta's official tool model, ~22 tok/s
+    #   qwen2.5:7b      — better quality but tight on memory + slower
+    # No API key — base_url defaults to http://localhost:11434/v1.
+    "ollama": [
+        "qwen2.5:3b",
+        "llama3.2:3b",
+        "qwen2.5:7b",
+        "gemma2:2b",
+    ],
 }
 # Maps provider key → env var name. We fall back to the env var when no
-# key is present in the runtime settings store.
+# key is present in the runtime settings store. Empty string means "no
+# API key required" — used by Ollama (local, dummy key accepted by the
+# OpenAI-compat shim).
 LLM_API_KEY_ENV: dict[str, str] = {
     "google": "GOOGLE_API_KEY",
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "groq": "GROQ_API_KEY",
+    "ollama": "",
+}
+# Per-provider base URL defaults. When a provider's entry is non-empty
+# AND the user hasn't set llm_base_url in settings, the service points
+# here. Lets us ship Ollama defaulting to localhost without forcing
+# every user to type the URL.
+LLM_BASE_URL_DEFAULTS: dict[str, str] = {
+    "ollama": "http://localhost:11434/v1",
 }
 # Search backend for non-Google providers. Brave is the default; users
 # can also drop in TAVILY_API_KEY and switch with /api/settings.
@@ -612,6 +637,11 @@ class AppSettings:
         self.persist_conversation: bool = DEFAULT_PERSIST_CONVERSATION
         self.llm_provider: str = DEFAULT_LLM_PROVIDER
         self.llm_model: str = DEFAULT_LLM_MODEL
+        # Override base URL for OpenAI-compatible providers (Ollama, LM
+        # Studio, vLLM, etc.). Empty string means "use the provider's
+        # default" — for ollama that's LLM_BASE_URL_DEFAULTS["ollama"].
+        # Cloud providers (google/openai/anthropic/groq) ignore this.
+        self.llm_base_url: str = ""
         self.stt_provider: str = DEFAULT_STT_PROVIDER
         self.stt_model: str = DEFAULT_STT_MODEL
         # API keys configured via the settings UI at runtime. Stored in
@@ -676,6 +706,7 @@ class AppSettings:
             )
             self.llm_provider = str(data.get("llm_provider", DEFAULT_LLM_PROVIDER))
             self.llm_model = str(data.get("llm_model", DEFAULT_LLM_MODEL))
+            self.llm_base_url = str(data.get("llm_base_url", ""))
             self.stt_provider = str(data.get("stt_provider", DEFAULT_STT_PROVIDER))
             self.stt_model = str(data.get("stt_model", DEFAULT_STT_MODEL))
             keys = data.get("api_keys", {})
@@ -767,6 +798,7 @@ class AppSettings:
             "persist_conversation": self.persist_conversation,
             "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
+            "llm_base_url": self.llm_base_url,
             "stt_provider": self.stt_provider,
             "stt_model": self.stt_model,
             "api_keys": dict(self.api_keys),
@@ -797,6 +829,7 @@ class AppSettings:
         persist_conversation: Optional[bool] = None,
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
+        llm_base_url: Optional[str] = None,
         stt_provider: Optional[str] = None,
         stt_model: Optional[str] = None,
         api_keys: Optional[dict[str, str]] = None,
@@ -893,6 +926,11 @@ class AppSettings:
         if llm_model is not None and llm_model and llm_model != self.llm_model:
             self.llm_model = llm_model
             changed = True
+        if llm_base_url is not None:
+            stripped = llm_base_url.strip()
+            if stripped != self.llm_base_url:
+                self.llm_base_url = stripped
+                changed = True
         if stt_provider is not None and stt_provider in STT_PROVIDERS:
             if stt_provider != self.stt_provider:
                 self.stt_provider = stt_provider
@@ -947,6 +985,7 @@ class AppSettings:
             "persist_conversation": self.persist_conversation,
             "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
+            "llm_base_url": self.llm_base_url,
             "stt_provider": self.stt_provider,
             "stt_model": self.stt_model,
             # Booleans only — never expose raw key material in API
@@ -1282,6 +1321,13 @@ class SessionManager:
             llm_provider=settings_store.llm_provider,
             llm_model=settings_store.llm_model,
             llm_api_key=settings_store.get_api_key(settings_store.llm_provider),
+            # Resolved at pipeline-build time so a user-saved override
+            # always wins; empty falls back to the provider default
+            # (Ollama → http://localhost:11434/v1; cloud → unused).
+            llm_base_url=(
+                settings_store.llm_base_url
+                or LLM_BASE_URL_DEFAULTS.get(settings_store.llm_provider, "")
+            ),
             brave_api_key=settings_store.get_brave_key(),
             stt_provider=settings_store.stt_provider,
             stt_model=settings_store.stt_model,
@@ -1572,6 +1618,7 @@ class SettingsBody(BaseModel):
     persist_conversation: Optional[bool] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    llm_base_url: Optional[str] = None
     stt_provider: Optional[str] = None
     stt_model: Optional[str] = None
     api_keys: Optional[dict[str, str]] = None
@@ -1644,7 +1691,12 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                 status_code=400,
                 detail=f"Unknown LLM provider {body.llm_provider!r}",
             )
-        if not _will_have_key(body.llm_provider):
+        # Local providers (Ollama, LM Studio, etc.) have an empty
+        # LLM_API_KEY_ENV entry — no key is required, so skip the
+        # _will_have_key check that would otherwise reject the switch.
+        if LLM_API_KEY_ENV.get(body.llm_provider) and not _will_have_key(
+            body.llm_provider
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -1693,6 +1745,7 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                 persist_conversation=body.persist_conversation,
                 llm_provider=body.llm_provider,
                 llm_model=body.llm_model,
+                llm_base_url=body.llm_base_url,
                 stt_provider=body.stt_provider,
                 stt_model=body.stt_model,
                 api_keys=body.api_keys,
@@ -1731,6 +1784,7 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
             "persist_conversation",
             "llm_provider",
             "llm_model",
+            "llm_base_url",
             "stt_provider",
             "stt_model",
         ):

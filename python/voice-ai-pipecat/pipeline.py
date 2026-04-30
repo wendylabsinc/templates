@@ -65,6 +65,7 @@ _DEEPGRAM_LOAD_ERROR: Optional[str] = None
 _OPENAI_LOAD_ERROR: Optional[str] = None
 _ANTHROPIC_LOAD_ERROR: Optional[str] = None
 _GROQ_LOAD_ERROR: Optional[str] = None
+_OLLAMA_LOAD_ERROR: Optional[str] = None
 try:
     from pipecat.services.deepgram.stt import DeepgramSTTService
 except ImportError:  # pragma: no cover
@@ -97,6 +98,18 @@ except Exception as _exc:  # pragma: no cover
     _log.exception("Groq extra installed but failed to import")
     GroqLLMService = None  # type: ignore[assignment]
     _GROQ_LOAD_ERROR = str(_exc)
+# Ollama is shipped as part of the OpenAI extra (it's a thin subclass
+# of OpenAILLMService). If pipecat-ai is too old to have moved the
+# Ollama service into its own package we fall back to OpenAILLMService
+# directly with the right base_url — same wire protocol either way.
+try:
+    from pipecat.services.ollama.llm import OLLamaLLMService
+except ImportError:  # pragma: no cover
+    OLLamaLLMService = None  # type: ignore[assignment]
+except Exception as _exc:  # pragma: no cover
+    _log.exception("Ollama service present but failed to import")
+    OLLamaLLMService = None  # type: ignore[assignment]
+    _OLLAMA_LOAD_ERROR = str(_exc)
 
 
 def _provider_unavailable(name: str, load_error: Optional[str]) -> RuntimeError:
@@ -326,6 +339,7 @@ def _build_llm_service(
     google_search_enabled: bool,
     function_search_enabled: bool,
     brave_api_key: str,
+    llm_base_url: str = "",
 ):
     """Construct the right Pipecat LLM service for `provider`.
 
@@ -410,6 +424,29 @@ def _build_llm_service(
         if GroqLLMService is None:
             raise _provider_unavailable("Groq", _GROQ_LOAD_ERROR)
         return GroqLLMService(api_key=api_key, model=model), tools_schema, handler
+    if provider == "ollama":
+        # Local LLM via Ollama daemon (or any OpenAI-compatible server
+        # if llm_base_url is overridden — LM Studio, vLLM, llama.cpp's
+        # --server, etc.). Empty base_url defaults to Ollama's standard
+        # localhost endpoint (set in main.LLM_BASE_URL_DEFAULTS and
+        # passed through here).
+        base_url = llm_base_url or "http://localhost:11434/v1"
+        if OLLamaLLMService is not None:
+            return (
+                OLLamaLLMService(model=model, base_url=base_url),
+                tools_schema,
+                handler,
+            )
+        # Fallback: older pipecat without the dedicated Ollama subclass.
+        # Ollama's OpenAI-compat endpoint accepts any non-empty bearer
+        # so a literal "ollama" string is fine as the api_key.
+        if OpenAILLMService is None:
+            raise _provider_unavailable("OpenAI", _OPENAI_LOAD_ERROR)
+        return (
+            OpenAILLMService(api_key=api_key or "ollama", model=model, base_url=base_url),
+            tools_schema,
+            handler,
+        )
 
     raise ValueError(f"Unknown LLM provider: {provider!r}")
 
@@ -1034,6 +1071,7 @@ def build_pipeline_task(
     llm_provider: str = "google",
     llm_model: str = "gemini-2.5-flash",
     llm_api_key: str = "",
+    llm_base_url: str = "",
     brave_api_key: str = "",
     stt_provider: str = "whisper",
     stt_model: str = "tiny",
@@ -1063,10 +1101,11 @@ def build_pipeline_task(
     search_enabled = bool(google_search_enabled) if google_search_enabled is not None else True
 
     _log.info(
-        "building pipeline: llm=%s/%s stt=%s/%s tts=%s wake=%s "
+        "building pipeline: llm=%s/%s%s stt=%s/%s tts=%s wake=%s "
         "continuous=%s search=%s interrupt=%s history=%d",
         llm_provider,
         llm_model,
+        f" @ {llm_base_url}" if llm_base_url else "",
         stt_provider,
         stt_model,
         voice,
@@ -1104,6 +1143,7 @@ def build_pipeline_task(
         google_search_enabled=(llm_provider == "google" and search_enabled),
         function_search_enabled=(llm_provider != "google" and search_enabled),
         brave_api_key=brave_api_key,
+        llm_base_url=llm_base_url,
     )
     if handler_spec is not None:
         # `handler_spec` is a list of (name, handler_or_marker) pairs.

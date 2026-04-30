@@ -20,6 +20,10 @@ export interface AppSettings {
   persistConversation: boolean
   llmProvider: string
   llmModel: string
+  /** Override base URL for OpenAI-compatible providers (Ollama, LM
+   *  Studio, vLLM). Empty = use the provider's default
+   *  (Ollama → http://localhost:11434/v1). Cloud providers ignore. */
+  llmBaseUrl: string
   sttProvider: string
   sttModel: string
   apiKeysConfigured: Record<string, boolean>
@@ -75,6 +79,7 @@ interface BackendSettings {
   persist_conversation: boolean
   llm_provider: string
   llm_model: string
+  llm_base_url: string
   stt_provider: string
   stt_model: string
   api_keys_configured: Record<string, boolean>
@@ -112,6 +117,7 @@ function fromBackend(s: BackendSettings): AppSettings {
     persistConversation: s.persist_conversation,
     llmProvider: s.llm_provider,
     llmModel: s.llm_model,
+    llmBaseUrl: s.llm_base_url ?? "",
     sttProvider: s.stt_provider,
     sttModel: s.stt_model,
     apiKeysConfigured: s.api_keys_configured ?? {},
@@ -141,6 +147,7 @@ function toBackendPayload(next: Partial<AppSettings>): Record<string, unknown> {
   if (next.persistConversation !== undefined) out.persist_conversation = next.persistConversation
   if (next.llmProvider !== undefined) out.llm_provider = next.llmProvider
   if (next.llmModel !== undefined) out.llm_model = next.llmModel
+  if (next.llmBaseUrl !== undefined) out.llm_base_url = next.llmBaseUrl
   if (next.sttProvider !== undefined) out.stt_provider = next.sttProvider
   if (next.sttModel !== undefined) out.stt_model = next.sttModel
   return out

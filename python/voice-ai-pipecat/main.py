@@ -316,6 +316,14 @@ DEFAULT_TTS_VOICE = "en_US-lessac-medium"
 DEFAULT_ALLOW_INTERRUPTIONS = False
 DEFAULT_WAKE_WORD_MODELS = ["hey_jarvis"]
 DEFAULT_WAKE_WORD_DISABLED = False
+# Continuous-conversation ("follow-up mode"): after the bot finishes
+# replying, keep the listening window open for a short follow-up so the
+# user can ask a second question without re-saying the wake word. Same
+# UX as Alexa's Follow-Up Mode / Google's Continued Conversation.
+# Default ON because that's the Alexa-feel users expect; off for strict
+# wake-every-time. Window length is bounded [3, 15] s in update().
+DEFAULT_CONTINUOUS_CONVERSATION = True
+DEFAULT_CONTINUOUS_WINDOW_SECS = 6.0
 DEFAULT_STT_LANGUAGE = "auto"
 # Silero VAD tuning. These three are 0..1 sensitivity dials; the right
 # values depend on mic gain and room noise more than the algorithm.
@@ -591,6 +599,8 @@ class AppSettings:
         self.allow_interruptions: bool = DEFAULT_ALLOW_INTERRUPTIONS
         self.wake_word_models: list[str] = list(DEFAULT_WAKE_WORD_MODELS)
         self.wake_word_disabled: bool = DEFAULT_WAKE_WORD_DISABLED
+        self.continuous_conversation: bool = DEFAULT_CONTINUOUS_CONVERSATION
+        self.continuous_window_secs: float = DEFAULT_CONTINUOUS_WINDOW_SECS
         self.stt_language: str = DEFAULT_STT_LANGUAGE
         self.vad_confidence: float = DEFAULT_VAD_CONFIDENCE
         self.vad_min_volume: float = DEFAULT_VAD_MIN_VOLUME
@@ -632,6 +642,12 @@ class AppSettings:
                 self.wake_word_models = wake_models or list(DEFAULT_WAKE_WORD_MODELS)
             self.wake_word_disabled = bool(
                 data.get("wake_word_disabled", DEFAULT_WAKE_WORD_DISABLED)
+            )
+            self.continuous_conversation = bool(
+                data.get("continuous_conversation", DEFAULT_CONTINUOUS_CONVERSATION)
+            )
+            self.continuous_window_secs = float(
+                data.get("continuous_window_secs", DEFAULT_CONTINUOUS_WINDOW_SECS)
             )
             self.stt_language = str(data.get("stt_language", DEFAULT_STT_LANGUAGE))
             self.vad_confidence = float(
@@ -738,6 +754,8 @@ class AppSettings:
             "allow_interruptions": self.allow_interruptions,
             "wake_word_models": list(self.wake_word_models),
             "wake_word_disabled": self.wake_word_disabled,
+            "continuous_conversation": self.continuous_conversation,
+            "continuous_window_secs": self.continuous_window_secs,
             "stt_language": self.stt_language,
             "vad_confidence": self.vad_confidence,
             "vad_min_volume": self.vad_min_volume,
@@ -766,6 +784,8 @@ class AppSettings:
         allow_interruptions: Optional[bool] = None,
         wake_word_models: Optional[list[str]] = None,
         wake_word_disabled: Optional[bool] = None,
+        continuous_conversation: Optional[bool] = None,
+        continuous_window_secs: Optional[float] = None,
         stt_language: Optional[str] = None,
         vad_confidence: Optional[float] = None,
         vad_min_volume: Optional[float] = None,
@@ -805,6 +825,19 @@ class AppSettings:
         if wake_word_disabled is not None and wake_word_disabled != self.wake_word_disabled:
             self.wake_word_disabled = wake_word_disabled
             changed = True
+        if (
+            continuous_conversation is not None
+            and continuous_conversation != self.continuous_conversation
+        ):
+            self.continuous_conversation = continuous_conversation
+            changed = True
+        if continuous_window_secs is not None:
+            # Clamp to a sensible range. <3 s feels jumpy, >15 s makes a
+            # forgotten quiet room hold the gate open for nothing.
+            clamped = max(3.0, min(15.0, float(continuous_window_secs)))
+            if clamped != self.continuous_window_secs:
+                self.continuous_window_secs = clamped
+                changed = True
         if stt_language is not None and stt_language != self.stt_language:
             if stt_language in AVAILABLE_STT_LANGUAGES:
                 self.stt_language = stt_language
@@ -901,6 +934,8 @@ class AppSettings:
             "allow_interruptions": self.allow_interruptions,
             "wake_word_models": list(self.wake_word_models),
             "wake_word_disabled": self.wake_word_disabled,
+            "continuous_conversation": self.continuous_conversation,
+            "continuous_window_secs": self.continuous_window_secs,
             "stt_language": self.stt_language,
             "vad_confidence": self.vad_confidence,
             "vad_min_volume": self.vad_min_volume,
@@ -1231,6 +1266,8 @@ class SessionManager:
             allow_interruptions=settings_store.allow_interruptions,
             wake_word_models=settings_store.wake_word_models,
             wake_word_disabled=wake_disabled,
+            continuous_conversation=settings_store.continuous_conversation,
+            continuous_window_secs=settings_store.continuous_window_secs,
             stt_language=settings_store.stt_language,
             google_search_enabled=settings_store.google_search_enabled,
             greeting_message=greeting,
@@ -1522,6 +1559,8 @@ class SettingsBody(BaseModel):
     allow_interruptions: Optional[bool] = None
     wake_word_models: Optional[list[str]] = None
     wake_word_disabled: Optional[bool] = None
+    continuous_conversation: Optional[bool] = None
+    continuous_window_secs: Optional[float] = None
     stt_language: Optional[str] = None
     vad_confidence: Optional[float] = None
     vad_min_volume: Optional[float] = None
@@ -1641,6 +1680,8 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                 allow_interruptions=body.allow_interruptions,
                 wake_word_models=body.wake_word_models,
                 wake_word_disabled=body.wake_word_disabled,
+                continuous_conversation=body.continuous_conversation,
+                continuous_window_secs=body.continuous_window_secs,
                 stt_language=body.stt_language,
                 vad_confidence=body.vad_confidence,
                 vad_min_volume=body.vad_min_volume,
@@ -1677,6 +1718,8 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
             "allow_interruptions",
             "wake_word_models",
             "wake_word_disabled",
+            "continuous_conversation",
+            "continuous_window_secs",
             "stt_language",
             "vad_confidence",
             "vad_min_volume",

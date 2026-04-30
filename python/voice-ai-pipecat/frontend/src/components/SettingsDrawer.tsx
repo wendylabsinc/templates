@@ -262,6 +262,56 @@ export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
                     ))}
                   </div>
                 </div>
+                <div
+                  className={
+                    "flex flex-col gap-2 border-t border-emerald-500/10 pt-3 " +
+                    (draft.wakeWordDisabled ? "opacity-40" : "")
+                  }
+                >
+                  <Toggle
+                    id="continuous-conversation"
+                    checked={draft.continuousConversation}
+                    onChange={(v) => updateDraft({ continuousConversation: v })}
+                    label="Follow-up mode (continuous conversation)"
+                    hint="After the bot replies, keep listening briefly so you can ask a follow-up without saying the wake word again."
+                    disabled={draft.wakeWordDisabled}
+                  />
+                  <div
+                    className={
+                      "ml-7 flex flex-col gap-1 " +
+                      (draft.continuousConversation && !draft.wakeWordDisabled
+                        ? ""
+                        : "opacity-40")
+                    }
+                  >
+                    <label
+                      htmlFor="continuous-window"
+                      className="flex items-center justify-between text-xs text-emerald-200"
+                    >
+                      <span>Follow-up window</span>
+                      <span className="text-emerald-300/70">
+                        {draft.continuousWindowSecs.toFixed(1)} s
+                      </span>
+                    </label>
+                    <input
+                      id="continuous-window"
+                      type="range"
+                      min={3}
+                      max={15}
+                      step={0.5}
+                      value={draft.continuousWindowSecs}
+                      disabled={
+                        !draft.continuousConversation || draft.wakeWordDisabled
+                      }
+                      onChange={(e) =>
+                        updateDraft({
+                          continuousWindowSecs: parseFloat(e.target.value),
+                        })
+                      }
+                      className="accent-emerald-400"
+                    />
+                  </div>
+                </div>
               </section>
 
               <section className="flex flex-col gap-3">

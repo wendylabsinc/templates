@@ -736,6 +736,8 @@ class WakeWordGate(FrameProcessor):
         is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
         on_predict_error: Optional[callable] = None,  # type: ignore[type-arg]
         predict_error_limit: int = 20,
+        continuous_conversation: bool = False,
+        continuous_window_secs: float = 6.0,
     ) -> None:
         super().__init__()
         from openwakeword.model import Model as OWWModel
@@ -774,6 +776,14 @@ class WakeWordGate(FrameProcessor):
         self._predict_error_limit = max(1, predict_error_limit)
         self._consecutive_predict_errors: int = 0
         self._predict_error_notified: bool = False
+        # Continuous-conversation: re-open the listening window
+        # automatically after the bot finishes speaking, so the user can
+        # ask a follow-up without re-saying the wake word. We detect the
+        # bot's speaking→silent transition by polling is_bot_speaking()
+        # each input frame and watching the edge.
+        self._continuous_conversation = continuous_conversation
+        self._continuous_window_secs = continuous_window_secs
+        self._bot_was_speaking: bool = False
 
     @property
     def _in_window(self) -> bool:
@@ -809,6 +819,30 @@ class WakeWordGate(FrameProcessor):
             await self._close_window()
 
         bot_speaking = bool(self._is_bot_speaking and self._is_bot_speaking())
+
+        # Continuous-conversation edge detect: bot just stopped talking.
+        # Re-open the listening window for a follow-up so the user can
+        # speak again without re-saying the wake word. Done here (not on
+        # a downstream frame) because the gate sits at the front of the
+        # pipeline and never sees BotStoppedSpeakingFrame. The 500 ms
+        # tail in is_bot_currently_speaking() means this fires safely
+        # after any TTS audio has cleared the speakers.
+        if (
+            self._continuous_conversation
+            and self._bot_was_speaking
+            and not bot_speaking
+            and not self._in_window
+        ):
+            self._listening_until = now + self._continuous_window_secs
+            self._mute_oww_until = now + 0.25
+            _log.info(
+                "WakeWordGate: continuous mode — follow-up window opened (%.1fs)",
+                self._continuous_window_secs,
+            )
+            # Deliberately no chime and no on_wake_fired callback here —
+            # that's reserved for actual wake-word triggers. A follow-up
+            # is meant to feel like "still talking", not a fresh wake.
+        self._bot_was_speaking = bot_speaking
 
         if isinstance(frame, InputAudioRawFrame):
             # Run wake detector unless we just played a chime, are
@@ -984,6 +1018,8 @@ def build_pipeline_task(
     allow_interruptions: Optional[bool] = None,
     wake_word_models: Optional[list[str]] = None,
     wake_word_disabled: Optional[bool] = None,
+    continuous_conversation: bool = False,
+    continuous_window_secs: float = 6.0,
     stt_language: Optional[str] = None,
     google_search_enabled: Optional[bool] = None,
     greeting_message: Optional[str] = None,
@@ -1028,7 +1064,7 @@ def build_pipeline_task(
 
     _log.info(
         "building pipeline: llm=%s/%s stt=%s/%s tts=%s wake=%s "
-        "search=%s interrupt=%s history=%d",
+        "continuous=%s search=%s interrupt=%s history=%d",
         llm_provider,
         llm_model,
         stt_provider,
@@ -1037,6 +1073,7 @@ def build_pipeline_task(
         "off"
         if wake_disabled
         else (",".join(wake_word_models or ["hey_jarvis"])),
+        f"on({continuous_window_secs:.1f}s)" if continuous_conversation else "off",
         "google-native"
         if (llm_provider == "google" and search_enabled)
         else (
@@ -1177,6 +1214,8 @@ def build_pipeline_task(
                 on_wake_fired=on_wake_fired,
                 is_bot_speaking=is_bot_speaking,
                 on_predict_error=on_wake_predict_error,
+                continuous_conversation=continuous_conversation,
+                continuous_window_secs=continuous_window_secs,
             )
         )
     if greeting_message:

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { Check, ChevronsUpDown, Play, Square } from "lucide-react"
+import { Check, ChevronsUpDown, Loader2, Play, Square } from "lucide-react"
 import logoUrl from "@/assets/logo.svg"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -83,6 +83,24 @@ function App() {
   const [fps, setFps] = useState(30)
   const [fpsOpen, setFpsOpen] = useState(false)
   const [streaming, setStreaming] = useState(false)
+  const [transitioning, setTransitioning] = useState(false)
+  const [streamLoaded, setStreamLoaded] = useState<Record<StreamId, boolean>>({
+    color: false,
+    "ir-left": false,
+    "ir-right": false,
+    depth: false,
+  })
+
+  // Reset per-tile loaded state on every fresh Start (streamSession bump)
+  // so the spinner overlays come back while we wait for the first frame.
+  useEffect(() => {
+    setStreamLoaded({
+      color: false,
+      "ir-left": false,
+      "ir-right": false,
+      depth: false,
+    })
+  }, [streamSession])
 
   const active = STREAMS.filter((s) => enabled[s.id])
   const isFullscreen = active.length === 1
@@ -297,25 +315,39 @@ function App() {
 
         <div className="ml-auto">
           <Button
+            disabled={transitioning}
             onClick={async () => {
+              if (transitioning) return
+              setTransitioning(true)
               if (streaming) {
                 console.log("[realsense] stop")
                 setStreaming(false)
-                fetch("/stop", { method: "POST" }).catch(() => {})
+                try {
+                  await fetch("/stop", { method: "POST" })
+                } catch {
+                  // ignore
+                }
               } else {
                 console.log("[realsense] start")
                 setStreamSession((n) => n + 1)
                 try {
                   await fetch("/start", { method: "POST" })
                 } catch {
-                  // Server unreachable; the <img> would surface the error anyway.
+                  // ignore — the <img> will surface the error
                 }
                 setStreaming(true)
               }
+              setTransitioning(false)
             }}
             variant={streaming ? "secondary" : "default"}
           >
-            {streaming ? <Square fill="currentColor" /> : <Play />}
+            {transitioning ? (
+              <Loader2 className="animate-spin" />
+            ) : streaming ? (
+              <Square fill="currentColor" />
+            ) : (
+              <Play />
+            )}
             {streaming ? "Stop" : "Start"}
           </Button>
         </div>
@@ -340,15 +372,34 @@ function App() {
                 </CardHeader>
                 <CardContent className="flex-1 min-h-0 p-0">
                   {streaming ? (
-                    <img
-                      key={`${s.id}-${streamSession}`}
-                      src={`/stream/${s.id}?t=${streamSession}`}
-                      alt={s.label}
-                      className={cn(
-                        "h-full w-full object-contain bg-black",
-                        isFullscreen ? "rounded-none" : ""
+                    <div className="relative h-full w-full">
+                      <img
+                        key={`${s.id}-${streamSession}`}
+                        src={`/stream/${s.id}?t=${streamSession}`}
+                        alt={s.label}
+                        onLoad={() =>
+                          setStreamLoaded((prev) => ({
+                            ...prev,
+                            [s.id]: true,
+                          }))
+                        }
+                        className={cn(
+                          "h-full w-full object-contain bg-black transition-opacity",
+                          isFullscreen ? "rounded-none" : "",
+                          streamLoaded[s.id] ? "opacity-100" : "opacity-0"
+                        )}
+                      />
+                      {!streamLoaded[s.id] && (
+                        <div
+                          className={cn(
+                            "absolute inset-0 flex items-center justify-center bg-black",
+                            isFullscreen ? "rounded-none" : ""
+                          )}
+                        >
+                          <Loader2 className="size-8 animate-spin text-muted-foreground" />
+                        </div>
                       )}
-                    />
+                    </div>
                   ) : (
                     <div
                       className={cn(

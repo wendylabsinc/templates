@@ -135,7 +135,12 @@ class RealSensePump:
                 self._stop.set()
             logger.info("stop: joining worker")
             t0 = time.monotonic()
-            old_thread.join(timeout=2.0)
+            # 5s is generous for a healthy stop (~200-500ms typical) but
+            # tolerant of slow pipeline.stop() on busy devices. If this
+            # actually times out, the TIMED-OUT log fires and we have a
+            # genuine bug to investigate — the next start() would race the
+            # still-running worker for the USB device.
+            old_thread.join(timeout=5.0)
             join_ms = (time.monotonic() - t0) * 1000
             timed_out = old_thread.is_alive()
             with self._cond:
@@ -176,7 +181,7 @@ class RealSensePump:
                 width, height, fps, preset,
             )
             t0 = time.monotonic()
-            old_thread.join(timeout=2.0)
+            old_thread.join(timeout=5.0)
             join_ms = (time.monotonic() - t0) * 1000
             with self._lock:
                 if not self._running:
@@ -214,12 +219,40 @@ class RealSensePump:
         config.enable_stream(rs.stream.infrared, 1, w, h, rs.format.y8, fps)
         config.enable_stream(rs.stream.infrared, 2, w, h, rs.format.y8, fps)
 
-        try:
-            profile = pipeline.start(config)
-        except RuntimeError as e:
+        # The D415 occasionally needs a moment after a previous pipeline.stop()
+        # before it'll accept a fresh pipeline.start(). Retry briefly so a
+        # rapid Stop→Start (or a hot reconfigure) doesn't fail on USB
+        # reacquisition latency.
+        profile: rs.pipeline_profile | None = None
+        for attempt in range(3):
+            if self._stop.is_set():
+                return
+            try:
+                profile = pipeline.start(config)
+                break
+            except RuntimeError as e:
+                logger.warning(
+                    "pipeline.start attempt %d/3 failed at %dx%d @ %dfps: %s",
+                    attempt + 1, w, h, fps, e,
+                )
+                time.sleep(0.5)
+
+        if profile is None:
             logger.error(
-                "Failed to start RealSense pipeline at %dx%d @ %dfps: %s", w, h, fps, e
+                "Failed to start RealSense pipeline at %dx%d @ %dfps after 3 attempts",
+                w, h, fps,
             )
+            # Clear our own thread reference and the running flag so the next
+            # `start()` spawns a fresh worker, and wake any iterators blocked
+            # in `latest()` so they exit instead of timing out for 5s. The
+            # `is current_thread()` guard avoids stomping on a thread that
+            # someone else may have already spawned in our place.
+            with self._lock:
+                if self._thread is threading.current_thread():
+                    self._thread = None
+                    self._running = False
+            with self._cond:
+                self._cond.notify_all()
             return
 
         depth_sensor: rs.sensor | None = None
@@ -338,7 +371,11 @@ async def _mjpeg_iter(stream_id: StreamId) -> AsyncIterator[bytes]:
     """
     last: bytes | None = None
     while True:
-        frame = await asyncio.to_thread(pump.latest, stream_id, 1.0)
+        # 5s gives the pipeline plenty of room to produce its first frame
+        # after `pump.start()`. Stop is signalled out-of-band: pump.stop()
+        # clears `_running` and notify_all's, so latest() returns None
+        # immediately and we exit — we don't depend on the timeout for that.
+        frame = await asyncio.to_thread(pump.latest, stream_id, 5.0)
         if frame is None:
             break
         if frame is last:

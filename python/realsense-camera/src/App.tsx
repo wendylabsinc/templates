@@ -1,5 +1,5 @@
-import { useState } from "react"
-import { Check, ChevronsUpDown, Play } from "lucide-react"
+import { useEffect, useState } from "react"
+import { Check, ChevronsUpDown, Play, Square } from "lucide-react"
 import logoUrl from "@/assets/logo.svg"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -50,7 +50,23 @@ const PRESETS = [
   { value: "hand", label: "Hand" },
 ]
 
-const FPS_OPTIONS = [5, 10, 15, 24, 30, 60, 120]
+// FPS values shown in the dropdown. The D415 firmware only resolves a
+// fixed set of FPS per stream profile (6, 15, 30, 60, 90), so 5/10/24 are
+// never accepted by `pipeline.start`. 120 stays in the list purely as a
+// disabled affordance — useful to communicate "this camera can't do that".
+const FPS_OPTIONS = [6, 15, 30, 60, 120]
+
+// FPS values the D415 actually supports with all four streams enabled at
+// the same resolution. Color caps the combined set: 1080p / 720p color is
+// 30 max; 480p color is 60 max. Depth/IR can do 90 at 480p but color can't,
+// so 90 isn't offered. 1920×1080 isn't user-selectable but listed for
+// completeness.
+const SUPPORTED_FPS_BY_RESOLUTION: Record<string, number[]> = {
+  "640x480": [6, 15, 30, 60],
+  "1280x720": [6, 15, 30],
+  "1920x1080": [6, 15, 30],
+}
+const FALLBACK_SUPPORTED_FPS = [15, 30]
 
 function App() {
   const [enabled, setEnabled] = useState<Record<StreamId, boolean>>({
@@ -70,6 +86,63 @@ function App() {
 
   const active = STREAMS.filter((s) => enabled[s.id])
   const isFullscreen = active.length === 1
+  const supportedFps =
+    SUPPORTED_FPS_BY_RESOLUTION[resolution] ?? FALLBACK_SUPPORTED_FPS
+
+  // Poll /health for per-stream FPS while streaming. Counting at the browser
+  // via <img onLoad> is unreliable for `multipart/x-mixed-replace` (Chrome
+  // versions vary, Safari is hit-or-miss, Firefox doesn't support it at all),
+  // so the pump tallies frames as it publishes them and we just read the
+  // 1-second rolling snapshot from /health here.
+  useEffect(() => {
+    if (!streaming) return
+    const tick = async () => {
+      try {
+        const res = await fetch("/health")
+        const data = await res.json()
+        console.log("[realsense] fps", data.fps)
+      } catch {
+        // ignore — next tick will retry
+      }
+    }
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return () => window.clearInterval(id)
+  }, [streaming])
+
+  // If the user switches to a resolution whose supported FPS set doesn't
+  // include the currently selected value, snap to the highest supported FPS
+  // — otherwise we'd POST something the D415 firmware refuses to resolve.
+  useEffect(() => {
+    setFps((current) =>
+      supportedFps.includes(current) ? current : Math.max(...supportedFps)
+    )
+  }, [supportedFps])
+
+  // Push the current resolution / FPS / preset to the server whenever the
+  // user changes a control (and once on mount, so the pump has fresh values
+  // before the first <img> connects). The backend hot-applies preset changes
+  // and restarts its pipeline thread for resolution/FPS changes — existing
+  // MJPEG connections stay open through the restart, so we don't need to
+  // remount the <img> tags.
+  useEffect(() => {
+    const [width = "640", height = "480"] = resolution.split("x")
+    console.log("[realsense] config", { resolution, fps, preset })
+    const params = new URLSearchParams({
+      width,
+      height,
+      fps: String(fps),
+      preset,
+    })
+    const controller = new AbortController()
+    fetch(`/config?${params}`, {
+      method: "POST",
+      signal: controller.signal,
+    }).catch(() => {
+      // Server may not be reachable yet; the next change will retry.
+    })
+    return () => controller.abort()
+  }, [resolution, fps, preset])
 
   const gridClasses = (() => {
     if (active.length <= 1) return "grid grid-cols-1 grid-rows-1"
@@ -121,7 +194,11 @@ function App() {
           <SelectContent>
             <SelectItem value="640x480">640 × 480</SelectItem>
             <SelectItem value="1280x720">1280 × 720</SelectItem>
-            <SelectItem value="1920x1080">1920 × 1080</SelectItem>
+            {/* D415 depth/IR streams cap at 1280×720; 1080p is color-only and
+                this template enables all four streams at one resolution. */}
+            <SelectItem value="1920x1080" disabled>
+              1920 × 1080
+            </SelectItem>
           </SelectContent>
         </Select>
 
@@ -185,24 +262,33 @@ function App() {
               <CommandList>
                 <CommandEmpty>No FPS found.</CommandEmpty>
                 <CommandGroup>
-                  {FPS_OPTIONS.map((f) => (
-                    <CommandItem
-                      key={f}
-                      value={String(f)}
-                      onSelect={(v) => {
-                        setFps(Number(v))
-                        setFpsOpen(false)
-                      }}
-                    >
-                      {`${f} FPS`}
-                      <Check
-                        className={cn(
-                          "ml-auto",
-                          fps === f ? "opacity-100" : "opacity-0"
-                        )}
-                      />
-                    </CommandItem>
-                  ))}
+                  {FPS_OPTIONS.map((f) => {
+                    // Disable any FPS not in the D415's supported set for the
+                    // current resolution (see SUPPORTED_FPS_BY_RESOLUTION).
+                    // Shown greyed out instead of hidden so the user can see
+                    // which options exist but aren't available right now.
+                    const unsupported = !supportedFps.includes(f)
+                    return (
+                      <CommandItem
+                        key={f}
+                        value={String(f)}
+                        disabled={unsupported}
+                        onSelect={(v) => {
+                          if (unsupported) return
+                          setFps(Number(v))
+                          setFpsOpen(false)
+                        }}
+                      >
+                        {`${f} FPS`}
+                        <Check
+                          className={cn(
+                            "ml-auto",
+                            fps === f ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                      </CommandItem>
+                    )
+                  })}
                 </CommandGroup>
               </CommandList>
             </Command>
@@ -211,24 +297,15 @@ function App() {
 
         <div className="ml-auto">
           <Button
-            onClick={async () => {
+            onClick={() => {
               if (!streaming) {
-                const [width, height] = resolution.split("x")
-                try {
-                  await fetch(
-                    `/config?width=${width}&height=${height}&fps=${fps}`,
-                    { method: "POST" }
-                  )
-                } catch {
-                  // server may not be running yet; the <img> will surface the error
-                }
                 setStreamSession((n) => n + 1)
               }
               setStreaming((s) => !s)
             }}
             variant={streaming ? "secondary" : "default"}
           >
-            <Play />
+            {streaming ? <Square fill="currentColor" /> : <Play />}
             {streaming ? "Stop" : "Start"}
           </Button>
         </div>

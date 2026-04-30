@@ -23,6 +23,10 @@
         {
             "name": "voice-assistant",
             "description": "Voice assistant: local Whisper/Vosk or cloud STT (OpenAI, Anthropic, Google, Deepgram)"
+        },
+        {
+            "name": "realsense-camera",
+            "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG"
         }
     ],
     "languages": [

@@ -6,26 +6,52 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2 - Pipecat runtime.
-# Jetson Orin Nano with CUDA acceleration: swap the base to
-# `nvcr.io/nvidia/l4t-pytorch:r36.2.0-pth2.2-py3` (or match your JetPack). The
-# default debian:bookworm-slim keeps the template portable (Pi 5, x86_64).
-FROM debian:bookworm-slim
+# Stage 2 - Pipecat runtime on Jetson with CUDA + on-device LLM.
+#
+# Base: nvcr.io/nvidia/l4t-base:r35.4.1 — Ubuntu 20.04 + CUDA 11.4
+# userland staged for the Wendy `gpu` entitlement to bind-mount libcuda
+# from the host (Go2's JetPack 5.1.x). If the dog turns out to be
+# JetPack 5.1.1 (R35.3.x), swap this tag to r35.3.1 — the userland is
+# CUDA 11.4 either way and the host driver is what gates the kernel
+# module compat.
+#
+# Trade-off vs the previous debian:bookworm-slim base: the image grows
+# from ~700 MB to ~3.5 GB but unlocks GPU acceleration for Ollama
+# (and, optionally, faster-whisper). Pi 5 / x86_64 deploys are no
+# longer in scope on this branch — the local-LLM template is
+# Jetson-targeted.
+FROM nvcr.io/nvidia/l4t-base:r35.4.1
 
+# Ubuntu 20.04 default Python is 3.8; pipecat-ai requires 3.10+.
+# Pull Python 3.10 from the deadsnakes PPA (officially-built backports,
+# ARM64 supported). Doing this in two apt-update passes is needed
+# because add-apt-repository depends on software-properties-common.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
+    software-properties-common \
+    ca-certificates \
+    curl \
+    gnupg \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3.10-venv \
+    python3.10-dev \
     gcc \
     alsa-utils \
     libasound2 \
     portaudio19-dev \
     libsndfile1 \
     ffmpeg \
-    ca-certificates \
-    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Ollama for on-device LLM serving. Detects CUDA at runtime through
+# the bind-mounted libcuda; no GPU at runtime → falls back to CPU
+# (slow but still functional). The official installer also tries to
+# create a systemd service which fails inside a container — that's
+# expected and harmless; the binary install itself still succeeds, so
+# we tolerate a non-zero exit and verify the binary landed.
+RUN curl -fsSL https://ollama.com/install.sh | sh || true
+RUN test -x /usr/local/bin/ollama || (echo "ERROR: Ollama install failed; binary missing at /usr/local/bin/ollama" && exit 1)
 
 # Route ALSA's "default" PCM to the PowerConf via `asym` (split playback
 # and capture) with `plug` on each leg for in-kernel rate conversion. We
@@ -68,7 +94,7 @@ ASOUND_CONF
 
 WORKDIR /app
 
-RUN python3 -m venv /app/venv
+RUN python3.10 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
 
 COPY requirements.txt .
@@ -109,7 +135,8 @@ RUN /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperMod
 # drawer's wake-word picker only exposes the pretrained set.
 RUN /app/venv/bin/python -c "import openwakeword.utils as u; u.download_models()"
 
-COPY main.py pipeline.py ./
+COPY main.py pipeline.py entrypoint.sh ./
+RUN chmod +x /app/entrypoint.sh
 COPY --from=frontend /frontend/dist ./static
 
 # GOOGLE_API_KEY is baked in from the template variable at scaffold time.
@@ -140,6 +167,17 @@ ENV WAKE_WORD_MODELS={{.WAKE_WORD_MODELS}}
 ENV WAKE_WORD_THRESHOLD={{.WAKE_WORD_THRESHOLD}}
 ENV WAKE_LISTEN_SECS={{.WAKE_LISTEN_SECS}}
 
+# On-device LLM model that the entrypoint pulls into Ollama on first
+# boot (and skips on subsequent boots if already cached). Empty
+# disables the pull step — the container still starts the Ollama
+# daemon so the user can pull a model later via the UI's settings,
+# but no LLM is available locally until they do. See entrypoint.sh.
+ENV LOCAL_LLM_MODEL={{.LOCAL_LLM_MODEL}}
+
 EXPOSE {{.PORT}}
 
-CMD ["/app/venv/bin/python", "main.py"]
+# entrypoint.sh starts Ollama in the background, optionally pulls
+# LOCAL_LLM_MODEL, then exec's the Python app. Pipecat itself doesn't
+# need to know about Ollama — it talks to it as just another OpenAI-
+# compatible endpoint via the runtime settings store.
+CMD ["/app/entrypoint.sh"]

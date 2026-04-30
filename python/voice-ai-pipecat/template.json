@@ -58,6 +58,13 @@
             "type": "string",
             "default": "8.0",
             "prompt": "Listen window (seconds)"
+        },
+        {
+            "name": "LOCAL_LLM_MODEL",
+            "description": "Ollama model to pull on first container start (e.g. qwen2.5:3b, llama3.2:3b, qwen2.5:7b). Empty = don't pull (cloud LLM only). Targets Jetson with the gpu entitlement.",
+            "type": "string",
+            "default": "qwen2.5:3b",
+            "prompt": "Local LLM model (Ollama tag, blank to skip)"
         }
     ]
 }

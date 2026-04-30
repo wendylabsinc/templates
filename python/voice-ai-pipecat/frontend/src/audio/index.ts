@@ -11,3 +11,4 @@ export type { WendyosMicrophone, WendyosMicrophonesState } from "./useWendyosMic
 export { useAppSettings } from "./useAppSettings"
 export type { AppSettings, AppSettingsState } from "./useAppSettings"
 export { useShowTranscripts } from "./useShowTranscripts"
+export { authHeaders, getAuthToken } from "./auth"

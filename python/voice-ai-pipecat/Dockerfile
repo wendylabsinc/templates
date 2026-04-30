@@ -31,19 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # and capture) with `plug` on each leg for in-kernel rate conversion. We
 # address the device by USB card *name* so the same setup works regardless
 # of slot order — the PowerConf can land on hw:0,0 or hw:2,0 depending on
-# what else is plugged in.
-#
-# Why plug-per-direction:
-#  - PowerConf only supports 48 kHz at the hardware level. Silero VAD
-#    insists on 16 kHz capture, so plug is required for rate conversion.
-#  - We tried dmix/dsnoop here for shared access (the obvious fix to
-#    libasound's pipeline-restart `parameters->channelCount <= maxChans`
-#    error), but dmix's plug-reported max channel count (128) didn't
-#    roundtrip cleanly through PortAudio. Single-plug-per-direction is
-#    the simplest config that survives concurrent restart cycles — see
-#    the matching note inside the asound.conf heredoc below.
-#  - To target a different USB mic, change `CARD=PowerConf` to whatever
-#    `arecord -l` shows in `card N: <NAME> [...]`.
+# what else is plugged in. The asound.conf heredoc below documents WHY
+# this layout was picked over dmix/dsnoop. To target a different USB mic,
+# change `CARD=PowerConf` to whatever `arecord -l` shows in
+# `card N: <NAME> [...]`.
 COPY <<'ASOUND_CONF' /etc/asound.conf
 # Default PCM is split per-direction via `asym`, with each leg routed
 # through its own `plug` for in-kernel rate/channel conversion. We

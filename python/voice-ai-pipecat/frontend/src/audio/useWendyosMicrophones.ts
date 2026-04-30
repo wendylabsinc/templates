@@ -1,4 +1,5 @@
 import * as React from "react"
+import { authHeaders } from "./auth"
 
 export interface WendyosMicrophone {
   /** Stable handle for the device-side selector (the device's `name`). */
@@ -80,13 +81,28 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
   const [status, setStatus] = React.useState<WendyosStatus | null>(null)
   const [error, setError] = React.useState<Error | null>(null)
 
+  // Dedup state updates by content. tick() runs every 1.2s; without
+  // these refs each poll produces fresh-identity arrays/objects that
+  // re-fire downstream effects (notably MicrophoneSelector's
+  // auto-fallback, which races the backend hot-plug recovery).
+  const lastDevicesJson = React.useRef<string>("")
+  const lastStatusJson = React.useRef<string>("")
+
   const tick = React.useCallback(async () => {
     try {
       const [devicesRes, statusRes] = await Promise.all([
-        fetch("/api/audio-devices").then((r) => r.json()),
-        fetch("/api/status").then((r) => r.json()),
+        fetch("/api/audio-devices"),
+        fetch("/api/status"),
       ])
-      const raw: BackendDevice[] = devicesRes.devices ?? []
+      // A 5xx from a polling endpoint silently parses to `{}` if we
+      // skip the .ok check, leaving devices=[]/status=null/error=null
+      // — the UI shows "no devices" with nothing to act on. Surface
+      // the failure so ErrorAlerts displays the status code instead.
+      if (!devicesRes.ok) throw new Error(`/api/audio-devices ${devicesRes.status}`)
+      if (!statusRes.ok) throw new Error(`/api/status ${statusRes.status}`)
+      const devicesData = (await devicesRes.json()) as { devices?: BackendDevice[] }
+      const statusData = (await statusRes.json()) as BackendStatus
+      const raw: BackendDevice[] = devicesData.devices ?? []
       const inputs: WendyosMicrophone[] = raw
         .filter((d) => d.input_channels > 0)
         .map((d) => ({
@@ -104,19 +120,27 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
           hasInput: true,
           hasOutput: d.output_channels > 0,
         }))
-      setDevices(inputs)
-      const s: BackendStatus = statusRes
-      setStatus({
-        mode: s.mode,
-        inputName: s.input_name,
-        outputName: s.output_name,
-        deviceMissing: s.device_missing,
-        error: s.error,
-        processing: s.processing,
-        lastResponseTimeMs: s.last_response_time_ms,
-        lastWakeAt: s.last_wake_at,
-        wakePulse: s.wake_pulse ?? 0,
-      })
+      const inputsJson = JSON.stringify(inputs)
+      if (inputsJson !== lastDevicesJson.current) {
+        lastDevicesJson.current = inputsJson
+        setDevices(inputs)
+      }
+      const nextStatus: WendyosStatus = {
+        mode: statusData.mode,
+        inputName: statusData.input_name,
+        outputName: statusData.output_name,
+        deviceMissing: statusData.device_missing,
+        error: statusData.error,
+        processing: statusData.processing,
+        lastResponseTimeMs: statusData.last_response_time_ms,
+        lastWakeAt: statusData.last_wake_at,
+        wakePulse: statusData.wake_pulse ?? 0,
+      }
+      const statusJson = JSON.stringify(nextStatus)
+      if (statusJson !== lastStatusJson.current) {
+        lastStatusJson.current = statusJson
+        setStatus(nextStatus)
+      }
       setError(null)
     } catch (err) {
       setError(err as Error)
@@ -133,7 +157,7 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
     async (id: string) => {
       const res = await fetch("/api/local-audio/select", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...authHeaders() },
         // Use the device name for both input & output; for USB speakerphones
         // (e.g. PowerConf) the same hardware does mic + speaker. Users with
         // separate mic/speaker devices can still drive this via env vars at

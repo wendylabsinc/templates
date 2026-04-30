@@ -151,7 +151,9 @@ def _silence_alsa_errors() -> None:
         _silence_alsa_errors._handler = handler  # type: ignore[attr-defined]
         cdll.LoadLibrary("libasound.so.2").snd_lib_error_set_handler(handler)
     except Exception as exc:
-        logger.debug("Couldn't silence libasound errors: %s", exc)
+        # WARNING (not DEBUG) so the spammy ALSA stderr output that
+        # follows has a recognizable cause line in the log.
+        logger.warning("Couldn't silence libasound errors: %s", exc)
 
 
 _silence_alsa_errors()
@@ -188,7 +190,9 @@ def _silence_jack_errors() -> None:
             except OSError:
                 continue
     except Exception as exc:
-        logger.debug("Couldn't silence libjack errors: %s", exc)
+        # WARNING (not DEBUG) so the spammy JACK stderr output that
+        # follows has a recognizable cause line in the log.
+        logger.warning("Couldn't silence libjack errors: %s", exc)
 
 
 _silence_jack_errors()
@@ -416,9 +420,10 @@ AVAILABLE_WAKE_WORDS = [
     "hey_rhasspy",
     "ok_nabu",
 ]
-# Whisper-supported languages we surface to the picker. "auto" means
-# let the model detect. Whisper supports far more — extend this list
-# (and the frontend dropdown labels) if you need more.
+# Languages we surface to the STT picker. "auto" lets the active STT
+# provider detect; the others are ISO-639-1 codes accepted by both
+# Whisper and Deepgram. Both support far more — extend this list (and
+# the frontend dropdown labels) if you need more.
 AVAILABLE_STT_LANGUAGES = [
     "auto",
     "en",
@@ -437,7 +442,14 @@ AVAILABLE_STT_LANGUAGES = [
 ]
 
 
+# Module-level state surfaced via /api/status so the frontend can warn
+# the user when persisted history was unreadable. Mirrors the
+# AppSettings.load_error pattern.
+_conversation_load_error: Optional[str] = None
+
+
 def _load_conversation_history() -> list[dict[str, str]]:
+    global _conversation_load_error
     try:
         import json
 
@@ -446,29 +458,86 @@ def _load_conversation_history() -> list[dict[str, str]]:
             return [m for m in data if isinstance(m, dict) and "role" in m and "content" in m]
     except FileNotFoundError:
         return []
-    except Exception:
-        logger.exception("Failed to load conversation history; starting fresh")
+    except Exception as exc:
+        # Quarantine the corrupt file so the next save() doesn't
+        # overwrite the (potentially salvageable) original. Without
+        # this a one-time JSON error wipes history silently — the
+        # next BotResponseLogger turn writes a fresh two-message
+        # array on top.
+        quarantine_path: Optional[Path] = None
+        try:
+            quarantine_path = CONVERSATION_PATH.with_name(
+                f"{CONVERSATION_PATH.name}.corrupt-{int(time.time())}"
+            )
+            CONVERSATION_PATH.rename(quarantine_path)
+        except Exception:
+            logger.exception(
+                "Failed to quarantine corrupt conversation file %s",
+                CONVERSATION_PATH,
+            )
+            quarantine_path = None
+        msg = (
+            f"Conversation history at {CONVERSATION_PATH} could not be parsed "
+            f"({exc!s}); starting fresh."
+        )
+        if quarantine_path is not None:
+            msg += f" Original preserved at {quarantine_path}."
+        _conversation_load_error = msg
+        logger.exception(
+            "Failed to load %s; starting fresh (quarantined to %s)",
+            CONVERSATION_PATH,
+            quarantine_path,
+        )
     return []
 
 
 def _save_conversation_history(history: list[dict[str, str]]) -> None:
+    global _conversation_load_error
     try:
         import json
 
         CONVERSATION_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CONVERSATION_PATH.write_text(json.dumps(history[-CONVERSATION_MAX_TURNS * 2 :], indent=2))
+        # Atomic via tmp + os.replace so a crash mid-write doesn't truncate
+        # the file. Path.write_text alone leaves a half-written file that
+        # the next _load_conversation_history silently discards
+        # ("starting fresh"), wiping the user's history.
+        tmp = CONVERSATION_PATH.with_suffix(CONVERSATION_PATH.suffix + ".tmp")
+        tmp.write_text(json.dumps(history[-CONVERSATION_MAX_TURNS * 2 :], indent=2))
+        os.replace(tmp, CONVERSATION_PATH)
+        # Successful write means we're past whatever corruption was
+        # quarantined; clear the banner.
+        _conversation_load_error = None
     except Exception:
         logger.exception("Failed to persist conversation history to %s", CONVERSATION_PATH)
 
 
-def _on_turn_complete(user_text: str, bot_text: str) -> None:
-    """Append a completed user/assistant turn to disk if persistence is on."""
-    if not settings_store.persist_conversation:
-        return
+def _persist_turn_blocking(user_text: str, bot_text: str) -> None:
+    """Read, append, write — runs on a thread so the event loop isn't
+    blocked by disk I/O at end-of-turn (Pi 5 eMMC / Jetson SD can add
+    tens of ms of audio jitter)."""
     history = _load_conversation_history()
     history.append({"role": "user", "content": user_text})
     history.append({"role": "assistant", "content": bot_text})
     _save_conversation_history(history)
+
+
+def _on_turn_complete(user_text: str, bot_text: str) -> None:
+    """Append a completed user/assistant turn to disk if persistence is on.
+
+    Called synchronously from BotResponseLogger.process_frame on the
+    event loop; offload the disk I/O to a worker thread so the next
+    InputAudioRawFrame doesn't get queued behind a fsync.
+    """
+    if not settings_store.persist_conversation:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Not on the event loop (shouldn't happen in production, but
+        # keeps the function callable from tests / repl).
+        _persist_turn_blocking(user_text, bot_text)
+        return
+    loop.create_task(asyncio.to_thread(_persist_turn_blocking, user_text, bot_text))
 
 
 def _build_vad_analyzer() -> SileroVADAnalyzer:
@@ -800,6 +869,15 @@ class AppSettings:
         if stt_model is not None and stt_model and stt_model != self.stt_model:
             self.stt_model = stt_model
             changed = True
+        # Apply clears BEFORE sets so a same-payload {api_keys_clear:[x],
+        # api_keys:{x:"new"}} ends up with the new key, matching what
+        # _will_have_key promises the caller. The reverse order would
+        # silently wipe the just-set value.
+        if api_keys_clear:
+            for provider in api_keys_clear:
+                if provider in self.api_keys:
+                    del self.api_keys[provider]
+                    changed = True
         if api_keys is not None:
             valid_providers = set(LLM_API_KEY_ENV) | {
                 p for p, env in STT_API_KEY_ENV.items() if env
@@ -809,11 +887,6 @@ class AppSettings:
                     if self.api_keys.get(provider) != key:
                         self.api_keys[provider] = key
                         changed = True
-        if api_keys_clear:
-            for provider in api_keys_clear:
-                if provider in self.api_keys:
-                    del self.api_keys[provider]
-                    changed = True
         if brave_api_key is not None and brave_api_key != self.brave_api_key:
             self.brave_api_key = brave_api_key
             changed = True
@@ -1046,40 +1119,48 @@ class SessionManager:
             )
         )
         self._device_missing = False
-        return await self._switch_to(transport, mode="local")
+        return await self._switch_to(
+            transport, mode="local", output_sample_rate=out_rate
+        )
 
     async def start_browser(self, websocket: WebSocket) -> asyncio.Task:
+        browser_out_rate = 16000
         transport = FastAPIWebsocketTransport(
             websocket=websocket,
             params=FastAPIWebsocketParams(
                 audio_in_enabled=True,
                 audio_out_enabled=True,
                 audio_in_sample_rate=16000,
-                audio_out_sample_rate=16000,
+                audio_out_sample_rate=browser_out_rate,
                 add_wav_header=False,
                 vad_analyzer=_build_vad_analyzer(),
                 serializer=_InterruptAwareProtobufSerializer(),
             ),
         )
         self._active_browser_ws = websocket
-        return await self._switch_to(transport, mode="browser")
+        return await self._switch_to(
+            transport, mode="browser", output_sample_rate=browser_out_rate
+        )
 
     async def restart_in_place(self) -> None:
-        """Rebuild whichever pipeline is currently running, in place.
+        """Rebuild the local pipeline so /api/settings edits take effect now.
 
-        Called from /api/settings after the store changes so the new
-        values take effect on the live session — local OR browser —
-        instead of waiting for the user to reconnect."""
+        Browser mode is intentionally NOT restarted mid-session: ``bot_audio``
+        holds a reference to its own ``pipeline_task``, so swapping
+        ``session._task`` underneath would orphan the new task (it'd run
+        without the WS handler tracking it, and ``is_owned_by(old_task)``
+        would skip cleanup). The user picks up the new settings on next
+        browser reconnect."""
         if self._mode == "local":
             try:
                 await self.start_local()
             except Exception:
                 logger.exception("restart_in_place: local restart failed")
-        elif self._mode == "browser" and self._active_browser_ws is not None:
-            try:
-                await self.start_browser(self._active_browser_ws)
-            except Exception:
-                logger.exception("restart_in_place: browser restart failed")
+        elif self._mode == "browser":
+            logger.info(
+                "restart_in_place: settings changed mid-browser-session; "
+                "new values will apply on next browser reconnect"
+            )
 
     async def stop(self) -> None:
         async with self._lock:
@@ -1095,12 +1176,20 @@ class SessionManager:
             self._device_missing = True
             logger.warning("SessionManager: device lost — %s", message)
 
-    async def _switch_to(self, transport: BaseTransport, *, mode: str) -> asyncio.Task:
+    async def _switch_to(
+        self,
+        transport: BaseTransport,
+        *,
+        mode: str,
+        output_sample_rate: int,
+    ) -> asyncio.Task:
         async with self._lock:
             await self._cancel_current_locked()
             self._mode = mode
             self._last_error = None
-            self._task = asyncio.create_task(self._run_pipeline(transport, mode))
+            self._task = asyncio.create_task(
+                self._run_pipeline(transport, mode, output_sample_rate)
+            )
             logger.info("SessionManager: %s pipeline started", mode)
             return self._task
 
@@ -1115,7 +1204,9 @@ class SessionManager:
                 logger.exception("SessionManager: pipeline shutdown error")
         self._task = None
 
-    async def _run_pipeline(self, transport: BaseTransport, mode: str) -> None:
+    async def _run_pipeline(
+        self, transport: BaseTransport, mode: str, output_sample_rate: int
+    ) -> None:
         # Read the latest user-configured settings at pipeline start time
         # so /api/settings edits take effect on the next session.
         # Wake word only makes sense for local always-listening mode —
@@ -1141,8 +1232,6 @@ class SessionManager:
             wake_word_models=settings_store.wake_word_models,
             wake_word_disabled=wake_disabled,
             stt_language=settings_store.stt_language,
-            vad_confidence=settings_store.vad_confidence,
-            vad_min_volume=settings_store.vad_min_volume,
             google_search_enabled=settings_store.google_search_enabled,
             greeting_message=greeting,
             conversation_history=history,
@@ -1160,6 +1249,7 @@ class SessionManager:
             stt_provider=settings_store.stt_provider,
             stt_model=settings_store.stt_model,
             stt_api_key=settings_store.get_api_key(settings_store.stt_provider),
+            output_sample_rate=output_sample_rate,
         )
         runner = PipelineRunner(handle_sigint=False)
         try:
@@ -1308,7 +1398,21 @@ async def index():
 
 
 if STATIC_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+    _assets_dir = STATIC_DIR / "assets"
+    if _assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+    else:
+        # StaticFiles raises a generic RuntimeError at startup if the
+        # directory doesn't exist, with no clue that this is a partial-
+        # build state. Common cause: index.html present but the Vite
+        # build was skipped. Log a clear hint and skip the mount so the
+        # rest of the app still serves.
+        logger.warning(
+            "Static dir %s exists but %s does not — bundled JS/CSS won't "
+            "load. Run `npm run build` in frontend/ or rebuild the container.",
+            STATIC_DIR,
+            _assets_dir,
+        )
 
 
 # --- Audio device API for the frontend MicrophoneSelector --------------------
@@ -1329,6 +1433,14 @@ async def api_audio_devices() -> dict[str, Any]:
 
 @app.get("/api/status")
 async def api_status() -> dict[str, Any]:
+    """Polling endpoint hit by the frontend every ~1.2 s.
+
+    Drives the status pill (`mode`/`processing`), the latency badge
+    (`last_response_time_ms`), the wake-fired flash (`wake_pulse`),
+    the device-missing alert (`device_missing` + `error`), and the
+    "settings/conversation file unreadable" banners
+    (`settings_load_error` / `conversation_load_error`).
+    """
     return {
         "mode": session.mode,
         "input_name": session.input_name,
@@ -1336,6 +1448,7 @@ async def api_status() -> dict[str, Any]:
         "device_missing": session.device_missing,
         "error": session.last_error,
         "settings_load_error": settings_store.load_error,
+        "conversation_load_error": _conversation_load_error,
         "processing": session._processing,  # noqa: SLF001
         "last_response_time_ms": session._last_response_time_ms,  # noqa: SLF001
         "last_wake_at": session._last_wake_at,  # noqa: SLF001
@@ -1476,12 +1589,14 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
     incoming_clear = set(body.api_keys_clear or [])
 
     def _will_have_key(provider: str) -> bool:
-        if provider in incoming_clear:
-            # Caller is wiping this provider's key in the same call,
-            # but might have provided a fresh value too.
-            return bool(incoming_keys.get(provider))
+        # Mirrors AppSettings.update's clear-then-set order: a same-payload
+        # {clear, set} ends with the set value; a clear without a paired
+        # set falls back to the env var via has_api_key.
         if incoming_keys.get(provider):
             return True
+        if provider in incoming_clear:
+            env = LLM_API_KEY_ENV.get(provider) or STT_API_KEY_ENV.get(provider)
+            return bool(env and os.environ.get(env))
         return settings_store.has_api_key(provider)
 
     if body.llm_provider is not None and body.llm_provider != settings_store.llm_provider:
@@ -1593,12 +1708,12 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
     return {
         "settings": settings_store.to_dict(),
         "changed": changed,
-        # True when there's an active session (local or browser) that
-        # picked up the changes immediately. Frontend uses this to show
-        # "Saved · applied" vs "Saved · will apply on next session".
-        "applied_to_running_session": (
-            changed and session.mode in ("local", "browser")
-        ),
+        # True only for local sessions; browser sessions are not
+        # restarted mid-call (see SessionManager.restart_in_place) so
+        # they pick up changes on the user's next reconnect. Frontend
+        # uses this to show "Saved · applied" vs "Saved · will apply
+        # on next session".
+        "applied_to_running_session": changed and session.mode == "local",
     }
 
 
@@ -1637,6 +1752,10 @@ async def bot_audio(websocket: WebSocket) -> None:
             )
         finally:
             watcher.cancel()
+            try:
+                await watcher
+            except asyncio.CancelledError:
+                pass
             if not pipeline_task.done():
                 pipeline_task.cancel()
                 try:

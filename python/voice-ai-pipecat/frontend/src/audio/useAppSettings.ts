@@ -1,4 +1,5 @@
 import * as React from "react"
+import { authHeaders } from "./auth"
 
 export interface AppSettings {
   systemPrompt: string
@@ -183,7 +184,7 @@ export function useAppSettings(): AppSettingsState {
     async (path: string, payload: Record<string, unknown>) => {
       const res = await fetch(path, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...authHeaders() },
         body: JSON.stringify(payload),
       })
       if (!res.ok) {
@@ -219,7 +220,10 @@ export function useAppSettings(): AppSettingsState {
   }, [postSettings])
 
   const resetConversation = React.useCallback(async () => {
-    const res = await fetch("/api/conversation/reset", { method: "POST" })
+    const res = await fetch("/api/conversation/reset", {
+      method: "POST",
+      headers: authHeaders(),
+    })
     if (!res.ok) {
       let detail = `/api/conversation/reset ${res.status}`
       try {

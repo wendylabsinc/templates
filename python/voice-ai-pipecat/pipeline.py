@@ -1,8 +1,13 @@
-"""Pipecat pipeline: faster-whisper STT -> Gemini 2.5 Flash -> Piper TTS.
+"""Pipecat pipeline: pluggable STT -> LLM -> Piper TTS.
 
-Gemini is used with its native Google Search grounding tool, so the assistant
-can answer real-world questions ("what's the weather in San Francisco?")
-without a separate search API.
+STT routes through faster-whisper (local CPU) by default, with optional
+Deepgram streaming for lower latency. The LLM is one of Google Gemini,
+OpenAI, Anthropic, or Groq, picked at runtime via /api/settings. Google
+uses its native ``google_search`` grounding tool when search is enabled;
+the other providers get a function-calling ``web_search`` backed by
+Brave Search instead. Either way the assistant can answer real-world
+questions ("what's the weather in San Francisco?") without the user
+having to know which provider is wired in.
 """
 
 from __future__ import annotations
@@ -51,34 +56,62 @@ _log = logging.getLogger("voice-ai-pipecat.pipeline")
 # inside the imported module means the package IS installed but broken,
 # and surfacing that is more useful than telling the user "extra not
 # installed" when they clearly have it.
+#
+# Capture the post-ImportError exception per-provider so _build_*_service
+# can quote the real reason ("Deepgram extra installed but import failed:
+# <reason>") instead of misleading the user into reinstalling something
+# that's already there.
+_DEEPGRAM_LOAD_ERROR: Optional[str] = None
+_OPENAI_LOAD_ERROR: Optional[str] = None
+_ANTHROPIC_LOAD_ERROR: Optional[str] = None
+_GROQ_LOAD_ERROR: Optional[str] = None
 try:
     from pipecat.services.deepgram.stt import DeepgramSTTService
 except ImportError:  # pragma: no cover
     DeepgramSTTService = None  # type: ignore[assignment]
-except Exception:  # pragma: no cover
+except Exception as _exc:  # pragma: no cover
     _log.exception("Deepgram extra installed but failed to import")
     DeepgramSTTService = None  # type: ignore[assignment]
+    _DEEPGRAM_LOAD_ERROR = str(_exc)
 try:
     from pipecat.services.openai.llm import OpenAILLMService
 except ImportError:  # pragma: no cover
     OpenAILLMService = None  # type: ignore[assignment]
-except Exception:  # pragma: no cover
+except Exception as _exc:  # pragma: no cover
     _log.exception("OpenAI extra installed but failed to import")
     OpenAILLMService = None  # type: ignore[assignment]
+    _OPENAI_LOAD_ERROR = str(_exc)
 try:
     from pipecat.services.anthropic.llm import AnthropicLLMService
 except ImportError:  # pragma: no cover
     AnthropicLLMService = None  # type: ignore[assignment]
-except Exception:  # pragma: no cover
+except Exception as _exc:  # pragma: no cover
     _log.exception("Anthropic extra installed but failed to import")
     AnthropicLLMService = None  # type: ignore[assignment]
+    _ANTHROPIC_LOAD_ERROR = str(_exc)
 try:
     from pipecat.services.groq.llm import GroqLLMService
 except ImportError:  # pragma: no cover
     GroqLLMService = None  # type: ignore[assignment]
-except Exception:  # pragma: no cover
+except Exception as _exc:  # pragma: no cover
     _log.exception("Groq extra installed but failed to import")
     GroqLLMService = None  # type: ignore[assignment]
+    _GROQ_LOAD_ERROR = str(_exc)
+
+
+def _provider_unavailable(name: str, load_error: Optional[str]) -> RuntimeError:
+    """Build a RuntimeError that distinguishes "extra not installed" from
+    "extra installed but import failed" so the user gets actionable
+    advice instead of being told to install something they already have."""
+    if load_error:
+        return RuntimeError(
+            f"{name} extra installed but import failed: {load_error}. "
+            "Check the server log for the full traceback."
+        )
+    return RuntimeError(
+        f"{name} extra not installed. Reinstall pipecat-ai with the "
+        f"matching extra (e.g. `pipecat-ai[{name.lower()}]`)."
+    )
 
 
 def _build_stt_service(
@@ -97,7 +130,7 @@ def _build_stt_service(
     """
     if provider == "deepgram":
         if DeepgramSTTService is None:
-            raise RuntimeError("Deepgram extra not installed")
+            raise _provider_unavailable("Deepgram", _DEEPGRAM_LOAD_ERROR)
         if not api_key:
             raise RuntimeError(
                 "Deepgram requires an API key. Set DEEPGRAM_API_KEY or "
@@ -117,15 +150,36 @@ def _build_stt_service(
     whisper_settings_kwargs: dict = {"model": model or Model.TINY.value}
     if language and language.lower() not in {"auto", ""}:
         whisper_settings_kwargs["language"] = language
-    return WhisperSTTService(
-        settings=WhisperSTTService.Settings(**whisper_settings_kwargs),
-    )
+    try:
+        return WhisperSTTService(
+            settings=WhisperSTTService.Settings(**whisper_settings_kwargs),
+        )
+    except TypeError as exc:
+        # Older pipecat 0.0.x didn't expose `language` on Settings (it
+        # moved up to the STT base class around 0.0.105). Fall back to
+        # auto-detect rather than crashing pipeline construction.
+        if "language" in whisper_settings_kwargs and "language" in str(exc):
+            _log.warning(
+                "WhisperSTTService.Settings rejected `language=%r` (%s); "
+                "falling back to auto-detect. Upgrade pipecat-ai to "
+                ">=0.0.105 to honor the language picker.",
+                whisper_settings_kwargs["language"],
+                exc,
+            )
+            whisper_settings_kwargs.pop("language")
+            return WhisperSTTService(
+                settings=WhisperSTTService.Settings(**whisper_settings_kwargs),
+            )
+        raise
 
 
-# --- Built-in function tools available to non-Google providers and to
-# Google when google_search_enabled is False. Each tool is a
-# (FunctionSchema, async-handler) pair. The handler signature matches
-# Pipecat's FunctionCallParams contract.
+# --- Built-in function tools (time / date / math). Always registered for
+# non-Google providers, and for Google when google_search_enabled is
+# False — Gemini's API treats google_search as mutually exclusive with
+# function declarations, so search-on means search-only and search-off
+# means function-tools instead. Each tool is a (FunctionSchema,
+# async-handler) pair. The handler signature matches Pipecat's
+# FunctionCallParams contract.
 
 
 _GET_CURRENT_TIME_SCHEMA = FunctionSchema(
@@ -298,7 +352,19 @@ def _build_llm_service(
             kwargs["tools"] = [
                 genai_types.Tool(google_search=genai_types.GoogleSearch())
             ]
-        return GoogleLLMService(**kwargs), None, None
+            return GoogleLLMService(**kwargs), None, None
+        # Search disabled — register built-in function tools so the model
+        # still has time/date/math. Gemini doesn't allow mixing
+        # google_search with function declarations, so we never register
+        # both. Web search via Brave is also off in this branch by design
+        # (a Google user with search disabled has opted out of the web).
+        google_schemas: list[FunctionSchema] = []
+        google_handlers: list[tuple] = []
+        for schema, fn in _builtin_function_tools():
+            google_schemas.append(schema)
+            google_handlers.append((schema.name, _trace_tool(schema.name, fn)))
+        google_tools_schema = ToolsSchema(standard_tools=google_schemas)
+        return GoogleLLMService(**kwargs), google_tools_schema, google_handlers
 
     # OpenAI / Anthropic / Groq — function-call based.
     schemas: list[FunctionSchema] = []
@@ -334,15 +400,15 @@ def _build_llm_service(
 
     if provider == "openai":
         if OpenAILLMService is None:
-            raise RuntimeError("OpenAI extra not installed")
+            raise _provider_unavailable("OpenAI", _OPENAI_LOAD_ERROR)
         return OpenAILLMService(api_key=api_key, model=model), tools_schema, handler
     if provider == "anthropic":
         if AnthropicLLMService is None:
-            raise RuntimeError("Anthropic extra not installed")
+            raise _provider_unavailable("Anthropic", _ANTHROPIC_LOAD_ERROR)
         return AnthropicLLMService(api_key=api_key, model=model), tools_schema, handler
     if provider == "groq":
         if GroqLLMService is None:
-            raise RuntimeError("Groq extra not installed")
+            raise _provider_unavailable("Groq", _GROQ_LOAD_ERROR)
         return GroqLLMService(api_key=api_key, model=model), tools_schema, handler
 
     raise ValueError(f"Unknown LLM provider: {provider!r}")
@@ -474,6 +540,17 @@ class BotResponseLogger(FrameProcessor):
                                 self._on_turn_complete(user_text, full)
                             except Exception:
                                 _log.exception("BotResponseLogger: on_turn_complete failed")
+                        else:
+                            # Bot reply with no paired user text — the
+                            # greeting, a tool-only response, or a
+                            # dropped STT transcript. Without this log
+                            # the turn is silently absent from the
+                            # persisted history with no signal.
+                            _log.warning(
+                                "BotResponseLogger: bot reply (%d chars) "
+                                "without paired user text — turn not persisted",
+                                len(full),
+                            )
             self._chunks = []
             self._collecting = False
         await self.push_frame(frame, direction)
@@ -567,9 +644,9 @@ class GreetingAnnouncer(FrameProcessor):
     Schedules a TTSSpeakFrame downstream after a small delay following
     the first StartFrame. The frame skips the LLM (it carries pre-formed
     text) and goes straight to TTS, so the bot announces itself as soon
-    as Whisper / Piper / Gemini are loaded — useful UX cue that the user
-    can start talking. The flag is per-instance, so a new pipeline (e.g.
-    after a browser hand-off) re-greets; that's intentional.
+    as the STT / LLM / TTS services are loaded — useful UX cue that the
+    user can start talking. The flag is per-instance, so a new pipeline
+    (e.g. after a browser hand-off) re-greets; that's intentional.
 
     The delay matters: pushing audio frames the same tick as StartFrame
     races with PortAudio's output stream setup. The first attempt to
@@ -612,8 +689,12 @@ class GreetingAnnouncer(FrameProcessor):
             self._delayed_task.cancel()
             try:
                 await self._delayed_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception:
+                _log.exception(
+                    "GreetingAnnouncer: delayed announce errored during cleanup"
+                )
         self._delayed_task = None
 
 
@@ -650,7 +731,6 @@ class WakeWordGate(FrameProcessor):
         models: list[str],
         threshold: float = 0.5,
         max_listen_secs: float = 8.0,
-        input_sample_rate: int = 16000,
         output_sample_rate: int = 48000,
         on_wake_fired: Optional[callable] = None,  # type: ignore[type-arg]
         is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
@@ -672,11 +752,12 @@ class WakeWordGate(FrameProcessor):
         self._listening_until: Optional[float] = None
         self._on_wake_fired = on_wake_fired
         # Pre-synthesize chimes at the output transport's sample rate so
-        # they play through cleanly without resampling.
+        # they play through cleanly without resampling. Caller must pass
+        # the actual transport rate — defaulting to 48000 here would
+        # play the chime at 1/3 speed if the transport runs at 16000.
         self._chime_open = _make_chime(880, 120, output_sample_rate)
         self._chime_close = _make_chime(550, 100, output_sample_rate, volume=0.2)
         self._output_sample_rate = output_sample_rate
-        self._input_sample_rate = input_sample_rate
         # Gate the wake-word inference itself for ~250 ms after we play
         # the chime so the chime doesn't echo back into the detector.
         self._mute_oww_until: float = 0.0
@@ -840,10 +921,11 @@ SYSTEM_PROMPT = (
     "explain why.\n"
     "\n"
     "Tools:\n"
-    "- You have `google_search` for live data. ALWAYS use it for "
-    "current weather, news, scores, prices, business hours, or "
-    "anything date-dependent. Don't say you can't access real-time "
-    "information — search first and answer from the result.\n"
+    "- You have `google_search` (or `web_search`, whichever is "
+    "available) for live data. ALWAYS use it for current weather, "
+    "news, scores, prices, business hours, or anything date-dependent. "
+    "Don't say you can't access real-time information — search first "
+    "and answer from the result.\n"
     "\n"
     "Examples (this is the level of brevity required):\n"
     "Q: What's the weather in San Francisco?\n"
@@ -860,13 +942,16 @@ DEFAULT_SYSTEM_PROMPT = SYSTEM_PROMPT
 
 # Preset prompts the frontend exposes as one-click buttons. Each button
 # loads its preset into the system-prompt textarea; the user can save
-# as-is or edit further. Same google_search tool guidance is appended
-# in all three so the assistant still grounds when needed.
+# as-is or edit further. The tool block names `google_search` *or*
+# `web_search` so the same prompt works whether Google native search is
+# active (Gemini provider) or the Brave-backed function tool is active
+# (OpenAI / Anthropic / Groq).
 _TOOL_BLOCK = (
-    "\n\nTools:\n- You have `google_search` for live data. ALWAYS use it for "
-    "current weather, news, scores, prices, business hours, or anything "
-    "date-dependent. Don't say you can't access real-time information — "
-    "search first and answer from the result.\n"
+    "\n\nTools:\n- You have `google_search` (or `web_search`, whichever is "
+    "available) for live data. ALWAYS use it for current weather, news, "
+    "scores, prices, business hours, or anything date-dependent. Don't "
+    "say you can't access real-time information — search first and "
+    "answer from the result.\n"
 )
 
 PROMPT_PRESETS: dict[str, str] = {
@@ -900,8 +985,6 @@ def build_pipeline_task(
     wake_word_models: Optional[list[str]] = None,
     wake_word_disabled: Optional[bool] = None,
     stt_language: Optional[str] = None,
-    vad_confidence: Optional[float] = None,
-    vad_min_volume: Optional[float] = None,
     google_search_enabled: Optional[bool] = None,
     greeting_message: Optional[str] = None,
     conversation_history: Optional[list[dict[str, str]]] = None,
@@ -919,6 +1002,7 @@ def build_pipeline_task(
     stt_provider: str = "whisper",
     stt_model: str = "tiny",
     stt_api_key: str = "",
+    output_sample_rate: int = 48000,
 ) -> PipelineTask:
     """Build the Pipecat pipeline task wired around `transport`.
 
@@ -926,10 +1010,14 @@ def build_pipeline_task(
     (/api/settings). The SessionManager re-reads them on every pipeline
     start so saving in the UI applies on the next utterance.
 
-    `stt_language`: "auto" or "" → Whisper auto-detects; otherwise an
-    ISO-639-1 code like "en", "es", "fr".
-    `google_search_enabled`: when False the Gemini tool is unset so the
-    model can't ground via search (offline / privacy mode).
+    `stt_language`: "auto" or "" → STT provider auto-detects; otherwise
+    an ISO-639-1 code like "en", "es", "fr". Both Whisper and Deepgram
+    accept the same code set.
+    `google_search_enabled`: gates BOTH Gemini's native ``google_search``
+    tool AND the Brave-backed ``web_search`` function for non-Google
+    providers (offline / privacy mode). When off, Google falls back to
+    the built-in time/date/math function tools instead — Gemini's API
+    treats search and function declarations as mutually exclusive.
     """
 
     prompt = system_prompt or SYSTEM_PROMPT
@@ -993,6 +1081,13 @@ def build_pipeline_task(
             ):
                 captured_key = ref[1]
 
+                # The Brave key is baked into _web_search's default arg
+                # at pipeline-build time. Rotating the key via
+                # /api/settings won't reach this closure — but the
+                # settings endpoint calls SessionManager.restart_in_place
+                # on local mode, which rebuilds the pipeline (and this
+                # closure) with the new value. Browser sessions pick up
+                # the new key on next reconnect.
                 async def _web_search(params, _key=captured_key) -> None:  # type: ignore[no-untyped-def]
                     import httpx
 
@@ -1046,18 +1141,14 @@ def build_pipeline_task(
         sample_rate=16000,
     )
 
-    # Don't pass `tools` to the context aggregator. The GoogleLLMService
-    # already has the search tool wired into its generate-content config;
-    # the context only needs to track conversation turns. Passing the
-    # typed `Tool(google_search=...)` here also confuses the OpenAI-style
-    # context which expects function-declaration dicts.
+    # Function-call tools (OpenAI/Anthropic/Groq, plus Google when
+    # google_search is off) live on the context aggregator. Google's
+    # native google_search tool is set on the service itself in
+    # _build_llm_service instead and tools_schema comes back as None.
     initial_messages: list[dict] = [{"role": "system", "content": prompt}]
     if conversation_history:
         initial_messages.extend(conversation_history)
     if tools_schema is not None:
-        # Function-call tools (OpenAI/Anthropic/Groq) live on the
-        # context aggregator. Google's native search is set on the
-        # service itself instead.
         context = OpenAILLMContext(messages=initial_messages, tools=tools_schema)
     else:
         context = OpenAILLMContext(messages=initial_messages)
@@ -1082,6 +1173,7 @@ def build_pipeline_task(
                 models=wake_models_resolved,
                 threshold=wake_threshold,
                 max_listen_secs=wake_listen_secs,
+                output_sample_rate=output_sample_rate,
                 on_wake_fired=on_wake_fired,
                 is_bot_speaking=is_bot_speaking,
                 on_predict_error=on_wake_predict_error,

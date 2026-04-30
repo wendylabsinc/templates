@@ -297,11 +297,21 @@ function App() {
 
         <div className="ml-auto">
           <Button
-            onClick={() => {
-              if (!streaming) {
+            onClick={async () => {
+              if (streaming) {
+                console.log("[realsense] stop")
+                setStreaming(false)
+                fetch("/stop", { method: "POST" }).catch(() => {})
+              } else {
+                console.log("[realsense] start")
                 setStreamSession((n) => n + 1)
+                try {
+                  await fetch("/start", { method: "POST" })
+                } catch {
+                  // Server unreachable; the <img> would surface the error anyway.
+                }
+                setStreaming(true)
               }
-              setStreaming((s) => !s)
             }}
             variant={streaming ? "secondary" : "default"}
           >

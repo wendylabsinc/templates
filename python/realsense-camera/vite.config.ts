@@ -18,6 +18,8 @@ export default defineConfig({
       },
       "/config": "http://localhost:8000",
       "/health": "http://localhost:8000",
+      "/start": "http://localhost:8000",
+      "/stop": "http://localhost:8000",
     },
   },
 })

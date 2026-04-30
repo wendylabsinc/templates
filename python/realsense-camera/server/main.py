@@ -6,11 +6,12 @@ tag without any custom decoding.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Literal
 
@@ -52,6 +53,30 @@ class RealSensePump:
     pipeline produces them. Preset changes are applied live via
     `set_option(visual_preset, ...)` on the running depth sensor with no
     restart at all.
+
+    Lifecycle is explicit. Earlier versions tied pump start/stop to MJPEG
+    client connect/disconnect (`add_client`/`remove_client`), but Starlette's
+    disconnect signal didn't reliably propagate to async-generator cleanup in
+    practice — connections leaked, the pipeline never stopped, and Stop→Start
+    piled new clients on top of dead ones. Now `start()` and `stop()` are
+    called by the front-end via `/start` and `/stop`, and `/stream/{id}`
+    iterators are pure readers: when the pump stops it clears `_latest` and
+    `notify_all`s, which makes `latest()` return None and the iterators
+    exit cleanly.
+
+    Locking model — two locks, strict order:
+      * `_lifecycle_lock` is held by `start` / `stop` / `configure` for the
+        entire duration of any pipeline start, stop, or restart. The worker
+        thread NEVER touches it. Holding it across the worker join is what
+        prevents a new `pipeline.start` from racing the old worker's
+        `pipeline.stop()` for the USB device.
+      * `_lock` protects mutable state read/written by both callers and the
+        worker (`_width/_height/_fps/_preset/_pending_preset`, `_thread`,
+        `_running`). Held only briefly — never across a join, since the
+        worker takes it inside `_apply_pending_preset` and that would
+        deadlock.
+    Lock order: always `_lifecycle_lock` first, then `_lock`. The worker only
+    touches `_lock`, so no inversion is possible.
     """
 
     def __init__(self) -> None:
@@ -60,14 +85,15 @@ class RealSensePump:
         self._cond = threading.Condition()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        self._running = False
         self._width = 640
         self._height = 480
         self._fps = 30
         self._preset = "default"
         self._pending_preset: str | None = None
         self._jpeg_quality = 80
-        self._client_count = 0
         self._lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
         # Per-stream FPS, sampled over a 1s window. Only the worker thread
         # writes these; readers (the /health endpoint) get a snapshot via
         # `get_fps`. Dict rebinds are atomic under the GIL, so no lock needed.
@@ -75,62 +101,102 @@ class RealSensePump:
         self._fps_window_start = time.monotonic()
         self._fps_latest: dict[StreamId, float] = {sid: 0.0 for sid in STREAM_IDS}
 
-    def configure(self, width: int, height: int, fps: int, preset: str) -> None:
-        with self._lock:
-            wh_fps_changed = (width, height, fps) != (self._width, self._height, self._fps)
-            preset_changed = preset != self._preset
-            self._width, self._height, self._fps = width, height, fps
-            self._preset = preset
-            if preset_changed:
-                self._pending_preset = preset
-            if not (wh_fps_changed and self._thread is not None and self._client_count > 0):
-                return
-            # Snapshot the running thread and signal it to stop. We MUST drop
-            # the lock before joining: the worker thread itself acquires
-            # `self._lock` inside `_apply_pending_preset`, so holding the lock
-            # across the join would deadlock.
-            old_thread = self._thread
-            self._thread = None
-            self._stop.set()
-        old_thread.join(timeout=2.0)
-        with self._lock:
-            # During the join, clients may have all disconnected, or
-            # `add_client` may have already spawned a fresh thread. In either
-            # case, don't start another one.
-            if self._client_count == 0 or self._thread is not None:
-                return
-            self._stop.clear()
-            self._pending_preset = self._preset
-            self._thread = threading.Thread(target=self._run, daemon=True)
-            self._thread.start()
+    @property
+    def running(self) -> bool:
+        return self._running
 
-    def add_client(self) -> None:
-        with self._lock:
-            self._client_count += 1
-            if self._client_count == 1 and self._thread is None:
+    def start(self) -> None:
+        """Idempotent: spawn the worker if not already running."""
+        with self._lifecycle_lock:
+            with self._lock:
+                if self._thread is not None:
+                    logger.info("start: already running")
+                    return
+                self._stop.clear()
+                self._pending_preset = self._preset
+                self._running = True
+                self._thread = threading.Thread(target=self._run, daemon=True)
+                self._thread.start()
+                logger.info(
+                    "start: spawned worker for %dx%d @ %dfps preset=%s",
+                    self._width, self._height, self._fps, self._preset,
+                )
+
+    def stop(self) -> None:
+        """Idempotent: signal worker to exit, wake any waiters, clear state."""
+        with self._lifecycle_lock:
+            with self._lock:
+                if self._thread is None:
+                    logger.info("stop: already stopped")
+                    return
+                old_thread = self._thread
+                self._thread = None
+                self._running = False
+                self._stop.set()
+            logger.info("stop: joining worker")
+            t0 = time.monotonic()
+            old_thread.join(timeout=2.0)
+            join_ms = (time.monotonic() - t0) * 1000
+            timed_out = old_thread.is_alive()
+            with self._cond:
+                # Clearing _latest plus notify_all wakes any iterators
+                # blocked in latest() so they break their loops cleanly.
+                self._latest.clear()
+                self._cond.notify_all()
+            logger.info(
+                "stop: worker joined in %.0fms%s",
+                join_ms,
+                " (TIMED OUT — thread still alive!)" if timed_out else "",
+            )
+
+    def configure(self, width: int, height: int, fps: int, preset: str) -> None:
+        with self._lifecycle_lock:
+            with self._lock:
+                wh_fps_changed = (width, height, fps) != (self._width, self._height, self._fps)
+                preset_changed = preset != self._preset
+                self._width, self._height, self._fps = width, height, fps
+                self._preset = preset
+                if preset_changed:
+                    self._pending_preset = preset
+                if not (wh_fps_changed and self._thread is not None):
+                    logger.info(
+                        "configure: %dx%d @ %dfps preset=%s (no restart needed)",
+                        width, height, fps, preset,
+                    )
+                    return
+                # Snapshot the running thread and signal it to stop. Drop
+                # `_lock` before joining (the worker takes it in
+                # `_apply_pending_preset`), but keep `_lifecycle_lock` held so
+                # nothing else can spawn or tear down a pipeline mid-restart.
+                old_thread = self._thread
+                self._thread = None
+                self._stop.set()
+            logger.info(
+                "configure: restarting for %dx%d @ %dfps preset=%s",
+                width, height, fps, preset,
+            )
+            t0 = time.monotonic()
+            old_thread.join(timeout=2.0)
+            join_ms = (time.monotonic() - t0) * 1000
+            with self._lock:
+                if not self._running:
+                    logger.info(
+                        "configure: stopped during %.0fms join, leaving stopped",
+                        join_ms,
+                    )
+                    return
                 self._stop.clear()
                 self._pending_preset = self._preset
                 self._thread = threading.Thread(target=self._run, daemon=True)
                 self._thread.start()
-
-    def remove_client(self) -> None:
-        with self._lock:
-            self._client_count = max(0, self._client_count - 1)
-            if self._client_count == 0 and self._thread is not None:
-                old_thread = self._thread
-                self._thread = None
-                self._stop.set()
-            else:
-                old_thread = None
-        if old_thread:
-            old_thread.join(timeout=2.0)
-            with self._cond:
-                self._latest.clear()
+                logger.info("configure: restart done (join %.0fms)", join_ms)
 
     def latest(self, stream_id: StreamId, timeout: float = 5.0) -> bytes | None:
         deadline = time.monotonic() + timeout
         with self._cond:
             while stream_id not in self._latest:
+                if not self._running:
+                    return None
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return None
@@ -261,37 +327,53 @@ app.add_middleware(
 BOUNDARY = "frame"
 
 
-def _mjpeg_iter(stream_id: StreamId) -> Iterator[bytes]:
-    pump.add_client()
-    try:
-        last: bytes | None = None
-        while True:
-            frame = pump.latest(stream_id)
-            if frame is None:
-                break
-            if frame is last:
-                time.sleep(0.005)
-                continue
-            last = frame
-            yield (
-                f"--{BOUNDARY}\r\n".encode()
-                + b"Content-Type: image/jpeg\r\n"
-                + f"Content-Length: {len(frame)}\r\n\r\n".encode()
-                + frame
-                + b"\r\n"
-            )
-    finally:
-        pump.remove_client()
+async def _mjpeg_iter(stream_id: StreamId) -> AsyncIterator[bytes]:
+    """Pure async reader of `pump._latest`.
+
+    Pump lifecycle is controlled explicitly via `/start` / `/stop`, so this
+    iterator does not bump any client count. When the pump stops, it clears
+    `_latest` and `notify_all`s — `latest()` returns None and we exit.
+    `pump.latest` is sync (blocks on a `Condition`), so we offload it to a
+    thread and cap each wait at 1s.
+    """
+    last: bytes | None = None
+    while True:
+        frame = await asyncio.to_thread(pump.latest, stream_id, 1.0)
+        if frame is None:
+            break
+        if frame is last:
+            await asyncio.sleep(0.005)
+            continue
+        last = frame
+        yield (
+            f"--{BOUNDARY}\r\n".encode()
+            + b"Content-Type: image/jpeg\r\n"
+            + f"Content-Length: {len(frame)}\r\n\r\n".encode()
+            + frame
+            + b"\r\n"
+        )
 
 
 @app.get("/stream/{stream_id}")
-def stream(stream_id: str) -> StreamingResponse:
+async def stream(stream_id: str) -> StreamingResponse:
     if stream_id not in STREAM_IDS:
         raise HTTPException(404, f"Unknown stream: {stream_id}")
     return StreamingResponse(
         _mjpeg_iter(stream_id),  # type: ignore[arg-type]
         media_type=f"multipart/x-mixed-replace; boundary={BOUNDARY}",
     )
+
+
+@app.post("/start")
+def start_pump() -> dict[str, object]:
+    pump.start()
+    return {"running": pump.running}
+
+
+@app.post("/stop")
+def stop_pump() -> dict[str, object]:
+    pump.stop()
+    return {"running": pump.running}
 
 
 @app.post("/config")
@@ -311,7 +393,7 @@ def configure(
 def health() -> dict[str, object]:
     return {
         "streams": list(STREAM_IDS),
-        "clients": pump._client_count,
+        "running": pump.running,
         "fps": dict(pump._fps_latest),
     }
 

@@ -531,20 +531,29 @@ def _build_llm_service(
         # Local LLM via Ollama daemon (or any OpenAI-compatible server
         # if llm_base_url is overridden — LM Studio, vLLM, llama.cpp's
         # --server, etc.). Empty base_url defaults to Ollama's standard
-        # localhost endpoint (set in main.LLM_BASE_URL_DEFAULTS and
-        # passed through here).
+        # localhost endpoint.
         base_url = llm_base_url or "http://localhost:11434/v1"
         if OLLamaLLMService is not None:
+            _log.info("LLM: ollama via OLLamaLLMService @ %s model=%s", base_url, model)
             return (
                 OLLamaLLMService(model=model, base_url=base_url),
                 tools_schema,
                 handler,
             )
         # Fallback: older pipecat without the dedicated Ollama subclass.
-        # Ollama's OpenAI-compat endpoint accepts any non-empty bearer
-        # so a literal "ollama" string is fine as the api_key.
+        # Ollama's OpenAI-compat endpoint accepts any non-empty bearer so
+        # a literal "ollama" string is fine. Log the fallback so field
+        # debug ("works on Ollama, broken on LM Studio") can distinguish
+        # the two paths instead of guessing.
         if OpenAILLMService is None:
             raise _provider_unavailable("OpenAI", _OPENAI_LOAD_ERROR)
+        _log.warning(
+            "LLM: ollama provider falling back to OpenAILLMService @ %s "
+            "(OLLamaLLMService unavailable: %s). Tool-calling and "
+            "streaming behavior may differ from the dedicated subclass.",
+            base_url,
+            _OLLAMA_LOAD_ERROR or "not installed",
+        )
         return (
             OpenAILLMService(api_key=api_key or "ollama", model=model, base_url=base_url),
             tools_schema,

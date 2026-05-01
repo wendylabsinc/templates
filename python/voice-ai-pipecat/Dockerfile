@@ -132,6 +132,17 @@ RUN cd /tmp && \
     /app/venv/bin/pip install --no-cache-dir dist/ctranslate2*.whl && \
     rm -rf /tmp/CTranslate2
 
+# Smoke-test the ctranslate2 install. Without this, a partial install
+# where the Python wheel landed but the native .so failed to link CUDA
+# succeeds at build time and fails at the first transcription with an
+# opaque "OSError: libctranslate2.so.3: cannot open shared object file"
+# (or worse, a clean import that can't actually use CUDA). The
+# `contains_cuda` attribute reflects compile-time CUDA support, so it's
+# valid even on a buildkit without a GPU attached.
+RUN /app/venv/bin/python -c "import ctranslate2; \
+assert getattr(ctranslate2, 'contains_cuda', False), \
+'ctranslate2 built without CUDA support — check Dockerfile WITH_CUDA / WITH_CUDNN flags and that the l4t-jetpack base ships matching CUDA + cuDNN headers'"
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

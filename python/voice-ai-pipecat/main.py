@@ -21,6 +21,7 @@ list to the frontend so users can pick a device live.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import re
@@ -1539,7 +1540,9 @@ def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
-    if token != WENDY_AUTH_TOKEN:
+    # compare_digest avoids leaking token length/content via the timing
+    # side-channel that a plain `!=` would expose.
+    if not hmac.compare_digest(token, WENDY_AUTH_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
 
@@ -1789,6 +1792,34 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                     "request or set the corresponding env var."
                 ),
             )
+    if body.llm_base_url is not None:
+        candidate = body.llm_base_url.strip()
+        if candidate:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(candidate)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"llm_base_url {candidate!r} is not a valid URL. "
+                        "Use a full URL like http://localhost:11434/v1 or "
+                        "https://api.example.com/v1."
+                    ),
+                )
+            # Ollama's OpenAI-compat endpoint lives under /v1; a missing
+            # path is the most common typo and produces opaque 404s on
+            # the next turn. Warn loudly but don't reject — LM Studio /
+            # vLLM / llama.cpp use various paths.
+            target_provider = body.llm_provider or settings_store.llm_provider
+            if target_provider == "ollama" and not parsed.path.rstrip("/").endswith(
+                "/v1"
+            ):
+                logger.warning(
+                    "llm_base_url=%r for ollama provider does not end in /v1; "
+                    "Ollama serves its OpenAI-compat API at /v1 — turns may 404.",
+                    candidate,
+                )
     if body.stt_provider is not None and body.stt_provider != settings_store.stt_provider:
         if body.stt_provider not in STT_PROVIDERS:
             raise HTTPException(

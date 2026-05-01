@@ -13,9 +13,7 @@ RUN npm run build
 # need cuDNN here for ctranslate2's CUDA backend (which faster-whisper
 # rides on). The leaner l4t-base image only ships CUDA stubs — Ollama
 # works on it because it brings its own GPU runtime, but Whisper would
-# stay stuck on CPU. If the dog turns out to be JetPack 5.1.1 (R35.3.x),
-# swap to r35.3.1 — the userland is CUDA 11.4 either way and the host
-# driver is what gates kernel-module compat.
+# stay stuck on CPU.
 #
 # Trade-off vs the previous l4t-base: image grows ~3.5 GB → ~6 GB but
 # unlocks GPU Whisper alongside GPU Ollama. Pi 5 / x86_64 deploys are
@@ -51,10 +49,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Ollama for on-device LLM serving. Detects CUDA at runtime through
 # the bind-mounted libcuda; no GPU at runtime → falls back to CPU
-# (slow but still functional). The official installer also tries to
-# create a systemd service which fails inside a container — that's
-# expected and harmless; the binary install itself still succeeds, so
-# we tolerate a non-zero exit and verify the binary landed.
+# (slow but still functional). The installer's systemd-service step
+# fails inside a container; the binary install itself succeeds, hence
+# the `|| true` followed by an explicit binary check.
 RUN curl -fsSL https://ollama.com/install.sh | sh || true
 RUN test -x /usr/local/bin/ollama || (echo "ERROR: Ollama install failed; binary missing at /usr/local/bin/ollama" && exit 1)
 
@@ -113,6 +110,16 @@ ENV PATH="/app/venv/bin:$PATH"
 #
 # This step takes 10–15 min on first build; subsequent rebuilds hit
 # the layer cache so it's a one-time cost.
+# CUDA_ARCHITECTURES is the SM (compute capability) the kernels are
+# compiled for. Default 87 = Jetson Orin (Nano/NX/AGX). For Xavier
+# (sm_72), TX2 (sm_62), or non-Jetson CUDA builds, override at build
+# time: `--build-arg CTRANSLATE2_CUDA_ARCH="72;75;86;87"`. Listing
+# multiple arches makes the image portable at the cost of a longer
+# build and a larger wheel.
+ARG CTRANSLATE2_CUDA_ARCH=87
+# Cap parallelism at half the available cores to keep nvcc memory
+# usage in check on smaller Jetsons (Orin Nano 4 GB OOMs at full
+# nproc on the CUDA kernel compile).
 RUN cd /tmp && \
     git clone --depth 1 --branch v3.24.0 --recursive \
       https://github.com/OpenNMT/CTranslate2.git && \
@@ -122,9 +129,9 @@ RUN cd /tmp && \
           -DWITH_CUDA=ON -DWITH_CUDNN=ON \
           -DWITH_MKL=OFF -DOPENMP_RUNTIME=COMP \
           -DCUDA_NVCC_FLAGS="-Xfatbin=-compress-all" \
-          -DCMAKE_CUDA_ARCHITECTURES="87" \
+          -DCMAKE_CUDA_ARCHITECTURES="${CTRANSLATE2_CUDA_ARCH}" \
           .. && \
-    make -j"$(nproc)" install && \
+    make -j"$(( $(nproc) / 2 + 1 ))" install && \
     ldconfig && \
     cd /tmp/CTranslate2/python && \
     /app/venv/bin/pip install --no-cache-dir -r install_requirements.txt && \
@@ -215,11 +222,8 @@ ENV WAKE_LISTEN_SECS={{.WAKE_LISTEN_SECS}}
 
 # Whisper compute target. l4t-jetpack ships CUDA 11.4 + cuDNN 8.x and
 # the ctranslate2 step above is built with WITH_CUDA=ON, so cuda+
-# float16 is the right pick on Jetson — gets STT down from ~1.5 s
-# (CPU tiny + int8) to ~200–300 ms (CUDA tiny + float16) on Orin NX.
-# Override at run time if you're forced back to CPU (libcuda missing
-# at start, etc.) by setting WHISPER_DEVICE=cpu and
-# WHISPER_COMPUTE_TYPE=int8 — pipeline._build_stt_service reads both.
+# float16 is the right pick on Jetson. If libcuda is missing at run
+# time, override with WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8.
 ENV WHISPER_DEVICE=cuda
 ENV WHISPER_COMPUTE_TYPE=float16
 

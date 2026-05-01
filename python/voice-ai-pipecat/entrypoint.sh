@@ -9,11 +9,9 @@
 #
 # Model handling: this is the "first-boot pull" variant. We pull the
 # model from Ollama's registry on container start if it's not already
-# cached. That means the model isn't baked into the image (smaller
-# image, faster rebuilds during iteration) but the first boot needs
-# the dog to have an internet route so the pull succeeds. Once the
-# Dockerfile is proven, we can move the pull into a `RUN` step at
-# build time for instant first-boot.
+# cached. The model isn't baked into the image (smaller image, faster
+# rebuilds) but the first boot needs the device to have an internet
+# route so the pull succeeds.
 
 set -uo pipefail
 
@@ -26,10 +24,12 @@ LOCAL_LLM_ERROR_FILE=${LOCAL_LLM_ERROR_FILE:-/tmp/voice-ai-local-llm-error.txt}
 rm -f "$LOCAL_LLM_ERROR_FILE"
 
 echo "[entrypoint] starting ollama daemon (logs → $OLLAMA_LOG)"
-# Daemon must run on 0.0.0.0 inside the container so the gpu
-# entitlement's network namespace doesn't cut it off from itself.
-# Default bind is 127.0.0.1 which is fine for our case (Pipecat is
-# in the same container) but explicit beats implicit here.
+# Bind on 0.0.0.0 because the GPU entitlement's network namespace
+# routes inbound traffic from the Pipecat side via the bridge
+# interface, not the loopback — a 127.0.0.1 bind is unreachable
+# from the same container under that setup. On host networking
+# this binds Ollama to every interface; trust the LAN or front it
+# with a firewall.
 OLLAMA_HOST=0.0.0.0:11434 ollama serve > "$OLLAMA_LOG" 2>&1 &
 OLLAMA_PID=$!
 

@@ -57,10 +57,10 @@ _log = logging.getLogger("voice-ai-pipecat.pipeline")
 # and surfacing that is more useful than telling the user "extra not
 # installed" when they clearly have it.
 #
-# Capture the post-ImportError exception per-provider so _build_*_service
-# can quote the real reason ("Deepgram extra installed but import failed:
-# <reason>") instead of misleading the user into reinstalling something
-# that's already there.
+# Capture the post-ImportError exception per-provider so
+# _provider_unavailable() can quote the real reason ("Deepgram extra
+# installed but import failed: <reason>") instead of misleading the
+# user into reinstalling something they already have.
 _DEEPGRAM_LOAD_ERROR: Optional[str] = None
 _OPENAI_LOAD_ERROR: Optional[str] = None
 _ANTHROPIC_LOAD_ERROR: Optional[str] = None
@@ -174,10 +174,9 @@ def _build_stt_service(
     *,
     language: Optional[str] = None,
 ):
-    """Construct the STT service for `provider`. Whisper is local
-    (CPU, int8); Deepgram streams over WebSocket from their API and
-    typically reaches first-token latency ~150–300 ms vs Whisper's
-    1–3 s on CPU.
+    """Construct the STT service for `provider`. Whisper runs locally
+    (compute target picked by WHISPER_DEVICE / WHISPER_COMPUTE_TYPE);
+    Deepgram streams over WebSocket from their API.
 
     `language` is an ISO-639-1 code or None for auto-detect.
     """
@@ -878,9 +877,10 @@ class WakeWordGate(FrameProcessor):
     def __init__(
         self,
         models: list[str],
+        *,
+        output_sample_rate: int,
         threshold: float = 0.5,
         max_listen_secs: float = 8.0,
-        output_sample_rate: int = 48000,
         on_wake_fired: Optional[callable] = None,  # type: ignore[type-arg]
         is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
         on_predict_error: Optional[callable] = None,  # type: ignore[type-arg]
@@ -902,10 +902,10 @@ class WakeWordGate(FrameProcessor):
         self._max_listen_secs = max_listen_secs
         self._listening_until: Optional[float] = None
         self._on_wake_fired = on_wake_fired
-        # Pre-synthesize chimes at the output transport's sample rate so
-        # they play through cleanly without resampling. Caller must pass
-        # the actual transport rate — defaulting to 48000 here would
-        # play the chime at 1/3 speed if the transport runs at 16000.
+        # Pre-synthesize chimes at the output transport's sample rate
+        # so they play through cleanly without resampling. The kwarg is
+        # required (not defaulted) because a wrong rate plays the chime
+        # at the wrong speed without erroring.
         self._chime_open = _make_chime(880, 120, output_sample_rate)
         self._chime_close = _make_chime(550, 100, output_sample_rate, volume=0.2)
         self._output_sample_rate = output_sample_rate
@@ -951,13 +951,13 @@ class WakeWordGate(FrameProcessor):
             FrameDirection.DOWNSTREAM,
         )
 
-    async def _close_window(self) -> None:
+    async def _close_window(self, *, reason: str = "expired") -> None:
         if self._listening_until is None:
             return
         self._listening_until = None
         self._mute_oww_until = time.monotonic() + 0.25
         await self._push_chime(self._chime_close)
-        _log.debug("WakeWordGate: closed listening window")
+        _log.info("WakeWordGate: closed listening window (%s)", reason)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -965,7 +965,7 @@ class WakeWordGate(FrameProcessor):
 
         # Auto-close window if max-listen elapsed without UserStoppedSpeaking.
         if self._listening_until is not None and now >= self._listening_until:
-            await self._close_window()
+            await self._close_window(reason="timeout")
 
         bot_speaking = bool(self._is_bot_speaking and self._is_bot_speaking())
 
@@ -976,6 +976,11 @@ class WakeWordGate(FrameProcessor):
         # pipeline and never sees BotStoppedSpeakingFrame. The 500 ms
         # tail in is_bot_currently_speaking() means this fires safely
         # after any TTS audio has cleared the speakers.
+        #
+        # Note: when is_bot_speaking is None (not wired by main.py),
+        # bot_speaking is permanently False and self._bot_was_speaking
+        # never becomes True, so this branch never fires and follow-up
+        # mode silently degrades to no-op.
         if (
             self._continuous_conversation
             and self._bot_was_speaking
@@ -1050,7 +1055,7 @@ class WakeWordGate(FrameProcessor):
                 await self.push_frame(frame, direction)
                 if isinstance(frame, UserStoppedSpeakingFrame):
                     # One utterance complete — close the window.
-                    await self._close_window()
+                    await self._close_window(reason="utterance-complete")
             return
 
         # Pass everything else through (StartFrame, EndFrame, etc.).
@@ -1270,13 +1275,9 @@ def build_pipeline_task(
             ):
                 captured_key = ref[1]
 
-                # The Brave key is baked into _web_search's default arg
-                # at pipeline-build time. Rotating the key via
-                # /api/settings won't reach this closure — but the
-                # settings endpoint calls SessionManager.restart_in_place
-                # on local mode, which rebuilds the pipeline (and this
-                # closure) with the new value. Browser sessions pick up
-                # the new key on next reconnect.
+                # Brave key is captured into _web_search's default arg
+                # at pipeline-build time, so settings rotation only
+                # takes effect on the next pipeline rebuild.
                 async def _web_search(params, _key=captured_key) -> None:  # type: ignore[no-untyped-def]
                     import httpx
 

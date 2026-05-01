@@ -322,12 +322,10 @@ DEFAULT_TTS_VOICE = "en_US-lessac-medium"
 DEFAULT_ALLOW_INTERRUPTIONS = False
 DEFAULT_WAKE_WORD_MODELS = ["hey_jarvis"]
 DEFAULT_WAKE_WORD_DISABLED = False
-# Continuous-conversation ("follow-up mode"): after the bot finishes
-# replying, keep the listening window open for a short follow-up so the
-# user can ask a second question without re-saying the wake word. Same
-# UX as Alexa's Follow-Up Mode / Google's Continued Conversation.
-# Default ON because that's the Alexa-feel users expect; off for strict
-# wake-every-time. Window length is bounded [3, 15] s in update().
+# Continuous-conversation ("follow-up mode"): keep the listening window
+# open for a short follow-up after the bot replies, like Alexa's
+# Follow-Up Mode / Google's Continued Conversation. Default ON because
+# that matches user expectation.
 DEFAULT_CONTINUOUS_CONVERSATION = True
 DEFAULT_CONTINUOUS_WINDOW_SECS = 6.0
 DEFAULT_STT_LANGUAGE = "auto"
@@ -399,15 +397,12 @@ LLM_PROVIDERS: dict[str, list[str]] = {
         "llama-3.1-8b-instant",
         "gemma2-9b-it",
     ],
-    # On-device LLM via Ollama. Pipecat ships OLLamaLLMService which is
-    # a thin OpenAI-compat client pointing at the Ollama daemon. The
-    # Dockerfile.gpu variant pre-pulls one of these into the image so
-    # there's no first-boot download. Models picked for tool-calling
-    # reliability at <8GB unified memory (Jetson Orin NX target):
-    #   qwen2.5:3b      — best tool-calling small model, ~25 tok/s
-    #   llama3.2:3b     — Meta's official tool model, ~22 tok/s
-    #   qwen2.5:7b      — better quality but tight on memory + slower
-    # No API key — base_url defaults to http://localhost:11434/v1.
+    # On-device LLM via Ollama. entrypoint.sh pulls LOCAL_LLM_MODEL on
+    # first boot. Models picked for tool-calling reliability at <8 GB
+    # unified memory (Jetson Orin NX target):
+    #   qwen2.5:3b   — best tool-calling small model
+    #   llama3.2:3b  — Meta's official tool model
+    #   qwen2.5:7b   — better quality, tighter on memory
     "ollama": [
         "qwen2.5:3b",
         "llama3.2:3b",
@@ -481,9 +476,8 @@ AVAILABLE_STT_LANGUAGES = [
 ]
 
 
-# Module-level state surfaced via /api/status so the frontend can warn
-# the user when persisted history was unreadable. Mirrors the
-# AppSettings.load_error pattern.
+# Surfaced via /api/status so the frontend can warn when persisted
+# history was unreadable.
 _conversation_load_error: Optional[str] = None
 
 # Path entrypoint.sh writes when the LOCAL_LLM_MODEL pull fails. Read
@@ -1013,9 +1007,8 @@ class AppSettings:
             self.stt_model = stt_model
             changed = True
         # Apply clears BEFORE sets so a same-payload {api_keys_clear:[x],
-        # api_keys:{x:"new"}} ends up with the new key, matching what
-        # _will_have_key promises the caller. The reverse order would
-        # silently wipe the just-set value.
+        # api_keys:{x:"new"}} ends up with the new key. The reverse
+        # order would silently wipe the just-set value.
         if api_keys_clear:
             for provider in api_keys_clear:
                 if provider in self.api_keys:
@@ -1399,9 +1392,6 @@ class SessionManager:
             llm_provider=settings_store.llm_provider,
             llm_model=settings_store.llm_model,
             llm_api_key=settings_store.get_api_key(settings_store.llm_provider),
-            # Resolved at pipeline-build time so a user-saved override
-            # always wins; empty falls back to the provider default
-            # (Ollama → http://localhost:11434/v1; cloud → unused).
             llm_base_url=(
                 settings_store.llm_base_url
                 or LLM_BASE_URL_DEFAULTS.get(settings_store.llm_provider, "")
@@ -1920,11 +1910,9 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
     return {
         "settings": settings_store.to_dict(),
         "changed": changed,
-        # True only for local sessions; browser sessions are not
-        # restarted mid-call (see SessionManager.restart_in_place) so
-        # they pick up changes on the user's next reconnect. Frontend
-        # uses this to show "Saved · applied" vs "Saved · will apply
-        # on next session".
+        # Browser sessions don't restart mid-call, so they pick up
+        # changes on next reconnect. Frontend shows this as "Saved ·
+        # applied" vs "Saved · will apply on next session".
         "applied_to_running_session": changed and session.mode == "local",
     }
 

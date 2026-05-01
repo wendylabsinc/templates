@@ -112,6 +112,46 @@ except Exception as _exc:  # pragma: no cover
     _OLLAMA_LOAD_ERROR = str(_exc)
 
 
+class _WhisperRuntimeState:
+    """Tracks the requested vs. actually-applied Whisper compute target.
+
+    The kwarg-rejection fallback in _build_stt_service can silently
+    downgrade GPU Whisper to faster-whisper's library defaults (CPU). On
+    Jetson that turns a ~250 ms STT into a ~1.5 s STT with no signal in
+    /api/status. Surfacing actual_device makes the regression visible.
+    """
+
+    def __init__(self) -> None:
+        self.requested_device: Optional[str] = None
+        self.requested_compute_type: Optional[str] = None
+        self.actual_device: Optional[str] = None
+        self.actual_compute_type: Optional[str] = None
+
+    def update(
+        self,
+        *,
+        requested_device: str,
+        requested_compute_type: str,
+        actual_device: str,
+        actual_compute_type: str,
+    ) -> None:
+        self.requested_device = requested_device
+        self.requested_compute_type = requested_compute_type
+        self.actual_device = actual_device
+        self.actual_compute_type = actual_compute_type
+
+    def to_dict(self) -> dict:
+        return {
+            "requested_device": self.requested_device,
+            "requested_compute_type": self.requested_compute_type,
+            "actual_device": self.actual_device,
+            "actual_compute_type": self.actual_compute_type,
+        }
+
+
+whisper_state = _WhisperRuntimeState()
+
+
 def _provider_unavailable(name: str, load_error: Optional[str]) -> RuntimeError:
     """Build a RuntimeError that distinguishes "extra not installed" from
     "extra installed but import failed" so the user gets actionable
@@ -164,17 +204,11 @@ def _build_stt_service(
     if language and language.lower() not in {"auto", ""}:
         whisper_settings_kwargs["language"] = language
 
-    # Resolve compute target. Defaults are tuned for the local-LLM
-    # Dockerfile (l4t-jetpack on Jetson with ctranslate2 built against
-    # CUDA 11.4 + cuDNN). On hosts without CUDA, override at deploy
-    # time with `--var ...` plumbed into the Dockerfile, or set
-    # WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8 directly.
-    #
-    # GPU latency budget on Orin NX (qwen2.5:3b alongside): ~150–300ms
-    # for a 3-sec clip with tiny + float16. CPU int8 on the same chip
-    # is ~1–1.5s with all 8 cores online, ~2–3s with the parked-cores
-    # default — the difference is the chunk that closes the "Alexa
-    # gap" most visibly in turn telemetry.
+    # Resolve compute target. Dockerfile sets WHISPER_DEVICE=cuda for
+    # Jetson (ctranslate2 is built against CUDA 11.4 + cuDNN there); on
+    # other hosts override at deploy time or set WHISPER_DEVICE=cpu /
+    # WHISPER_COMPUTE_TYPE=int8 directly. "auto" lets the kwarg-rejected
+    # fallback below silently downgrade to faster-whisper's defaults.
     device = os.environ.get("WHISPER_DEVICE", "auto")
     compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "default")
     ctor_kwargs = {"device": device, "compute_type": compute_type}
@@ -193,7 +227,14 @@ def _build_stt_service(
         )
 
     try:
-        return _build(ctor_kwargs, whisper_settings_kwargs)
+        service = _build(ctor_kwargs, whisper_settings_kwargs)
+        whisper_state.update(
+            requested_device=device,
+            requested_compute_type=compute_type,
+            actual_device=device,
+            actual_compute_type=compute_type,
+        )
+        return service
     except TypeError as exc:
         msg = str(exc)
         # Older pipecat 0.0.x didn't expose `language` on Settings (it
@@ -208,12 +249,28 @@ def _build_stt_service(
                 exc,
             )
             whisper_settings_kwargs.pop("language")
-            return _build(ctor_kwargs, whisper_settings_kwargs)
-        # Older pipecat may not accept device/compute_type as ctor
-        # kwargs either. Drop them and let faster-whisper pick its
-        # defaults (CPU). Loud warning so the user knows GPU Whisper
-        # didn't actually get wired.
+            service = _build(ctor_kwargs, whisper_settings_kwargs)
+            whisper_state.update(
+                requested_device=device,
+                requested_compute_type=compute_type,
+                actual_device=device,
+                actual_compute_type=compute_type,
+            )
+            return service
+        # Older pipecat may not accept device/compute_type as ctor kwargs.
+        # When the user asked for a specific device, refuse to silently
+        # downgrade to library defaults (CPU) — that erases the perf the
+        # explicit setting was meant to lock in. Only "auto" callers get
+        # the fallback.
         if "device" in msg or "compute_type" in msg:
+            if device != "auto":
+                raise RuntimeError(
+                    f"WhisperSTTService rejected device={device!r} / "
+                    f"compute_type={compute_type!r} ({exc}). Upgrade "
+                    "pipecat-ai to a version that accepts these kwargs, "
+                    "or set WHISPER_DEVICE=auto to fall back to faster-"
+                    "whisper's library defaults (CPU)."
+                ) from exc
             _log.warning(
                 "WhisperSTTService rejected device/compute_type kwargs (%s); "
                 "Whisper will run on faster-whisper's library defaults (CPU). "
@@ -221,7 +278,14 @@ def _build_stt_service(
                 "GPU acceleration.",
                 exc,
             )
-            return _build({}, whisper_settings_kwargs)
+            service = _build({}, whisper_settings_kwargs)
+            whisper_state.update(
+                requested_device=device,
+                requested_compute_type=compute_type,
+                actual_device="library-default",
+                actual_compute_type="library-default",
+            )
+            return service
         raise
 
 

@@ -52,7 +52,12 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from pipeline import DEFAULT_SYSTEM_PROMPT, PROMPT_PRESETS, build_pipeline_task
+from pipeline import (
+    DEFAULT_SYSTEM_PROMPT,
+    PROMPT_PRESETS,
+    build_pipeline_task,
+    whisper_state,
+)
 
 
 PORT = int(os.environ.get("PORT", "3005"))
@@ -479,6 +484,72 @@ AVAILABLE_STT_LANGUAGES = [
 # the user when persisted history was unreadable. Mirrors the
 # AppSettings.load_error pattern.
 _conversation_load_error: Optional[str] = None
+
+# Path entrypoint.sh writes when the LOCAL_LLM_MODEL pull fails. Read
+# once at startup and surfaced on /api/status so the user sees a banner
+# instead of every LLM turn 500-ing with a cryptic "model not found".
+LOCAL_LLM_ERROR_FILE = Path(
+    os.environ.get("LOCAL_LLM_ERROR_FILE", "/tmp/voice-ai-local-llm-error.txt")
+)
+_local_llm_load_error: Optional[str] = None
+
+# Liveness state for the Ollama daemon, refreshed by an async watcher
+# whenever llm_provider == "ollama". Lets /api/status surface "Ollama is
+# down" so a crashed daemon doesn't silently break every turn.
+OLLAMA_HEALTH_URL = os.environ.get(
+    "OLLAMA_HEALTH_URL", "http://localhost:11434/api/tags"
+)
+OLLAMA_HEALTH_POLL_SECS = float(os.environ.get("OLLAMA_HEALTH_POLL_SECS", "5.0"))
+_ollama_health_error: Optional[str] = None
+
+
+def _load_local_llm_error() -> None:
+    global _local_llm_load_error
+    try:
+        text = LOCAL_LLM_ERROR_FILE.read_text().strip()
+    except FileNotFoundError:
+        _local_llm_load_error = None
+        return
+    except Exception as exc:
+        logger.exception("Failed to read %s", LOCAL_LLM_ERROR_FILE)
+        _local_llm_load_error = f"Could not read local-LLM error file: {exc}"
+        return
+    _local_llm_load_error = text or None
+
+
+async def _ollama_health_watcher() -> None:
+    """Poll the Ollama daemon's /api/tags when ollama is the active LLM.
+
+    Without this, a daemon that died (OOM, GPU error) leaves /api/status
+    showing mode=local, error=null while every LLM turn 500s on
+    connection-refused. We poll cheaply (~once every 5s) only when the
+    user has actually selected ollama.
+    """
+    global _ollama_health_error
+    import urllib.error
+    import urllib.request
+
+    while True:
+        try:
+            await asyncio.sleep(OLLAMA_HEALTH_POLL_SECS)
+            if settings_store.llm_provider != "ollama":
+                if _ollama_health_error is not None:
+                    _ollama_health_error = None
+                continue
+            try:
+                await asyncio.to_thread(
+                    lambda: urllib.request.urlopen(OLLAMA_HEALTH_URL, timeout=2.0).read()
+                )
+                _ollama_health_error = None
+            except (urllib.error.URLError, OSError, TimeoutError) as exc:
+                _ollama_health_error = (
+                    f"Ollama daemon not reachable at {OLLAMA_HEALTH_URL}: {exc}. "
+                    "Local LLM turns will fail until the daemon is back up."
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Ollama health watcher error")
 
 
 def _load_conversation_history() -> list[dict[str, str]]:
@@ -1088,6 +1159,12 @@ class SessionManager:
         self._processing = False
         self._processing_started_mono = None
         self._bot_speaking_at = time.monotonic()
+        # Without this clear, on turns 2+ _bot_quiet_at still holds the
+        # previous turn's timestamp (in the past), so
+        # is_bot_currently_speaking() returns False while the bot is
+        # actively speaking — breaking the wake-gate's TTS-mute and the
+        # continuous-conversation falling-edge detector.
+        self._bot_quiet_at = None
 
     def on_bot_stopped(self) -> None:
         # 500 ms grace after bot stops so any in-flight audio has time
@@ -1419,16 +1496,20 @@ async def _hotplug_watchdog() -> None:
 async def lifespan(_: FastAPI):
     devices = _enumerate_devices()
     _log_audio_devices(devices)
+    _load_local_llm_error()
     await session.start_local()
     watchdog = asyncio.create_task(_hotplug_watchdog())
+    ollama_watcher = asyncio.create_task(_ollama_health_watcher())
     try:
         yield
     finally:
-        watchdog.cancel()
-        try:
-            await watchdog
-        except asyncio.CancelledError:
-            pass
+        for t in (watchdog, ollama_watcher):
+            t.cancel()
+        for t in (watchdog, ollama_watcher):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
         await session.stop()
 
 
@@ -1532,6 +1613,9 @@ async def api_status() -> dict[str, Any]:
         "error": session.last_error,
         "settings_load_error": settings_store.load_error,
         "conversation_load_error": _conversation_load_error,
+        "local_llm_load_error": _local_llm_load_error,
+        "ollama_health_error": _ollama_health_error,
+        "whisper": whisper_state.to_dict(),
         "processing": session._processing,  # noqa: SLF001
         "last_response_time_ms": session._last_response_time_ms,  # noqa: SLF001
         "last_wake_at": session._last_wake_at,  # noqa: SLF001

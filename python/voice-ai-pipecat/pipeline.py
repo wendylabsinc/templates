@@ -163,15 +163,43 @@ def _build_stt_service(
     whisper_settings_kwargs: dict = {"model": model or Model.TINY.value}
     if language and language.lower() not in {"auto", ""}:
         whisper_settings_kwargs["language"] = language
-    try:
+
+    # Resolve compute target. Defaults are tuned for the local-LLM
+    # Dockerfile (l4t-jetpack on Jetson with ctranslate2 built against
+    # CUDA 11.4 + cuDNN). On hosts without CUDA, override at deploy
+    # time with `--var ...` plumbed into the Dockerfile, or set
+    # WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8 directly.
+    #
+    # GPU latency budget on Orin NX (qwen2.5:3b alongside): ~150–300ms
+    # for a 3-sec clip with tiny + float16. CPU int8 on the same chip
+    # is ~1–1.5s with all 8 cores online, ~2–3s with the parked-cores
+    # default — the difference is the chunk that closes the "Alexa
+    # gap" most visibly in turn telemetry.
+    device = os.environ.get("WHISPER_DEVICE", "auto")
+    compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "default")
+    ctor_kwargs = {"device": device, "compute_type": compute_type}
+    _log.info(
+        "Whisper init: model=%s language=%s device=%s compute_type=%s",
+        whisper_settings_kwargs.get("model"),
+        whisper_settings_kwargs.get("language", "auto"),
+        device,
+        compute_type,
+    )
+
+    def _build(extra_kwargs: dict, settings_kwargs: dict):
         return WhisperSTTService(
-            settings=WhisperSTTService.Settings(**whisper_settings_kwargs),
+            settings=WhisperSTTService.Settings(**settings_kwargs),
+            **extra_kwargs,
         )
+
+    try:
+        return _build(ctor_kwargs, whisper_settings_kwargs)
     except TypeError as exc:
+        msg = str(exc)
         # Older pipecat 0.0.x didn't expose `language` on Settings (it
         # moved up to the STT base class around 0.0.105). Fall back to
         # auto-detect rather than crashing pipeline construction.
-        if "language" in whisper_settings_kwargs and "language" in str(exc):
+        if "language" in whisper_settings_kwargs and "language" in msg:
             _log.warning(
                 "WhisperSTTService.Settings rejected `language=%r` (%s); "
                 "falling back to auto-detect. Upgrade pipecat-ai to "
@@ -180,9 +208,20 @@ def _build_stt_service(
                 exc,
             )
             whisper_settings_kwargs.pop("language")
-            return WhisperSTTService(
-                settings=WhisperSTTService.Settings(**whisper_settings_kwargs),
+            return _build(ctor_kwargs, whisper_settings_kwargs)
+        # Older pipecat may not accept device/compute_type as ctor
+        # kwargs either. Drop them and let faster-whisper pick its
+        # defaults (CPU). Loud warning so the user knows GPU Whisper
+        # didn't actually get wired.
+        if "device" in msg or "compute_type" in msg:
+            _log.warning(
+                "WhisperSTTService rejected device/compute_type kwargs (%s); "
+                "Whisper will run on faster-whisper's library defaults (CPU). "
+                "Upgrade pipecat-ai to a version that accepts these to use "
+                "GPU acceleration.",
+                exc,
             )
+            return _build({}, whisper_settings_kwargs)
         raise
 
 

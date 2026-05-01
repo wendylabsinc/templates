@@ -6,21 +6,21 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2 - Pipecat runtime on Jetson with CUDA + on-device LLM.
+# Stage 2 - Pipecat runtime on Jetson with CUDA + cuDNN + on-device LLM.
 #
-# Base: nvcr.io/nvidia/l4t-base:r35.4.1 — Ubuntu 20.04 + CUDA 11.4
-# userland staged for the Wendy `gpu` entitlement to bind-mount libcuda
-# from the host (Go2's JetPack 5.1.x). If the dog turns out to be
-# JetPack 5.1.1 (R35.3.x), swap this tag to r35.3.1 — the userland is
-# CUDA 11.4 either way and the host driver is what gates the kernel
-# module compat.
+# Base: nvcr.io/nvidia/l4t-jetpack:r35.4.1 — Ubuntu 20.04 + the full
+# JetPack 5.1.2 stack (CUDA 11.4, cuDNN 8.x, TensorRT, headers). We
+# need cuDNN here for ctranslate2's CUDA backend (which faster-whisper
+# rides on). The leaner l4t-base image only ships CUDA stubs — Ollama
+# works on it because it brings its own GPU runtime, but Whisper would
+# stay stuck on CPU. If the dog turns out to be JetPack 5.1.1 (R35.3.x),
+# swap to r35.3.1 — the userland is CUDA 11.4 either way and the host
+# driver is what gates kernel-module compat.
 #
-# Trade-off vs the previous debian:bookworm-slim base: the image grows
-# from ~700 MB to ~3.5 GB but unlocks GPU acceleration for Ollama
-# (and, optionally, faster-whisper). Pi 5 / x86_64 deploys are no
-# longer in scope on this branch — the local-LLM template is
-# Jetson-targeted.
-FROM nvcr.io/nvidia/l4t-base:r35.4.1
+# Trade-off vs the previous l4t-base: image grows ~3.5 GB → ~6 GB but
+# unlocks GPU Whisper alongside GPU Ollama. Pi 5 / x86_64 deploys are
+# no longer in scope on this branch.
+FROM nvcr.io/nvidia/l4t-jetpack:r35.4.1
 
 # Ubuntu 20.04 default Python is 3.8; pipecat-ai requires 3.10+.
 # Pull Python 3.10 from the deadsnakes PPA (officially-built backports,
@@ -37,6 +37,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.10-venv \
     python3.10-dev \
     gcc \
+    g++ \
+    cmake \
+    git \
+    pkg-config \
+    libopenblas-dev \
     alsa-utils \
     libasound2 \
     portaudio19-dev \
@@ -96,6 +101,36 @@ WORKDIR /app
 
 RUN python3.10 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
+
+# ctranslate2 from source — the prebuilt aarch64 wheels on PyPI are
+# CPU-only (NVIDIA Jetson isn't a manylinux target). To get GPU
+# Whisper we have to build ctranslate2 against the JetPack CUDA +
+# cuDNN that l4t-jetpack provides. Pinned to v3.24.0: the last 3.x
+# release, which targets CUDA 11. ctranslate2 4.x requires CUDA 12+
+# and is incompatible with JetPack 5.1.x. faster-whisper 1.x in turn
+# requires ctranslate2 4.x, so requirements.txt pins faster-whisper
+# below 1.0 to match.
+#
+# This step takes 10–15 min on first build; subsequent rebuilds hit
+# the layer cache so it's a one-time cost.
+RUN cd /tmp && \
+    git clone --depth 1 --branch v3.24.0 --recursive \
+      https://github.com/OpenNMT/CTranslate2.git && \
+    mkdir -p /tmp/CTranslate2/build && cd /tmp/CTranslate2/build && \
+    cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DWITH_CUDA=ON -DWITH_CUDNN=ON \
+          -DWITH_MKL=OFF -DOPENMP_RUNTIME=COMP \
+          -DCUDA_NVCC_FLAGS="-Xfatbin=-compress-all" \
+          -DCMAKE_CUDA_ARCHITECTURES="87" \
+          .. && \
+    make -j"$(nproc)" install && \
+    ldconfig && \
+    cd /tmp/CTranslate2/python && \
+    /app/venv/bin/pip install --no-cache-dir -r install_requirements.txt && \
+    /app/venv/bin/python setup.py bdist_wheel && \
+    /app/venv/bin/pip install --no-cache-dir dist/ctranslate2*.whl && \
+    rm -rf /tmp/CTranslate2
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -166,6 +201,16 @@ ENV AUDIO_OUTPUT_DEVICE={{.AUDIO_OUTPUT_DEVICE}}
 ENV WAKE_WORD_MODELS={{.WAKE_WORD_MODELS}}
 ENV WAKE_WORD_THRESHOLD={{.WAKE_WORD_THRESHOLD}}
 ENV WAKE_LISTEN_SECS={{.WAKE_LISTEN_SECS}}
+
+# Whisper compute target. l4t-jetpack ships CUDA 11.4 + cuDNN 8.x and
+# the ctranslate2 step above is built with WITH_CUDA=ON, so cuda+
+# float16 is the right pick on Jetson — gets STT down from ~1.5 s
+# (CPU tiny + int8) to ~200–300 ms (CUDA tiny + float16) on Orin NX.
+# Override at run time if you're forced back to CPU (libcuda missing
+# at start, etc.) by setting WHISPER_DEVICE=cpu and
+# WHISPER_COMPUTE_TYPE=int8 — pipeline._build_stt_service reads both.
+ENV WHISPER_DEVICE=cuda
+ENV WHISPER_COMPUTE_TYPE=float16
 
 # On-device LLM model that the entrypoint pulls into Ollama on first
 # boot (and skips on subsequent boots if already cached). Empty

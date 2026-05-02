@@ -7,6 +7,8 @@ export interface AppSettings {
   allowInterruptions: boolean
   wakeWordModels: string[]
   wakeWordDisabled: boolean
+  continuousConversation: boolean
+  continuousWindowSecs: number
   sttLanguage: string
   vadConfidence: number
   vadMinVolume: number
@@ -18,6 +20,10 @@ export interface AppSettings {
   persistConversation: boolean
   llmProvider: string
   llmModel: string
+  /** Override base URL for OpenAI-compatible providers (Ollama, LM
+   *  Studio, vLLM). Empty = use the provider's default
+   *  (Ollama → http://localhost:11434/v1). Cloud providers ignore. */
+  llmBaseUrl: string
   sttProvider: string
   sttModel: string
   apiKeysConfigured: Record<string, boolean>
@@ -60,6 +66,8 @@ interface BackendSettings {
   allow_interruptions: boolean
   wake_word_models: string[]
   wake_word_disabled: boolean
+  continuous_conversation: boolean
+  continuous_window_secs: number
   stt_language: string
   vad_confidence: number
   vad_min_volume: number
@@ -71,6 +79,7 @@ interface BackendSettings {
   persist_conversation: boolean
   llm_provider: string
   llm_model: string
+  llm_base_url: string
   stt_provider: string
   stt_model: string
   api_keys_configured: Record<string, boolean>
@@ -95,6 +104,8 @@ function fromBackend(s: BackendSettings): AppSettings {
     allowInterruptions: s.allow_interruptions,
     wakeWordModels: s.wake_word_models,
     wakeWordDisabled: s.wake_word_disabled,
+    continuousConversation: s.continuous_conversation,
+    continuousWindowSecs: s.continuous_window_secs,
     sttLanguage: s.stt_language,
     vadConfidence: s.vad_confidence,
     vadMinVolume: s.vad_min_volume,
@@ -106,6 +117,7 @@ function fromBackend(s: BackendSettings): AppSettings {
     persistConversation: s.persist_conversation,
     llmProvider: s.llm_provider,
     llmModel: s.llm_model,
+    llmBaseUrl: s.llm_base_url ?? "",
     sttProvider: s.stt_provider,
     sttModel: s.stt_model,
     apiKeysConfigured: s.api_keys_configured ?? {},
@@ -120,6 +132,10 @@ function toBackendPayload(next: Partial<AppSettings>): Record<string, unknown> {
   if (next.allowInterruptions !== undefined) out.allow_interruptions = next.allowInterruptions
   if (next.wakeWordModels !== undefined) out.wake_word_models = next.wakeWordModels
   if (next.wakeWordDisabled !== undefined) out.wake_word_disabled = next.wakeWordDisabled
+  if (next.continuousConversation !== undefined)
+    out.continuous_conversation = next.continuousConversation
+  if (next.continuousWindowSecs !== undefined)
+    out.continuous_window_secs = next.continuousWindowSecs
   if (next.sttLanguage !== undefined) out.stt_language = next.sttLanguage
   if (next.vadConfidence !== undefined) out.vad_confidence = next.vadConfidence
   if (next.vadMinVolume !== undefined) out.vad_min_volume = next.vadMinVolume
@@ -131,6 +147,7 @@ function toBackendPayload(next: Partial<AppSettings>): Record<string, unknown> {
   if (next.persistConversation !== undefined) out.persist_conversation = next.persistConversation
   if (next.llmProvider !== undefined) out.llm_provider = next.llmProvider
   if (next.llmModel !== undefined) out.llm_model = next.llmModel
+  if (next.llmBaseUrl !== undefined) out.llm_base_url = next.llmBaseUrl
   if (next.sttProvider !== undefined) out.stt_provider = next.sttProvider
   if (next.sttModel !== undefined) out.stt_model = next.sttModel
   return out

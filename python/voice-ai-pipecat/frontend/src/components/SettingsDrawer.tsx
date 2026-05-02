@@ -262,6 +262,56 @@ export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
                     ))}
                   </div>
                 </div>
+                <div
+                  className={
+                    "flex flex-col gap-2 border-t border-emerald-500/10 pt-3 " +
+                    (draft.wakeWordDisabled ? "opacity-40" : "")
+                  }
+                >
+                  <Toggle
+                    id="continuous-conversation"
+                    checked={draft.continuousConversation}
+                    onChange={(v) => updateDraft({ continuousConversation: v })}
+                    label="Follow-up mode (continuous conversation)"
+                    hint="After the bot replies, keep listening briefly so you can ask a follow-up without saying the wake word again."
+                    disabled={draft.wakeWordDisabled}
+                  />
+                  <div
+                    className={
+                      "ml-7 flex flex-col gap-1 " +
+                      (draft.continuousConversation && !draft.wakeWordDisabled
+                        ? ""
+                        : "opacity-40")
+                    }
+                  >
+                    <label
+                      htmlFor="continuous-window"
+                      className="flex items-center justify-between text-xs text-emerald-200"
+                    >
+                      <span>Follow-up window</span>
+                      <span className="text-emerald-300/70">
+                        {draft.continuousWindowSecs.toFixed(1)} s
+                      </span>
+                    </label>
+                    <input
+                      id="continuous-window"
+                      type="range"
+                      min={3}
+                      max={15}
+                      step={0.5}
+                      value={draft.continuousWindowSecs}
+                      disabled={
+                        !draft.continuousConversation || draft.wakeWordDisabled
+                      }
+                      onChange={(e) =>
+                        updateDraft({
+                          continuousWindowSecs: parseFloat(e.target.value),
+                        })
+                      }
+                      className="accent-emerald-400"
+                    />
+                  </div>
+                </div>
               </section>
 
               <section className="flex flex-col gap-3">
@@ -454,14 +504,50 @@ export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
                     )}
                 </select>
 
+                {/* Base URL override — surfaces for Ollama and any other
+                    OpenAI-compatible provider you might add (LM Studio,
+                    vLLM, llama.cpp's --server). Cloud providers ignore
+                    the field at pipeline-build time, so we only show it
+                    where it does anything. */}
+                {draft.llmProvider === "ollama" && (
+                  <div className="flex flex-col gap-1">
+                    <label
+                      htmlFor="llm-base-url"
+                      className="text-xs text-emerald-200"
+                    >
+                      Base URL
+                      <span className="ml-2 text-emerald-300/50">
+                        (leave blank for http://localhost:11434/v1)
+                      </span>
+                    </label>
+                    <input
+                      id="llm-base-url"
+                      type="text"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="http://localhost:11434/v1"
+                      value={draft.llmBaseUrl}
+                      onChange={(e) =>
+                        updateDraft({ llmBaseUrl: e.target.value })
+                      }
+                      className="rounded-md border border-emerald-500/30 bg-black/60 px-3 py-2 text-sm text-emerald-100 placeholder:text-emerald-300/30 focus:outline-none focus:ring-2 focus:ring-emerald-500/60"
+                    />
+                  </div>
+                )}
+
                 <details className="rounded-md border border-emerald-500/20 bg-black/40">
                   <summary className="cursor-pointer px-3 py-2 text-xs text-emerald-200 hover:bg-emerald-500/10">
                     API keys
                   </summary>
                   <div className="flex flex-col gap-2 px-3 py-3">
-                    {Object.keys(availableLlmProviders).map((p) => {
-                      const configured = draft.apiKeysConfigured[p]
-                      return (
+                    {Object.keys(availableLlmProviders)
+                      // Local providers don't have keys; skip them in
+                      // the keys panel so users aren't shown a "not
+                      // configured" badge that can't be fixed.
+                      .filter((p) => p !== "ollama")
+                      .map((p) => {
+                        const configured = draft.apiKeysConfigured[p]
+                        return (
                         <div key={p} className="flex flex-col gap-1">
                           <label
                             htmlFor={`api-key-${p}`}

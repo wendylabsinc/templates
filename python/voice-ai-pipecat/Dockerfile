@@ -6,26 +6,54 @@ RUN npm install
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2 - Pipecat runtime.
-# Jetson Orin Nano with CUDA acceleration: swap the base to
-# `nvcr.io/nvidia/l4t-pytorch:r36.2.0-pth2.2-py3` (or match your JetPack). The
-# default debian:bookworm-slim keeps the template portable (Pi 5, x86_64).
-FROM debian:bookworm-slim
+# Stage 2 - Pipecat runtime on Jetson with CUDA + cuDNN + on-device LLM.
+#
+# Base: nvcr.io/nvidia/l4t-jetpack:r35.4.1 — Ubuntu 20.04 + the full
+# JetPack 5.1.2 stack (CUDA 11.4, cuDNN 8.x, TensorRT, headers). We
+# need cuDNN here for ctranslate2's CUDA backend (which faster-whisper
+# rides on). The leaner l4t-base image only ships CUDA stubs — Ollama
+# works on it because it brings its own GPU runtime, but Whisper would
+# stay stuck on CPU.
+#
+# Trade-off vs the previous l4t-base: image grows ~3.5 GB → ~6 GB but
+# unlocks GPU Whisper alongside GPU Ollama. Pi 5 / x86_64 deploys are
+# no longer in scope on this branch.
+FROM nvcr.io/nvidia/l4t-jetpack:r35.4.1
 
+# Ubuntu 20.04 default Python is 3.8; pipecat-ai requires 3.10+.
+# Pull Python 3.10 from the deadsnakes PPA (officially-built backports,
+# ARM64 supported). Doing this in two apt-update passes is needed
+# because add-apt-repository depends on software-properties-common.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-venv \
-    python3-dev \
+    software-properties-common \
+    ca-certificates \
+    curl \
+    gnupg \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3.10-venv \
+    python3.10-dev \
     gcc \
+    g++ \
+    cmake \
+    git \
+    pkg-config \
+    libopenblas-dev \
     alsa-utils \
     libasound2 \
     portaudio19-dev \
     libsndfile1 \
     ffmpeg \
-    ca-certificates \
-    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Ollama for on-device LLM serving. Detects CUDA at runtime through
+# the bind-mounted libcuda; no GPU at runtime → falls back to CPU
+# (slow but still functional). The installer's systemd-service step
+# fails inside a container; the binary install itself succeeds, hence
+# the `|| true` followed by an explicit binary check.
+RUN curl -fsSL https://ollama.com/install.sh | sh || true
+RUN test -x /usr/local/bin/ollama || (echo "ERROR: Ollama install failed; binary missing at /usr/local/bin/ollama" && exit 1)
 
 # Route ALSA's "default" PCM to the PowerConf via `asym` (split playback
 # and capture) with `plug` on each leg for in-kernel rate conversion. We
@@ -68,8 +96,59 @@ ASOUND_CONF
 
 WORKDIR /app
 
-RUN python3 -m venv /app/venv
+RUN python3.10 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
+
+# ctranslate2 from source — the prebuilt aarch64 wheels on PyPI are
+# CPU-only (NVIDIA Jetson isn't a manylinux target). To get GPU
+# Whisper we have to build ctranslate2 against the JetPack CUDA +
+# cuDNN that l4t-jetpack provides. Pinned to v3.24.0: the last 3.x
+# release, which targets CUDA 11. ctranslate2 4.x requires CUDA 12+
+# and is incompatible with JetPack 5.1.x. faster-whisper 1.x in turn
+# requires ctranslate2 4.x, so requirements.txt pins faster-whisper
+# below 1.0 to match.
+#
+# This step takes 10–15 min on first build; subsequent rebuilds hit
+# the layer cache so it's a one-time cost.
+# CUDA_ARCHITECTURES is the SM (compute capability) the kernels are
+# compiled for. Default 87 = Jetson Orin (Nano/NX/AGX). For Xavier
+# (sm_72), TX2 (sm_62), or non-Jetson CUDA builds, override at build
+# time: `--build-arg CTRANSLATE2_CUDA_ARCH="72;75;86;87"`. Listing
+# multiple arches makes the image portable at the cost of a longer
+# build and a larger wheel.
+ARG CTRANSLATE2_CUDA_ARCH=87
+# Cap parallelism at half the available cores to keep nvcc memory
+# usage in check on smaller Jetsons (Orin Nano 4 GB OOMs at full
+# nproc on the CUDA kernel compile).
+RUN cd /tmp && \
+    git clone --depth 1 --branch v3.24.0 --recursive \
+      https://github.com/OpenNMT/CTranslate2.git && \
+    mkdir -p /tmp/CTranslate2/build && cd /tmp/CTranslate2/build && \
+    cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DWITH_CUDA=ON -DWITH_CUDNN=ON \
+          -DWITH_MKL=OFF -DOPENMP_RUNTIME=COMP \
+          -DCUDA_NVCC_FLAGS="-Xfatbin=-compress-all" \
+          -DCMAKE_CUDA_ARCHITECTURES="${CTRANSLATE2_CUDA_ARCH}" \
+          .. && \
+    make -j"$(( $(nproc) / 2 + 1 ))" install && \
+    ldconfig && \
+    cd /tmp/CTranslate2/python && \
+    /app/venv/bin/pip install --no-cache-dir -r install_requirements.txt && \
+    /app/venv/bin/python setup.py bdist_wheel && \
+    /app/venv/bin/pip install --no-cache-dir dist/ctranslate2*.whl && \
+    rm -rf /tmp/CTranslate2
+
+# Smoke-test the ctranslate2 install. Without this, a partial install
+# where the Python wheel landed but the native .so failed to link CUDA
+# succeeds at build time and fails at the first transcription with an
+# opaque "OSError: libctranslate2.so.3: cannot open shared object file"
+# (or worse, a clean import that can't actually use CUDA). The
+# `contains_cuda` attribute reflects compile-time CUDA support, so it's
+# valid even on a buildkit without a GPU attached.
+RUN /app/venv/bin/python -c "import ctranslate2; \
+assert getattr(ctranslate2, 'contains_cuda', False), \
+'ctranslate2 built without CUDA support — check Dockerfile WITH_CUDA / WITH_CUDNN flags and that the l4t-jetpack base ships matching CUDA + cuDNN headers'"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -109,7 +188,8 @@ RUN /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperMod
 # drawer's wake-word picker only exposes the pretrained set.
 RUN /app/venv/bin/python -c "import openwakeword.utils as u; u.download_models()"
 
-COPY main.py pipeline.py ./
+COPY main.py pipeline.py entrypoint.sh ./
+RUN chmod +x /app/entrypoint.sh
 COPY --from=frontend /frontend/dist ./static
 
 # GOOGLE_API_KEY is baked in from the template variable at scaffold time.
@@ -140,6 +220,24 @@ ENV WAKE_WORD_MODELS={{.WAKE_WORD_MODELS}}
 ENV WAKE_WORD_THRESHOLD={{.WAKE_WORD_THRESHOLD}}
 ENV WAKE_LISTEN_SECS={{.WAKE_LISTEN_SECS}}
 
+# Whisper compute target. l4t-jetpack ships CUDA 11.4 + cuDNN 8.x and
+# the ctranslate2 step above is built with WITH_CUDA=ON, so cuda+
+# float16 is the right pick on Jetson. If libcuda is missing at run
+# time, override with WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8.
+ENV WHISPER_DEVICE=cuda
+ENV WHISPER_COMPUTE_TYPE=float16
+
+# On-device LLM model that the entrypoint pulls into Ollama on first
+# boot (and skips on subsequent boots if already cached). Empty
+# disables the pull step — the container still starts the Ollama
+# daemon so the user can pull a model later via the UI's settings,
+# but no LLM is available locally until they do. See entrypoint.sh.
+ENV LOCAL_LLM_MODEL={{.LOCAL_LLM_MODEL}}
+
 EXPOSE {{.PORT}}
 
-CMD ["/app/venv/bin/python", "main.py"]
+# entrypoint.sh starts Ollama in the background, optionally pulls
+# LOCAL_LLM_MODEL, then exec's the Python app. Pipecat itself doesn't
+# need to know about Ollama — it talks to it as just another OpenAI-
+# compatible endpoint via the runtime settings store.
+CMD ["/app/entrypoint.sh"]

@@ -15,7 +15,7 @@
     ],
     "readiness": {
         "tcpSocket": { "port": {{.PORT}} },
-        "timeoutSeconds": 60
+        "timeoutSeconds": 300
     },
     "hooks": {
         "postStart": {

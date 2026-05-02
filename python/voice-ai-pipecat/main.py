@@ -21,6 +21,7 @@ list to the frontend so users can pick a device live.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import re
@@ -52,7 +53,12 @@ from pipecat.transports.websocket.fastapi import (
     FastAPIWebsocketTransport,
 )
 
-from pipeline import DEFAULT_SYSTEM_PROMPT, PROMPT_PRESETS, build_pipeline_task
+from pipeline import (
+    DEFAULT_SYSTEM_PROMPT,
+    PROMPT_PRESETS,
+    build_pipeline_task,
+    whisper_state,
+)
 
 
 PORT = int(os.environ.get("PORT", "3005"))
@@ -316,6 +322,12 @@ DEFAULT_TTS_VOICE = "en_US-lessac-medium"
 DEFAULT_ALLOW_INTERRUPTIONS = False
 DEFAULT_WAKE_WORD_MODELS = ["hey_jarvis"]
 DEFAULT_WAKE_WORD_DISABLED = False
+# Continuous-conversation ("follow-up mode"): keep the listening window
+# open for a short follow-up after the bot replies, like Alexa's
+# Follow-Up Mode / Google's Continued Conversation. Default ON because
+# that matches user expectation.
+DEFAULT_CONTINUOUS_CONVERSATION = True
+DEFAULT_CONTINUOUS_WINDOW_SECS = 6.0
 DEFAULT_STT_LANGUAGE = "auto"
 # Silero VAD tuning. These three are 0..1 sensitivity dials; the right
 # values depend on mic gain and room noise more than the algorithm.
@@ -385,14 +397,36 @@ LLM_PROVIDERS: dict[str, list[str]] = {
         "llama-3.1-8b-instant",
         "gemma2-9b-it",
     ],
+    # On-device LLM via Ollama. entrypoint.sh pulls LOCAL_LLM_MODEL on
+    # first boot. Models picked for tool-calling reliability at <8 GB
+    # unified memory (Jetson Orin NX target):
+    #   qwen2.5:3b   — best tool-calling small model
+    #   llama3.2:3b  — Meta's official tool model
+    #   qwen2.5:7b   — better quality, tighter on memory
+    "ollama": [
+        "qwen2.5:3b",
+        "llama3.2:3b",
+        "qwen2.5:7b",
+        "gemma2:2b",
+    ],
 }
 # Maps provider key → env var name. We fall back to the env var when no
-# key is present in the runtime settings store.
+# key is present in the runtime settings store. Empty string means "no
+# API key required" — used by Ollama (local, dummy key accepted by the
+# OpenAI-compat shim).
 LLM_API_KEY_ENV: dict[str, str] = {
     "google": "GOOGLE_API_KEY",
     "openai": "OPENAI_API_KEY",
     "anthropic": "ANTHROPIC_API_KEY",
     "groq": "GROQ_API_KEY",
+    "ollama": "",
+}
+# Per-provider base URL defaults. When a provider's entry is non-empty
+# AND the user hasn't set llm_base_url in settings, the service points
+# here. Lets us ship Ollama defaulting to localhost without forcing
+# every user to type the URL.
+LLM_BASE_URL_DEFAULTS: dict[str, str] = {
+    "ollama": "http://localhost:11434/v1",
 }
 # Search backend for non-Google providers. Brave is the default; users
 # can also drop in TAVILY_API_KEY and switch with /api/settings.
@@ -442,10 +476,75 @@ AVAILABLE_STT_LANGUAGES = [
 ]
 
 
-# Module-level state surfaced via /api/status so the frontend can warn
-# the user when persisted history was unreadable. Mirrors the
-# AppSettings.load_error pattern.
+# Surfaced via /api/status so the frontend can warn when persisted
+# history was unreadable.
 _conversation_load_error: Optional[str] = None
+
+# Path entrypoint.sh writes when the LOCAL_LLM_MODEL pull fails. Read
+# once at startup and surfaced on /api/status so the user sees a banner
+# instead of every LLM turn 500-ing with a cryptic "model not found".
+LOCAL_LLM_ERROR_FILE = Path(
+    os.environ.get("LOCAL_LLM_ERROR_FILE", "/tmp/voice-ai-local-llm-error.txt")
+)
+_local_llm_load_error: Optional[str] = None
+
+# Liveness state for the Ollama daemon, refreshed by an async watcher
+# whenever llm_provider == "ollama". Lets /api/status surface "Ollama is
+# down" so a crashed daemon doesn't silently break every turn.
+OLLAMA_HEALTH_URL = os.environ.get(
+    "OLLAMA_HEALTH_URL", "http://localhost:11434/api/tags"
+)
+OLLAMA_HEALTH_POLL_SECS = float(os.environ.get("OLLAMA_HEALTH_POLL_SECS", "5.0"))
+_ollama_health_error: Optional[str] = None
+
+
+def _load_local_llm_error() -> None:
+    global _local_llm_load_error
+    try:
+        text = LOCAL_LLM_ERROR_FILE.read_text().strip()
+    except FileNotFoundError:
+        _local_llm_load_error = None
+        return
+    except Exception as exc:
+        logger.exception("Failed to read %s", LOCAL_LLM_ERROR_FILE)
+        _local_llm_load_error = f"Could not read local-LLM error file: {exc}"
+        return
+    _local_llm_load_error = text or None
+
+
+async def _ollama_health_watcher() -> None:
+    """Poll the Ollama daemon's /api/tags when ollama is the active LLM.
+
+    Without this, a daemon that died (OOM, GPU error) leaves /api/status
+    showing mode=local, error=null while every LLM turn 500s on
+    connection-refused. We poll cheaply (~once every 5s) only when the
+    user has actually selected ollama.
+    """
+    global _ollama_health_error
+    import urllib.error
+    import urllib.request
+
+    while True:
+        try:
+            await asyncio.sleep(OLLAMA_HEALTH_POLL_SECS)
+            if settings_store.llm_provider != "ollama":
+                if _ollama_health_error is not None:
+                    _ollama_health_error = None
+                continue
+            try:
+                await asyncio.to_thread(
+                    lambda: urllib.request.urlopen(OLLAMA_HEALTH_URL, timeout=2.0).read()
+                )
+                _ollama_health_error = None
+            except (urllib.error.URLError, OSError, TimeoutError) as exc:
+                _ollama_health_error = (
+                    f"Ollama daemon not reachable at {OLLAMA_HEALTH_URL}: {exc}. "
+                    "Local LLM turns will fail until the daemon is back up."
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Ollama health watcher error")
 
 
 def _load_conversation_history() -> list[dict[str, str]]:
@@ -591,6 +690,8 @@ class AppSettings:
         self.allow_interruptions: bool = DEFAULT_ALLOW_INTERRUPTIONS
         self.wake_word_models: list[str] = list(DEFAULT_WAKE_WORD_MODELS)
         self.wake_word_disabled: bool = DEFAULT_WAKE_WORD_DISABLED
+        self.continuous_conversation: bool = DEFAULT_CONTINUOUS_CONVERSATION
+        self.continuous_window_secs: float = DEFAULT_CONTINUOUS_WINDOW_SECS
         self.stt_language: str = DEFAULT_STT_LANGUAGE
         self.vad_confidence: float = DEFAULT_VAD_CONFIDENCE
         self.vad_min_volume: float = DEFAULT_VAD_MIN_VOLUME
@@ -602,6 +703,11 @@ class AppSettings:
         self.persist_conversation: bool = DEFAULT_PERSIST_CONVERSATION
         self.llm_provider: str = DEFAULT_LLM_PROVIDER
         self.llm_model: str = DEFAULT_LLM_MODEL
+        # Override base URL for OpenAI-compatible providers (Ollama, LM
+        # Studio, vLLM, etc.). Empty string means "use the provider's
+        # default" — for ollama that's LLM_BASE_URL_DEFAULTS["ollama"].
+        # Cloud providers (google/openai/anthropic/groq) ignore this.
+        self.llm_base_url: str = ""
         self.stt_provider: str = DEFAULT_STT_PROVIDER
         self.stt_model: str = DEFAULT_STT_MODEL
         # API keys configured via the settings UI at runtime. Stored in
@@ -633,6 +739,12 @@ class AppSettings:
             self.wake_word_disabled = bool(
                 data.get("wake_word_disabled", DEFAULT_WAKE_WORD_DISABLED)
             )
+            self.continuous_conversation = bool(
+                data.get("continuous_conversation", DEFAULT_CONTINUOUS_CONVERSATION)
+            )
+            self.continuous_window_secs = float(
+                data.get("continuous_window_secs", DEFAULT_CONTINUOUS_WINDOW_SECS)
+            )
             self.stt_language = str(data.get("stt_language", DEFAULT_STT_LANGUAGE))
             self.vad_confidence = float(
                 data.get("vad_confidence", DEFAULT_VAD_CONFIDENCE)
@@ -660,6 +772,7 @@ class AppSettings:
             )
             self.llm_provider = str(data.get("llm_provider", DEFAULT_LLM_PROVIDER))
             self.llm_model = str(data.get("llm_model", DEFAULT_LLM_MODEL))
+            self.llm_base_url = str(data.get("llm_base_url", ""))
             self.stt_provider = str(data.get("stt_provider", DEFAULT_STT_PROVIDER))
             self.stt_model = str(data.get("stt_model", DEFAULT_STT_MODEL))
             keys = data.get("api_keys", {})
@@ -738,6 +851,8 @@ class AppSettings:
             "allow_interruptions": self.allow_interruptions,
             "wake_word_models": list(self.wake_word_models),
             "wake_word_disabled": self.wake_word_disabled,
+            "continuous_conversation": self.continuous_conversation,
+            "continuous_window_secs": self.continuous_window_secs,
             "stt_language": self.stt_language,
             "vad_confidence": self.vad_confidence,
             "vad_min_volume": self.vad_min_volume,
@@ -749,6 +864,7 @@ class AppSettings:
             "persist_conversation": self.persist_conversation,
             "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
+            "llm_base_url": self.llm_base_url,
             "stt_provider": self.stt_provider,
             "stt_model": self.stt_model,
             "api_keys": dict(self.api_keys),
@@ -766,6 +882,8 @@ class AppSettings:
         allow_interruptions: Optional[bool] = None,
         wake_word_models: Optional[list[str]] = None,
         wake_word_disabled: Optional[bool] = None,
+        continuous_conversation: Optional[bool] = None,
+        continuous_window_secs: Optional[float] = None,
         stt_language: Optional[str] = None,
         vad_confidence: Optional[float] = None,
         vad_min_volume: Optional[float] = None,
@@ -777,6 +895,7 @@ class AppSettings:
         persist_conversation: Optional[bool] = None,
         llm_provider: Optional[str] = None,
         llm_model: Optional[str] = None,
+        llm_base_url: Optional[str] = None,
         stt_provider: Optional[str] = None,
         stt_model: Optional[str] = None,
         api_keys: Optional[dict[str, str]] = None,
@@ -805,6 +924,19 @@ class AppSettings:
         if wake_word_disabled is not None and wake_word_disabled != self.wake_word_disabled:
             self.wake_word_disabled = wake_word_disabled
             changed = True
+        if (
+            continuous_conversation is not None
+            and continuous_conversation != self.continuous_conversation
+        ):
+            self.continuous_conversation = continuous_conversation
+            changed = True
+        if continuous_window_secs is not None:
+            # Clamp to a sensible range. <3 s feels jumpy, >15 s makes a
+            # forgotten quiet room hold the gate open for nothing.
+            clamped = max(3.0, min(15.0, float(continuous_window_secs)))
+            if clamped != self.continuous_window_secs:
+                self.continuous_window_secs = clamped
+                changed = True
         if stt_language is not None and stt_language != self.stt_language:
             if stt_language in AVAILABLE_STT_LANGUAGES:
                 self.stt_language = stt_language
@@ -860,6 +992,11 @@ class AppSettings:
         if llm_model is not None and llm_model and llm_model != self.llm_model:
             self.llm_model = llm_model
             changed = True
+        if llm_base_url is not None:
+            stripped = llm_base_url.strip()
+            if stripped != self.llm_base_url:
+                self.llm_base_url = stripped
+                changed = True
         if stt_provider is not None and stt_provider in STT_PROVIDERS:
             if stt_provider != self.stt_provider:
                 self.stt_provider = stt_provider
@@ -870,9 +1007,8 @@ class AppSettings:
             self.stt_model = stt_model
             changed = True
         # Apply clears BEFORE sets so a same-payload {api_keys_clear:[x],
-        # api_keys:{x:"new"}} ends up with the new key, matching what
-        # _will_have_key promises the caller. The reverse order would
-        # silently wipe the just-set value.
+        # api_keys:{x:"new"}} ends up with the new key. The reverse
+        # order would silently wipe the just-set value.
         if api_keys_clear:
             for provider in api_keys_clear:
                 if provider in self.api_keys:
@@ -901,6 +1037,8 @@ class AppSettings:
             "allow_interruptions": self.allow_interruptions,
             "wake_word_models": list(self.wake_word_models),
             "wake_word_disabled": self.wake_word_disabled,
+            "continuous_conversation": self.continuous_conversation,
+            "continuous_window_secs": self.continuous_window_secs,
             "stt_language": self.stt_language,
             "vad_confidence": self.vad_confidence,
             "vad_min_volume": self.vad_min_volume,
@@ -912,6 +1050,7 @@ class AppSettings:
             "persist_conversation": self.persist_conversation,
             "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
+            "llm_base_url": self.llm_base_url,
             "stt_provider": self.stt_provider,
             "stt_model": self.stt_model,
             # Booleans only — never expose raw key material in API
@@ -1014,6 +1153,12 @@ class SessionManager:
         self._processing = False
         self._processing_started_mono = None
         self._bot_speaking_at = time.monotonic()
+        # Without this clear, on turns 2+ _bot_quiet_at still holds the
+        # previous turn's timestamp (in the past), so
+        # is_bot_currently_speaking() returns False while the bot is
+        # actively speaking — breaking the wake-gate's TTS-mute and the
+        # continuous-conversation falling-edge detector.
+        self._bot_quiet_at = None
 
     def on_bot_stopped(self) -> None:
         # 500 ms grace after bot stops so any in-flight audio has time
@@ -1231,6 +1376,8 @@ class SessionManager:
             allow_interruptions=settings_store.allow_interruptions,
             wake_word_models=settings_store.wake_word_models,
             wake_word_disabled=wake_disabled,
+            continuous_conversation=settings_store.continuous_conversation,
+            continuous_window_secs=settings_store.continuous_window_secs,
             stt_language=settings_store.stt_language,
             google_search_enabled=settings_store.google_search_enabled,
             greeting_message=greeting,
@@ -1245,6 +1392,10 @@ class SessionManager:
             llm_provider=settings_store.llm_provider,
             llm_model=settings_store.llm_model,
             llm_api_key=settings_store.get_api_key(settings_store.llm_provider),
+            llm_base_url=(
+                settings_store.llm_base_url
+                or LLM_BASE_URL_DEFAULTS.get(settings_store.llm_provider, "")
+            ),
             brave_api_key=settings_store.get_brave_key(),
             stt_provider=settings_store.stt_provider,
             stt_model=settings_store.stt_model,
@@ -1336,16 +1487,20 @@ async def _hotplug_watchdog() -> None:
 async def lifespan(_: FastAPI):
     devices = _enumerate_devices()
     _log_audio_devices(devices)
+    _load_local_llm_error()
     await session.start_local()
     watchdog = asyncio.create_task(_hotplug_watchdog())
+    ollama_watcher = asyncio.create_task(_ollama_health_watcher())
     try:
         yield
     finally:
-        watchdog.cancel()
-        try:
-            await watchdog
-        except asyncio.CancelledError:
-            pass
+        for t in (watchdog, ollama_watcher):
+            t.cancel()
+        for t in (watchdog, ollama_watcher):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
         await session.stop()
 
 
@@ -1375,7 +1530,9 @@ def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing bearer token")
     token = authorization.split(" ", 1)[1].strip()
-    if token != WENDY_AUTH_TOKEN:
+    # compare_digest avoids leaking token length/content via the timing
+    # side-channel that a plain `!=` would expose.
+    if not hmac.compare_digest(token, WENDY_AUTH_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid bearer token")
 
 
@@ -1449,6 +1606,9 @@ async def api_status() -> dict[str, Any]:
         "error": session.last_error,
         "settings_load_error": settings_store.load_error,
         "conversation_load_error": _conversation_load_error,
+        "local_llm_load_error": _local_llm_load_error,
+        "ollama_health_error": _ollama_health_error,
+        "whisper": whisper_state.to_dict(),
         "processing": session._processing,  # noqa: SLF001
         "last_response_time_ms": session._last_response_time_ms,  # noqa: SLF001
         "last_wake_at": session._last_wake_at,  # noqa: SLF001
@@ -1522,6 +1682,8 @@ class SettingsBody(BaseModel):
     allow_interruptions: Optional[bool] = None
     wake_word_models: Optional[list[str]] = None
     wake_word_disabled: Optional[bool] = None
+    continuous_conversation: Optional[bool] = None
+    continuous_window_secs: Optional[float] = None
     stt_language: Optional[str] = None
     vad_confidence: Optional[float] = None
     vad_min_volume: Optional[float] = None
@@ -1533,6 +1695,7 @@ class SettingsBody(BaseModel):
     persist_conversation: Optional[bool] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
+    llm_base_url: Optional[str] = None
     stt_provider: Optional[str] = None
     stt_model: Optional[str] = None
     api_keys: Optional[dict[str, str]] = None
@@ -1605,7 +1768,12 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                 status_code=400,
                 detail=f"Unknown LLM provider {body.llm_provider!r}",
             )
-        if not _will_have_key(body.llm_provider):
+        # Local providers (Ollama, LM Studio, etc.) have an empty
+        # LLM_API_KEY_ENV entry — no key is required, so skip the
+        # _will_have_key check that would otherwise reject the switch.
+        if LLM_API_KEY_ENV.get(body.llm_provider) and not _will_have_key(
+            body.llm_provider
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -1614,6 +1782,34 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                     "request or set the corresponding env var."
                 ),
             )
+    if body.llm_base_url is not None:
+        candidate = body.llm_base_url.strip()
+        if candidate:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(candidate)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"llm_base_url {candidate!r} is not a valid URL. "
+                        "Use a full URL like http://localhost:11434/v1 or "
+                        "https://api.example.com/v1."
+                    ),
+                )
+            # Ollama's OpenAI-compat endpoint lives under /v1; a missing
+            # path is the most common typo and produces opaque 404s on
+            # the next turn. Warn loudly but don't reject — LM Studio /
+            # vLLM / llama.cpp use various paths.
+            target_provider = body.llm_provider or settings_store.llm_provider
+            if target_provider == "ollama" and not parsed.path.rstrip("/").endswith(
+                "/v1"
+            ):
+                logger.warning(
+                    "llm_base_url=%r for ollama provider does not end in /v1; "
+                    "Ollama serves its OpenAI-compat API at /v1 — turns may 404.",
+                    candidate,
+                )
     if body.stt_provider is not None and body.stt_provider != settings_store.stt_provider:
         if body.stt_provider not in STT_PROVIDERS:
             raise HTTPException(
@@ -1641,6 +1837,8 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                 allow_interruptions=body.allow_interruptions,
                 wake_word_models=body.wake_word_models,
                 wake_word_disabled=body.wake_word_disabled,
+                continuous_conversation=body.continuous_conversation,
+                continuous_window_secs=body.continuous_window_secs,
                 stt_language=body.stt_language,
                 vad_confidence=body.vad_confidence,
                 vad_min_volume=body.vad_min_volume,
@@ -1652,6 +1850,7 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                 persist_conversation=body.persist_conversation,
                 llm_provider=body.llm_provider,
                 llm_model=body.llm_model,
+                llm_base_url=body.llm_base_url,
                 stt_provider=body.stt_provider,
                 stt_model=body.stt_model,
                 api_keys=body.api_keys,
@@ -1677,6 +1876,8 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
             "allow_interruptions",
             "wake_word_models",
             "wake_word_disabled",
+            "continuous_conversation",
+            "continuous_window_secs",
             "stt_language",
             "vad_confidence",
             "vad_min_volume",
@@ -1688,6 +1889,7 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
             "persist_conversation",
             "llm_provider",
             "llm_model",
+            "llm_base_url",
             "stt_provider",
             "stt_model",
         ):
@@ -1708,11 +1910,9 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
     return {
         "settings": settings_store.to_dict(),
         "changed": changed,
-        # True only for local sessions; browser sessions are not
-        # restarted mid-call (see SessionManager.restart_in_place) so
-        # they pick up changes on the user's next reconnect. Frontend
-        # uses this to show "Saved · applied" vs "Saved · will apply
-        # on next session".
+        # Browser sessions don't restart mid-call, so they pick up
+        # changes on next reconnect. Frontend shows this as "Saved ·
+        # applied" vs "Saved · will apply on next session".
         "applied_to_running_session": changed and session.mode == "local",
     }
 

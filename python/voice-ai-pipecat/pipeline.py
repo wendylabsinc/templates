@@ -57,14 +57,15 @@ _log = logging.getLogger("voice-ai-pipecat.pipeline")
 # and surfacing that is more useful than telling the user "extra not
 # installed" when they clearly have it.
 #
-# Capture the post-ImportError exception per-provider so _build_*_service
-# can quote the real reason ("Deepgram extra installed but import failed:
-# <reason>") instead of misleading the user into reinstalling something
-# that's already there.
+# Capture the post-ImportError exception per-provider so
+# _provider_unavailable() can quote the real reason ("Deepgram extra
+# installed but import failed: <reason>") instead of misleading the
+# user into reinstalling something they already have.
 _DEEPGRAM_LOAD_ERROR: Optional[str] = None
 _OPENAI_LOAD_ERROR: Optional[str] = None
 _ANTHROPIC_LOAD_ERROR: Optional[str] = None
 _GROQ_LOAD_ERROR: Optional[str] = None
+_OLLAMA_LOAD_ERROR: Optional[str] = None
 try:
     from pipecat.services.deepgram.stt import DeepgramSTTService
 except ImportError:  # pragma: no cover
@@ -97,6 +98,58 @@ except Exception as _exc:  # pragma: no cover
     _log.exception("Groq extra installed but failed to import")
     GroqLLMService = None  # type: ignore[assignment]
     _GROQ_LOAD_ERROR = str(_exc)
+# Ollama is shipped as part of the OpenAI extra (it's a thin subclass
+# of OpenAILLMService). If pipecat-ai is too old to have moved the
+# Ollama service into its own package we fall back to OpenAILLMService
+# directly with the right base_url — same wire protocol either way.
+try:
+    from pipecat.services.ollama.llm import OLLamaLLMService
+except ImportError:  # pragma: no cover
+    OLLamaLLMService = None  # type: ignore[assignment]
+except Exception as _exc:  # pragma: no cover
+    _log.exception("Ollama service present but failed to import")
+    OLLamaLLMService = None  # type: ignore[assignment]
+    _OLLAMA_LOAD_ERROR = str(_exc)
+
+
+class _WhisperRuntimeState:
+    """Tracks the requested vs. actually-applied Whisper compute target.
+
+    The kwarg-rejection fallback in _build_stt_service can silently
+    downgrade GPU Whisper to faster-whisper's library defaults (CPU). On
+    Jetson that turns a ~250 ms STT into a ~1.5 s STT with no signal in
+    /api/status. Surfacing actual_device makes the regression visible.
+    """
+
+    def __init__(self) -> None:
+        self.requested_device: Optional[str] = None
+        self.requested_compute_type: Optional[str] = None
+        self.actual_device: Optional[str] = None
+        self.actual_compute_type: Optional[str] = None
+
+    def update(
+        self,
+        *,
+        requested_device: str,
+        requested_compute_type: str,
+        actual_device: str,
+        actual_compute_type: str,
+    ) -> None:
+        self.requested_device = requested_device
+        self.requested_compute_type = requested_compute_type
+        self.actual_device = actual_device
+        self.actual_compute_type = actual_compute_type
+
+    def to_dict(self) -> dict:
+        return {
+            "requested_device": self.requested_device,
+            "requested_compute_type": self.requested_compute_type,
+            "actual_device": self.actual_device,
+            "actual_compute_type": self.actual_compute_type,
+        }
+
+
+whisper_state = _WhisperRuntimeState()
 
 
 def _provider_unavailable(name: str, load_error: Optional[str]) -> RuntimeError:
@@ -121,10 +174,9 @@ def _build_stt_service(
     *,
     language: Optional[str] = None,
 ):
-    """Construct the STT service for `provider`. Whisper is local
-    (CPU, int8); Deepgram streams over WebSocket from their API and
-    typically reaches first-token latency ~150–300 ms vs Whisper's
-    1–3 s on CPU.
+    """Construct the STT service for `provider`. Whisper runs locally
+    (compute target picked by WHISPER_DEVICE / WHISPER_COMPUTE_TYPE);
+    Deepgram streams over WebSocket from their API.
 
     `language` is an ISO-639-1 code or None for auto-detect.
     """
@@ -150,15 +202,44 @@ def _build_stt_service(
     whisper_settings_kwargs: dict = {"model": model or Model.TINY.value}
     if language and language.lower() not in {"auto", ""}:
         whisper_settings_kwargs["language"] = language
-    try:
+
+    # Resolve compute target. Dockerfile sets WHISPER_DEVICE=cuda for
+    # Jetson (ctranslate2 is built against CUDA 11.4 + cuDNN there); on
+    # other hosts override at deploy time or set WHISPER_DEVICE=cpu /
+    # WHISPER_COMPUTE_TYPE=int8 directly. "auto" lets the kwarg-rejected
+    # fallback below silently downgrade to faster-whisper's defaults.
+    device = os.environ.get("WHISPER_DEVICE", "auto")
+    compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "default")
+    ctor_kwargs = {"device": device, "compute_type": compute_type}
+    _log.info(
+        "Whisper init: model=%s language=%s device=%s compute_type=%s",
+        whisper_settings_kwargs.get("model"),
+        whisper_settings_kwargs.get("language", "auto"),
+        device,
+        compute_type,
+    )
+
+    def _build(extra_kwargs: dict, settings_kwargs: dict):
         return WhisperSTTService(
-            settings=WhisperSTTService.Settings(**whisper_settings_kwargs),
+            settings=WhisperSTTService.Settings(**settings_kwargs),
+            **extra_kwargs,
         )
+
+    try:
+        service = _build(ctor_kwargs, whisper_settings_kwargs)
+        whisper_state.update(
+            requested_device=device,
+            requested_compute_type=compute_type,
+            actual_device=device,
+            actual_compute_type=compute_type,
+        )
+        return service
     except TypeError as exc:
+        msg = str(exc)
         # Older pipecat 0.0.x didn't expose `language` on Settings (it
         # moved up to the STT base class around 0.0.105). Fall back to
         # auto-detect rather than crashing pipeline construction.
-        if "language" in whisper_settings_kwargs and "language" in str(exc):
+        if "language" in whisper_settings_kwargs and "language" in msg:
             _log.warning(
                 "WhisperSTTService.Settings rejected `language=%r` (%s); "
                 "falling back to auto-detect. Upgrade pipecat-ai to "
@@ -167,9 +248,43 @@ def _build_stt_service(
                 exc,
             )
             whisper_settings_kwargs.pop("language")
-            return WhisperSTTService(
-                settings=WhisperSTTService.Settings(**whisper_settings_kwargs),
+            service = _build(ctor_kwargs, whisper_settings_kwargs)
+            whisper_state.update(
+                requested_device=device,
+                requested_compute_type=compute_type,
+                actual_device=device,
+                actual_compute_type=compute_type,
             )
+            return service
+        # Older pipecat may not accept device/compute_type as ctor kwargs.
+        # When the user asked for a specific device, refuse to silently
+        # downgrade to library defaults (CPU) — that erases the perf the
+        # explicit setting was meant to lock in. Only "auto" callers get
+        # the fallback.
+        if "device" in msg or "compute_type" in msg:
+            if device != "auto":
+                raise RuntimeError(
+                    f"WhisperSTTService rejected device={device!r} / "
+                    f"compute_type={compute_type!r} ({exc}). Upgrade "
+                    "pipecat-ai to a version that accepts these kwargs, "
+                    "or set WHISPER_DEVICE=auto to fall back to faster-"
+                    "whisper's library defaults (CPU)."
+                ) from exc
+            _log.warning(
+                "WhisperSTTService rejected device/compute_type kwargs (%s); "
+                "Whisper will run on faster-whisper's library defaults (CPU). "
+                "Upgrade pipecat-ai to a version that accepts these to use "
+                "GPU acceleration.",
+                exc,
+            )
+            service = _build({}, whisper_settings_kwargs)
+            whisper_state.update(
+                requested_device=device,
+                requested_compute_type=compute_type,
+                actual_device="library-default",
+                actual_compute_type="library-default",
+            )
+            return service
         raise
 
 
@@ -326,6 +441,7 @@ def _build_llm_service(
     google_search_enabled: bool,
     function_search_enabled: bool,
     brave_api_key: str,
+    llm_base_url: str = "",
 ):
     """Construct the right Pipecat LLM service for `provider`.
 
@@ -410,6 +526,38 @@ def _build_llm_service(
         if GroqLLMService is None:
             raise _provider_unavailable("Groq", _GROQ_LOAD_ERROR)
         return GroqLLMService(api_key=api_key, model=model), tools_schema, handler
+    if provider == "ollama":
+        # Local LLM via Ollama daemon (or any OpenAI-compatible server
+        # if llm_base_url is overridden — LM Studio, vLLM, llama.cpp's
+        # --server, etc.). Empty base_url defaults to Ollama's standard
+        # localhost endpoint.
+        base_url = llm_base_url or "http://localhost:11434/v1"
+        if OLLamaLLMService is not None:
+            _log.info("LLM: ollama via OLLamaLLMService @ %s model=%s", base_url, model)
+            return (
+                OLLamaLLMService(model=model, base_url=base_url),
+                tools_schema,
+                handler,
+            )
+        # Fallback: older pipecat without the dedicated Ollama subclass.
+        # Ollama's OpenAI-compat endpoint accepts any non-empty bearer so
+        # a literal "ollama" string is fine. Log the fallback so field
+        # debug ("works on Ollama, broken on LM Studio") can distinguish
+        # the two paths instead of guessing.
+        if OpenAILLMService is None:
+            raise _provider_unavailable("OpenAI", _OPENAI_LOAD_ERROR)
+        _log.warning(
+            "LLM: ollama provider falling back to OpenAILLMService @ %s "
+            "(OLLamaLLMService unavailable: %s). Tool-calling and "
+            "streaming behavior may differ from the dedicated subclass.",
+            base_url,
+            _OLLAMA_LOAD_ERROR or "not installed",
+        )
+        return (
+            OpenAILLMService(api_key=api_key or "ollama", model=model, base_url=base_url),
+            tools_schema,
+            handler,
+        )
 
     raise ValueError(f"Unknown LLM provider: {provider!r}")
 
@@ -729,13 +877,16 @@ class WakeWordGate(FrameProcessor):
     def __init__(
         self,
         models: list[str],
+        *,
+        output_sample_rate: int,
         threshold: float = 0.5,
         max_listen_secs: float = 8.0,
-        output_sample_rate: int = 48000,
         on_wake_fired: Optional[callable] = None,  # type: ignore[type-arg]
         is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
         on_predict_error: Optional[callable] = None,  # type: ignore[type-arg]
         predict_error_limit: int = 20,
+        continuous_conversation: bool = False,
+        continuous_window_secs: float = 6.0,
     ) -> None:
         super().__init__()
         from openwakeword.model import Model as OWWModel
@@ -751,10 +902,10 @@ class WakeWordGate(FrameProcessor):
         self._max_listen_secs = max_listen_secs
         self._listening_until: Optional[float] = None
         self._on_wake_fired = on_wake_fired
-        # Pre-synthesize chimes at the output transport's sample rate so
-        # they play through cleanly without resampling. Caller must pass
-        # the actual transport rate — defaulting to 48000 here would
-        # play the chime at 1/3 speed if the transport runs at 16000.
+        # Pre-synthesize chimes at the output transport's sample rate
+        # so they play through cleanly without resampling. The kwarg is
+        # required (not defaulted) because a wrong rate plays the chime
+        # at the wrong speed without erroring.
         self._chime_open = _make_chime(880, 120, output_sample_rate)
         self._chime_close = _make_chime(550, 100, output_sample_rate, volume=0.2)
         self._output_sample_rate = output_sample_rate
@@ -774,6 +925,14 @@ class WakeWordGate(FrameProcessor):
         self._predict_error_limit = max(1, predict_error_limit)
         self._consecutive_predict_errors: int = 0
         self._predict_error_notified: bool = False
+        # Continuous-conversation: re-open the listening window
+        # automatically after the bot finishes speaking, so the user can
+        # ask a follow-up without re-saying the wake word. We detect the
+        # bot's speaking→silent transition by polling is_bot_speaking()
+        # each input frame and watching the edge.
+        self._continuous_conversation = continuous_conversation
+        self._continuous_window_secs = continuous_window_secs
+        self._bot_was_speaking: bool = False
 
     @property
     def _in_window(self) -> bool:
@@ -792,13 +951,13 @@ class WakeWordGate(FrameProcessor):
             FrameDirection.DOWNSTREAM,
         )
 
-    async def _close_window(self) -> None:
+    async def _close_window(self, *, reason: str = "expired") -> None:
         if self._listening_until is None:
             return
         self._listening_until = None
         self._mute_oww_until = time.monotonic() + 0.25
         await self._push_chime(self._chime_close)
-        _log.debug("WakeWordGate: closed listening window")
+        _log.info("WakeWordGate: closed listening window (%s)", reason)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -806,9 +965,38 @@ class WakeWordGate(FrameProcessor):
 
         # Auto-close window if max-listen elapsed without UserStoppedSpeaking.
         if self._listening_until is not None and now >= self._listening_until:
-            await self._close_window()
+            await self._close_window(reason="timeout")
 
         bot_speaking = bool(self._is_bot_speaking and self._is_bot_speaking())
+
+        # Continuous-conversation edge detect: bot just stopped talking.
+        # Re-open the listening window for a follow-up so the user can
+        # speak again without re-saying the wake word. Done here (not on
+        # a downstream frame) because the gate sits at the front of the
+        # pipeline and never sees BotStoppedSpeakingFrame. The 500 ms
+        # tail in is_bot_currently_speaking() means this fires safely
+        # after any TTS audio has cleared the speakers.
+        #
+        # Note: when is_bot_speaking is None (not wired by main.py),
+        # bot_speaking is permanently False and self._bot_was_speaking
+        # never becomes True, so this branch never fires and follow-up
+        # mode silently degrades to no-op.
+        if (
+            self._continuous_conversation
+            and self._bot_was_speaking
+            and not bot_speaking
+            and not self._in_window
+        ):
+            self._listening_until = now + self._continuous_window_secs
+            self._mute_oww_until = now + 0.25
+            _log.info(
+                "WakeWordGate: continuous mode — follow-up window opened (%.1fs)",
+                self._continuous_window_secs,
+            )
+            # Deliberately no chime and no on_wake_fired callback here —
+            # that's reserved for actual wake-word triggers. A follow-up
+            # is meant to feel like "still talking", not a fresh wake.
+        self._bot_was_speaking = bot_speaking
 
         if isinstance(frame, InputAudioRawFrame):
             # Run wake detector unless we just played a chime, are
@@ -867,7 +1055,7 @@ class WakeWordGate(FrameProcessor):
                 await self.push_frame(frame, direction)
                 if isinstance(frame, UserStoppedSpeakingFrame):
                     # One utterance complete — close the window.
-                    await self._close_window()
+                    await self._close_window(reason="utterance-complete")
             return
 
         # Pass everything else through (StartFrame, EndFrame, etc.).
@@ -984,6 +1172,8 @@ def build_pipeline_task(
     allow_interruptions: Optional[bool] = None,
     wake_word_models: Optional[list[str]] = None,
     wake_word_disabled: Optional[bool] = None,
+    continuous_conversation: bool = False,
+    continuous_window_secs: float = 6.0,
     stt_language: Optional[str] = None,
     google_search_enabled: Optional[bool] = None,
     greeting_message: Optional[str] = None,
@@ -998,6 +1188,7 @@ def build_pipeline_task(
     llm_provider: str = "google",
     llm_model: str = "gemini-2.5-flash",
     llm_api_key: str = "",
+    llm_base_url: str = "",
     brave_api_key: str = "",
     stt_provider: str = "whisper",
     stt_model: str = "tiny",
@@ -1027,16 +1218,18 @@ def build_pipeline_task(
     search_enabled = bool(google_search_enabled) if google_search_enabled is not None else True
 
     _log.info(
-        "building pipeline: llm=%s/%s stt=%s/%s tts=%s wake=%s "
-        "search=%s interrupt=%s history=%d",
+        "building pipeline: llm=%s/%s%s stt=%s/%s tts=%s wake=%s "
+        "continuous=%s search=%s interrupt=%s history=%d",
         llm_provider,
         llm_model,
+        f" @ {llm_base_url}" if llm_base_url else "",
         stt_provider,
         stt_model,
         voice,
         "off"
         if wake_disabled
         else (",".join(wake_word_models or ["hey_jarvis"])),
+        f"on({continuous_window_secs:.1f}s)" if continuous_conversation else "off",
         "google-native"
         if (llm_provider == "google" and search_enabled)
         else (
@@ -1067,6 +1260,7 @@ def build_pipeline_task(
         google_search_enabled=(llm_provider == "google" and search_enabled),
         function_search_enabled=(llm_provider != "google" and search_enabled),
         brave_api_key=brave_api_key,
+        llm_base_url=llm_base_url,
     )
     if handler_spec is not None:
         # `handler_spec` is a list of (name, handler_or_marker) pairs.
@@ -1081,13 +1275,9 @@ def build_pipeline_task(
             ):
                 captured_key = ref[1]
 
-                # The Brave key is baked into _web_search's default arg
-                # at pipeline-build time. Rotating the key via
-                # /api/settings won't reach this closure — but the
-                # settings endpoint calls SessionManager.restart_in_place
-                # on local mode, which rebuilds the pipeline (and this
-                # closure) with the new value. Browser sessions pick up
-                # the new key on next reconnect.
+                # Brave key is captured into _web_search's default arg
+                # at pipeline-build time, so settings rotation only
+                # takes effect on the next pipeline rebuild.
                 async def _web_search(params, _key=captured_key) -> None:  # type: ignore[no-untyped-def]
                     import httpx
 
@@ -1177,6 +1367,8 @@ def build_pipeline_task(
                 on_wake_fired=on_wake_fired,
                 is_bot_speaking=is_bot_speaking,
                 on_predict_error=on_wake_predict_error,
+                continuous_conversation=continuous_conversation,
+                continuous_window_secs=continuous_window_secs,
             )
         )
     if greeting_message:

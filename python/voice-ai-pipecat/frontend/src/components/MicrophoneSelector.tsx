@@ -45,7 +45,7 @@ function decodeValue(val: string | null | undefined): MicrophoneSelection | null
 
 export function MicrophoneSelector({ onDeviceSelect }: MicrophoneSelectorProps) {
   const [browserDevices, setBrowserDevices] = React.useState<MediaDeviceInfo[]>([])
-  const { devices: wendyosDevices } = useWendyosMicrophones()
+  const { devices: wendyosDevices, selectInput } = useWendyosMicrophones()
   const [selected, setSelected] = React.useState<MicrophoneSelection | null>(() => {
     if (typeof window === "undefined") return null
     return decodeValue(localStorage.getItem(STORAGE_KEY))
@@ -59,8 +59,16 @@ export function MicrophoneSelector({ onDeviceSelect }: MicrophoneSelectorProps) 
         if (sel) localStorage.setItem(STORAGE_KEY, encodeValue(sel))
         else localStorage.removeItem(STORAGE_KEY)
       }
+      // When the user picks a wendyos (host-side) mic, ask the backend
+      // to switch its local pipeline to that device. Browser mics are
+      // handled by the Pipecat WS client in App.tsx instead. The hook
+      // already setError()s on failure so ErrorAlerts surfaces it; this
+      // catch is just to keep the unhandled-rejection warning quiet.
+      if (sel?.kind === "wendyos") {
+        void selectInput(sel.id).catch(() => {})
+      }
     },
-    [onDeviceSelect],
+    [onDeviceSelect, selectInput],
   )
 
   const getDevices = React.useCallback(async () => {

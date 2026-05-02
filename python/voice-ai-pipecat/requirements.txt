@@ -1,7 +1,22 @@
-pipecat-ai[websocket,google,whisper,piper]
-faster-whisper
+pipecat-ai[websocket,google,openai,anthropic,groq,whisper,deepgram,piper,silero,local]<1.0
+# ctranslate2 is built from source above (Dockerfile) against CUDA 11.4
+# + cuDNN to enable GPU Whisper on Jetson. Pin <4.0 so pip's resolver
+# doesn't attempt to upgrade us to 4.x (which targets CUDA 12+ and is
+# incompatible with JetPack 5.1.x). The 3.24.0 already-installed copy
+# satisfies <4.0 so pip skips reinstall.
+ctranslate2<4.0
+# faster-whisper 1.x requires ctranslate2 4.x. Pin <1.0 to keep
+# compatibility with the CUDA-11 ctranslate2 we built above.
+faster-whisper<1.0
+simpleeval
 piper-tts
+pyaudio
 fastapi
 uvicorn[standard]
 websockets
 python-dotenv
+openwakeword
+numpy
+# pipecat-ai 0.0.108+ no longer pulls nltk as a transitive dep; the Dockerfile
+# pre-downloads punkt_tab for Piper TTS sentence tokenization, so add it here.
+nltk

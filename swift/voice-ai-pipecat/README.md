@@ -1,7 +1,7 @@
 # {{.APP_ID}}
 
-Swift entrypoint for the voice-ai-pipecat template. Mirrors the Python
-template, but starts as a Swift executable that loads Pipecat via
+Swift entrypoint for the voice-ai-pipecat template. This variant starts as a
+Swift executable that loads the Pipecat backend via
 [PythonKit](https://github.com/pvieito/PythonKit).
 
 ```
@@ -10,9 +10,10 @@ browser mic --WS--> FastAPI --> faster-whisper (STT) --> Gemini 2.5 Flash --> Pi
                   Swift (PythonKit) owns process startup
 ```
 
-Swift handles process lifecycle; Pipecat owns the audio pipeline. Behavior is
-identical to `python/voice-ai-pipecat/` — see that template's README for
-frontend, entitlements, first-run, and hot-plug notes.
+Swift handles process lifecycle; Pipecat owns the audio pipeline. This template
+uses the standard Swift runtime image and is CPU-only for faster-whisper. Use
+`python/voice-ai-pipecat/` when you need the Jetson CUDA/cuDNN build and
+on-device Ollama runtime.
 
 ## Requirements
 
@@ -39,9 +40,8 @@ editing.
 
 ## Known limitations
 
-Same as the Python template:
-
 - USB hot-plug requires a `wendy run` restart until the `usb-hotplug`
   entitlement lands in wendy-agent.
 - First boot downloads ~500 MB of model weights (`faster-whisper` tiny +
   Piper voice) into `/models`.
+- CPU-only Whisper is slower than the Python template's Jetson CUDA path.

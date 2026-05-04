@@ -10,10 +10,9 @@ RUN npm run build
 #
 # Base: nvcr.io/nvidia/l4t-jetpack:r36.3.0 — JetPack 6.0 GA on Ubuntu
 # 22.04 with CUDA 12.2, cuDNN 8.9, TensorRT, and Python 3.10 native.
-# Picked over r36.4.0 (JetPack 6.1) because cuDNN 9 compatibility for
-# CTranslate2 4.x source builds isn't fully proven; cuDNN 8.9 is solid.
-# The image still runs fine on JetPack 6.1+ devices — containerd-
-# managed containers carry their own CUDA/cuDNN libraries.
+# CTranslate2 is pinned below to v4.4.0, the CUDA 12 + cuDNN 8 compatible
+# line. CTranslate2 v4.5.0+ moved to cuDNN 9, while this JetPack 6.0 base
+# ships cuDNN 8.9.
 #
 # We need the full l4t-jetpack (not l4t-base) because CTranslate2's
 # CUDA backend — which faster-whisper rides on — links against cuDNN.
@@ -124,33 +123,38 @@ RUN python3.10 -m venv /app/venv
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="/app/venv/bin:${CUDA_HOME}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
+ENV HF_HOME=/models/huggingface
+ENV XDG_CACHE_HOME=/models/cache
+ENV OLLAMA_MODELS=/models/ollama
 
-# ctranslate2 from source — the prebuilt aarch64 wheels on PyPI are
-# CPU-only (NVIDIA Jetson isn't a manylinux target). To get GPU
-# Whisper we have to build ctranslate2 against the JetPack CUDA +
-# cuDNN that l4t-jetpack provides. Pinned to v4.5.0: targets CUDA 12
-# and cuDNN 8.x, matching JetPack 6.0 GA. faster-whisper 1.x requires
-# ctranslate2 4.x, so requirements.txt pins both accordingly.
+# ctranslate2 from source. The generic aarch64 wheel does not reliably
+# target Jetson's L4T CUDA/cuDNN stack or Orin's SM architecture, so build
+# it in-image against the CUDA 12.2 + cuDNN 8.9 libraries that l4t-jetpack
+# provides. Pin to v4.4.0: v4.5.0+ requires cuDNN 9, but JetPack 6.0 GA
+# ships cuDNN 8.9. faster-whisper 1.x accepts ctranslate2 4.x, and
+# requirements.txt pins this exact version so pip does not replace it.
 #
 # This step takes 10–15 min on first build; subsequent rebuilds hit
 # the layer cache so it's a one-time cost.
-# CUDA_ARCHITECTURES is the SM (compute capability) the kernels are
-# compiled for. Default 87 = Jetson Orin (Nano/NX/AGX). For Xavier
+# CUDA_ARCH_LIST is the SM (compute capability) the kernels are
+# compiled for. Default 8.7 = Jetson Orin (Nano/NX/AGX). For Xavier
 # (sm_72), TX2 (sm_62), or non-Jetson CUDA builds, override at build
-# time: `--build-arg CTRANSLATE2_CUDA_ARCH="72;75;86;87"`. Listing
+# time: `--build-arg CTRANSLATE2_CUDA_ARCH="7.2;7.5;8.6;8.7"`. Listing
 # multiple arches makes the image portable at the cost of a longer
 # build and a larger wheel.
-ARG CTRANSLATE2_CUDA_ARCH=87
+ARG CTRANSLATE2_CUDA_ARCH=8.7
 # Cap parallelism at half the available cores to keep nvcc memory
 # usage in check on smaller Jetsons (Orin Nano 4 GB OOMs at full
 # nproc on the CUDA kernel compile).
-RUN test -x "${CUDA_HOME}/bin/nvcc" \
+RUN set -eu; \
+    test -x "${CUDA_HOME}/bin/nvcc" \
       || (echo "ERROR: nvcc not found at ${CUDA_HOME}/bin/nvcc; the l4t-jetpack base image is missing the CUDA toolkit." \
-          && ls -la /usr/local/ && exit 1) && \
-    cd /tmp && \
-    git clone --depth 1 --branch v4.5.0 --recursive \
-      https://github.com/OpenNMT/CTranslate2.git && \
-    mkdir -p /tmp/CTranslate2/build && cd /tmp/CTranslate2/build && \
+          && ls -la /usr/local/ && exit 1); \
+    cd /tmp; \
+    git clone --depth 1 --branch v4.4.0 --recursive \
+      https://github.com/OpenNMT/CTranslate2.git; \
+    mkdir -p /tmp/CTranslate2/build; \
+    cd /tmp/CTranslate2/build; \
     cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
           -DCMAKE_BUILD_TYPE=Release \
           -DWITH_CUDA=ON -DWITH_CUDNN=ON \
@@ -158,16 +162,19 @@ RUN test -x "${CUDA_HOME}/bin/nvcc" \
           -DCMAKE_CUDA_COMPILER="${CUDA_HOME}/bin/nvcc" \
           -DCUDAToolkit_ROOT="${CUDA_HOME}" \
           -DCUDA_NVCC_FLAGS="-Xfatbin=-compress-all" \
-          -DCMAKE_CUDA_ARCHITECTURES="${CTRANSLATE2_CUDA_ARCH}" \
-          .. 2>&1 | tee /tmp/cmake.log && \
-    grep -qE "Could NOT find (CUDA|CUDNN|cuDNN)" /tmp/cmake.log \
-      && (echo "ERROR: cmake failed to find CUDA or cuDNN — see log above" && exit 1) || true && \
-    make -j"$(( $(nproc) / 2 + 1 ))" install && \
-    ldconfig && \
-    cd /tmp/CTranslate2/python && \
-    /app/venv/bin/pip install --no-cache-dir -r install_requirements.txt && \
-    /app/venv/bin/python setup.py bdist_wheel && \
-    /app/venv/bin/pip install --no-cache-dir dist/ctranslate2*.whl && \
+          -DCUDA_ARCH_LIST="${CTRANSLATE2_CUDA_ARCH}" \
+          .. > /tmp/cmake.log 2>&1 || (cat /tmp/cmake.log && exit 1); \
+    cat /tmp/cmake.log; \
+    if grep -qE "Could NOT find (CUDA|CUDNN|cuDNN)|cuDNN (include directory|libraries) not found" /tmp/cmake.log; then \
+      echo "ERROR: cmake failed to find CUDA or cuDNN — see log above"; \
+      exit 1; \
+    fi; \
+    make -j"$(( $(nproc) / 2 + 1 ))" install; \
+    ldconfig; \
+    cd /tmp/CTranslate2/python; \
+    /app/venv/bin/pip install --no-cache-dir -r install_requirements.txt; \
+    /app/venv/bin/python setup.py bdist_wheel; \
+    /app/venv/bin/pip install --no-cache-dir dist/ctranslate2*.whl; \
     rm -rf /tmp/CTranslate2 /tmp/cmake.log
 
 # Smoke-test the ctranslate2 install. Without this, a partial install
@@ -194,7 +201,7 @@ RUN /app/venv/bin/python -c "import nltk; nltk.download('punkt_tab', download_di
 # settings drawer's voice picker doesn't stall on first selection. Add
 # more by appending `<lang>/<region>/<speaker>/<quality>/<file>` triples
 # below — Piper hosts them all at the same /resolve/main/ prefix.
-RUN mkdir -p /app/models/piper && \
+RUN mkdir -p /models/piper /models/huggingface /models/cache /models/ollama && \
     for triple in \
       "en/en_US/lessac/medium en_US-lessac-medium" \
       "en/en_US/ryan/high en_US-ryan-high" \
@@ -202,14 +209,14 @@ RUN mkdir -p /app/models/piper && \
       "en/en_GB/alan/medium en_GB-alan-medium" ; do \
         path="$(echo $triple | cut -d' ' -f1)"; \
         name="$(echo $triple | cut -d' ' -f2)"; \
-        curl -fsSL -o /app/models/piper/${name}.onnx \
+        curl -fsSL -o /models/piper/${name}.onnx \
           https://huggingface.co/rhasspy/piper-voices/resolve/main/${path}/${name}.onnx && \
-        curl -fsSL -o /app/models/piper/${name}.onnx.json \
+        curl -fsSL -o /models/piper/${name}.onnx.json \
           https://huggingface.co/rhasspy/piper-voices/resolve/main/${path}/${name}.onnx.json ; \
     done
 
-# Pre-download faster-whisper TINY (~75 MB) into the default HF cache so the
-# first WebSocket connection doesn't block on a HuggingFace round-trip.
+# Pre-download faster-whisper TINY (~75 MB) into HF_HOME so the first
+# WebSocket connection doesn't block on a HuggingFace round-trip.
 RUN /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
 
 # Pre-download openWakeWord models (~few MB each). The pretrained set

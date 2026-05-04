@@ -8,6 +8,7 @@ without a separate search API.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -29,8 +30,9 @@ def build_pipeline_task(transport: BaseTransport) -> PipelineTask:
     """Build the Pipecat pipeline task wired around `transport`."""
 
     stt = WhisperSTTService(
-        model=Model.TINY,
-        download_root="/models/whisper",
+        settings=WhisperSTTService.Settings(model=Model.TINY.value),
+        device=os.environ.get("WHISPER_DEVICE", "cpu"),
+        compute_type=os.environ.get("WHISPER_COMPUTE_TYPE", "int8"),
     )
 
     # Native Google Search grounding: Gemini decides when to search.
@@ -45,8 +47,8 @@ def build_pipeline_task(transport: BaseTransport) -> PipelineTask:
     )
 
     tts = PiperTTSService(
-        voice="en_US-lessac-medium",
-        model_dir="/models/piper",
+        settings=PiperTTSService.Settings(voice="en_US-lessac-medium"),
+        download_dir=Path("/models/piper"),
         sample_rate=16000,
     )
 

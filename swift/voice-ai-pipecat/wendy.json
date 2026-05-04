@@ -10,9 +10,6 @@
             "type": "audio"
         },
         {
-            "type": "gpu"
-        },
-        {
             "type": "persist",
             "name": "{{.APP_ID}}-models",
             "path": "/models"
@@ -20,7 +17,7 @@
     ],
     "readiness": {
         "tcpSocket": { "port": {{.PORT}} },
-        "timeoutSeconds": 60
+        "timeoutSeconds": 300
     },
     "hooks": {
         "postStart": {

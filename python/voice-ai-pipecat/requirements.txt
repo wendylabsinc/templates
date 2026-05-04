@@ -1,9 +1,9 @@
 pipecat-ai[websocket,google,openai,anthropic,groq,whisper,deepgram,piper,silero,local]<1.0
 # ctranslate2 is built from source above (Dockerfile) against CUDA 12.2
-# + cuDNN 8.9 (JetPack 6.0 GA) to enable GPU Whisper on Jetson. Pin
-# >=4.0,<5.0 so pip's resolver keeps the 4.5.0 already-installed copy
-# and skips reinstall.
-ctranslate2>=4.0,<5.0
+# + cuDNN 8.9 (JetPack 6.0 GA) to enable GPU Whisper on Jetson. Pin the
+# exact cuDNN 8-compatible release so pip keeps the source-built wheel
+# and does not upgrade to v4.5.0+ (cuDNN 9).
+ctranslate2==4.4.0
 # faster-whisper 1.x requires ctranslate2 4.x.
 faster-whisper>=1.0,<2.0
 simpleeval

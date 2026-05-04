@@ -1,0 +1,14 @@
+services:
+  {{.APP_ID}}:
+    build: .
+    ports:
+      - "{{.PORT}}:{{.PORT}}"
+    environment:
+      - PORT={{.PORT}}
+{{if eq .INFERENCE_MODE "local"}}
+      - LOCAL_MODEL={{.LOCAL_MODEL}}
+{{end}}
+{{if eq .INFERENCE_MODE "cloud"}}
+      - CLOUD_PROVIDER={{.CLOUD_PROVIDER}}
+      - API_TOKEN=${API_TOKEN}
+{{end}}

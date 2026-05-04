@@ -1,0 +1,5 @@
+module COnnxRuntime [system] {
+    header "shim.h"
+    link "onnxruntime"
+    export *
+}

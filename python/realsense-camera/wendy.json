@@ -11,7 +11,7 @@
     },
     "hooks": {
         "postStart": {
-            "cli": "open http://${WENDY_HOSTNAME}:{{.PORT}}"
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.PORT}}"
         }
     }
 }

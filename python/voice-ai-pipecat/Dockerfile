@@ -116,7 +116,14 @@ ASOUND_CONF
 WORKDIR /app
 
 RUN python3.10 -m venv /app/venv
-ENV PATH="/app/venv/bin:$PATH"
+# Put nvcc / cuda libs on PATH and LD_LIBRARY_PATH for the CTranslate2
+# source build. l4t-jetpack:r36.x ships CUDA at /usr/local/cuda but
+# does NOT add it to PATH by default, which causes cmake's CUDA
+# detection to fail silently and fall back to a CPU-only build (the
+# smoke test catches this — but only after a 9-min compile).
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH="/app/venv/bin:${CUDA_HOME}/bin:${PATH}"
+ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
 
 # ctranslate2 from source — the prebuilt aarch64 wheels on PyPI are
 # CPU-only (NVIDIA Jetson isn't a manylinux target). To get GPU
@@ -137,7 +144,10 @@ ARG CTRANSLATE2_CUDA_ARCH=87
 # Cap parallelism at half the available cores to keep nvcc memory
 # usage in check on smaller Jetsons (Orin Nano 4 GB OOMs at full
 # nproc on the CUDA kernel compile).
-RUN cd /tmp && \
+RUN test -x "${CUDA_HOME}/bin/nvcc" \
+      || (echo "ERROR: nvcc not found at ${CUDA_HOME}/bin/nvcc; the l4t-jetpack base image is missing the CUDA toolkit." \
+          && ls -la /usr/local/ && exit 1) && \
+    cd /tmp && \
     git clone --depth 1 --branch v4.5.0 --recursive \
       https://github.com/OpenNMT/CTranslate2.git && \
     mkdir -p /tmp/CTranslate2/build && cd /tmp/CTranslate2/build && \
@@ -145,16 +155,20 @@ RUN cd /tmp && \
           -DCMAKE_BUILD_TYPE=Release \
           -DWITH_CUDA=ON -DWITH_CUDNN=ON \
           -DWITH_MKL=OFF -DOPENMP_RUNTIME=COMP \
+          -DCMAKE_CUDA_COMPILER="${CUDA_HOME}/bin/nvcc" \
+          -DCUDAToolkit_ROOT="${CUDA_HOME}" \
           -DCUDA_NVCC_FLAGS="-Xfatbin=-compress-all" \
           -DCMAKE_CUDA_ARCHITECTURES="${CTRANSLATE2_CUDA_ARCH}" \
-          .. && \
+          .. 2>&1 | tee /tmp/cmake.log && \
+    grep -qE "Could NOT find (CUDA|CUDNN|cuDNN)" /tmp/cmake.log \
+      && (echo "ERROR: cmake failed to find CUDA or cuDNN — see log above" && exit 1) || true && \
     make -j"$(( $(nproc) / 2 + 1 ))" install && \
     ldconfig && \
     cd /tmp/CTranslate2/python && \
     /app/venv/bin/pip install --no-cache-dir -r install_requirements.txt && \
     /app/venv/bin/python setup.py bdist_wheel && \
     /app/venv/bin/pip install --no-cache-dir dist/ctranslate2*.whl && \
-    rm -rf /tmp/CTranslate2
+    rm -rf /tmp/CTranslate2 /tmp/cmake.log
 
 # Smoke-test the ctranslate2 install. Without this, a partial install
 # where the Python wheel landed but the native .so failed to link CUDA

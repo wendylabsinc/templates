@@ -238,7 +238,14 @@ RUN mkdir -p /models/piper /models/huggingface /models/cache /models/ollama && \
 
 # Pre-download faster-whisper TINY (~75 MB) into HF_HOME so the first
 # WebSocket connection doesn't block on a HuggingFace round-trip.
-RUN /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
+# compute_type=float32 here (instead of the runtime int8/float16) only
+# because cross-building arm64 under qemu doesn't have a working int8
+# dispatch backend (CTranslate2 is built with WITH_MKL=OFF and no Ruy
+# fallback in the qemu environment). Caching the weights is the only
+# side effect we need from this step. At runtime on Jetson,
+# WHISPER_DEVICE=cuda + WHISPER_COMPUTE_TYPE below selects the actual
+# compute path.
+RUN /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='float32')"
 
 # Pre-download openWakeWord models (~few MB each). The pretrained set
 # includes "alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy", "ok_nabu".

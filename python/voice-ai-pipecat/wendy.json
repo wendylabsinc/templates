@@ -1,0 +1,25 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "audio"
+        },
+        {
+            "type": "gpu"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 300
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "open http://localhost:{{.PORT}}"
+        }
+    }
+}

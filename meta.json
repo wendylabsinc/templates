@@ -17,6 +17,10 @@
             "description": "Live audio waveform visualization with mic capture"
         },
         {
+            "name": "voice-ai-pipecat",
+            "description": "Voice AI assistant: Pipecat + Gemini 2.5 Flash + local faster-whisper STT + Piper TTS"
+        },
+        {
             "name": "camera-feed-yolo",
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },

@@ -125,7 +125,8 @@ RUN python3.10 -m venv /app/venv
 # smoke test catches this — but only after a 9-min compile).
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="/app/venv/bin:${CUDA_HOME}/bin:${PATH}"
-ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
+ENV LD_LIBRARY_PATH="/usr/local/lib:${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
+ENV CTRANSLATE2_ROOT=/usr/local
 ENV HF_HOME=/models/huggingface
 ENV XDG_CACHE_HOME=/models/cache
 ENV OLLAMA_MODELS=/models/ollama
@@ -184,12 +185,29 @@ RUN set -eu; \
 # where the Python wheel landed but the native .so failed to link CUDA
 # succeeds at build time and fails at the first transcription with an
 # opaque "OSError: libctranslate2.so.3: cannot open shared object file"
-# (or worse, a clean import that can't actually use CUDA). The
-# `contains_cuda` attribute reflects compile-time CUDA support, so it's
-# valid even on a buildkit without a GPU attached.
-RUN /app/venv/bin/python -c "import ctranslate2; \
-assert getattr(ctranslate2, 'contains_cuda', False), \
-'ctranslate2 built without CUDA support — check Dockerfile WITH_CUDA / WITH_CUDNN flags and that the Jetson base ships matching CUDA + cuDNN headers'"
+# (or worse, a clean import that can't actually use CUDA). CTranslate2
+# 4.4.0 does not expose a compile-time boolean on the Python module; asking
+# for CUDA compute types reaches the compile-time CUDA guard before any
+# runtime GPU requirement.
+# A BuildKit host without a GPU may still fail the runtime CUDA probe, so
+# only reject the explicit "not compiled with CUDA support" error.
+RUN /app/venv/bin/python - <<'PY'
+import ctranslate2
+
+try:
+    ctranslate2.get_supported_compute_types("cuda")
+except Exception as exc:
+    message = str(exc)
+    if "not compiled with CUDA support" in message:
+        raise AssertionError(
+            "ctranslate2 built without CUDA support — check Dockerfile "
+            "WITH_CUDA / WITH_CUDNN flags and that the Jetson base ships "
+            "matching CUDA + cuDNN headers"
+        ) from exc
+    print(f"ctranslate2 CUDA support present; runtime CUDA probe skipped: {message}")
+else:
+    print("ctranslate2 CUDA support present")
+PY
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -8,52 +8,71 @@ RUN npm run build
 
 # Stage 2 - Pipecat runtime on Jetson with CUDA + cuDNN + on-device LLM.
 #
-# Base: nvcr.io/nvidia/l4t-jetpack:r35.4.1 — Ubuntu 20.04 + the full
-# JetPack 5.1.2 stack (CUDA 11.4, cuDNN 8.x, TensorRT, headers). We
-# need cuDNN here for ctranslate2's CUDA backend (which faster-whisper
-# rides on). The leaner l4t-base image only ships CUDA stubs — Ollama
-# works on it because it brings its own GPU runtime, but Whisper would
-# stay stuck on CPU.
+# Base: nvcr.io/nvidia/l4t-jetpack:r36.3.0 — JetPack 6.0 GA on Ubuntu
+# 22.04 with CUDA 12.2, cuDNN 8.9, TensorRT, and Python 3.10 native.
+# Picked over r36.4.0 (JetPack 6.1) because cuDNN 9 compatibility for
+# CTranslate2 4.x source builds isn't fully proven; cuDNN 8.9 is solid.
+# The image still runs fine on JetPack 6.1+ devices — containerd-
+# managed containers carry their own CUDA/cuDNN libraries.
 #
-# Trade-off vs the previous l4t-base: image grows ~3.5 GB → ~6 GB but
-# unlocks GPU Whisper alongside GPU Ollama. Pi 5 / x86_64 deploys are
-# no longer in scope on this branch.
-FROM nvcr.io/nvidia/l4t-jetpack:r35.4.1
+# We need the full l4t-jetpack (not l4t-base) because CTranslate2's
+# CUDA backend — which faster-whisper rides on — links against cuDNN.
+FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0
 
-# Ubuntu 20.04 default Python is 3.8; pipecat-ai requires 3.10+.
-# Pull Python 3.10 from the deadsnakes PPA (officially-built backports,
-# ARM64 supported). Doing this in two apt-update passes is needed
-# because add-apt-repository depends on software-properties-common.
+# JetPack 6 ships Ubuntu 22.04 with Python 3.10 native — no deadsnakes
+# PPA needed (the previous r35/Ubuntu-20.04 base did, and the launchpad
+# infrastructure for that turned out to be flaky enough to repeatedly
+# break the build).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    software-properties-common \
-    ca-certificates \
-    curl \
-    gnupg \
-    && add-apt-repository -y ppa:deadsnakes/ppa \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    python3.10 \
-    python3.10-venv \
-    python3.10-dev \
-    gcc \
-    g++ \
-    cmake \
-    git \
-    pkg-config \
-    libopenblas-dev \
-    alsa-utils \
-    libasound2 \
-    portaudio19-dev \
-    libsndfile1 \
-    ffmpeg \
+        python3.10 \
+        python3.10-venv \
+        python3.10-dev \
+        ca-certificates \
+        curl \
+        gnupg \
+        zstd \
+        gcc \
+        g++ \
+        cmake \
+        git \
+        pkg-config \
+        libopenblas-dev \
+        alsa-utils \
+        libasound2 \
+        portaudio19-dev \
+        libsndfile1 \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Ollama for on-device LLM serving. Detects CUDA at runtime through
-# the bind-mounted libcuda; no GPU at runtime → falls back to CPU
-# (slow but still functional). The installer's systemd-service step
-# fails inside a container; the binary install itself succeeds, hence
-# the `|| true` followed by an explicit binary check.
-RUN curl -fsSL https://ollama.com/install.sh | sh || true
-RUN test -x /usr/local/bin/ollama || (echo "ERROR: Ollama install failed; binary missing at /usr/local/bin/ollama" && exit 1)
+# Ollama for on-device LLM serving. We deliberately bypass Ollama's
+# upstream install.sh: on l4t-jetpack:r36.x it silently aborts (the
+# script's Jetson-detection branch fetches a JetPack-tagged bundle URL
+# its env-probe builds, and that path is fragile inside slim L4T
+# images). Downloading the tarballs directly is deterministic and
+# avoids the install script entirely.
+#
+# Ollama's distribution layout (as of recent releases): the generic
+# arm64 tarball ships the binary + base runners, and the JetPack 6
+# tarball is an additive bundle that drops CUDA-tuned runners on top.
+# install.sh installs both in turn — we mirror that. Format is
+# .tar.zst, hence zstd in the apt step above.
+RUN set -eu; \
+    BASE_URL="https://ollama.com/download"; \
+    curl -fsSL --retry 5 --retry-delay 3 --max-time 300 \
+        -o /tmp/ollama.tar.zst \
+        "$BASE_URL/ollama-linux-arm64.tar.zst"; \
+    tar --zstd -C /usr/local -xf /tmp/ollama.tar.zst; \
+    rm /tmp/ollama.tar.zst; \
+    if curl -fsSL --retry 3 --retry-delay 3 --max-time 300 \
+            -o /tmp/ollama-jp6.tar.zst \
+            "$BASE_URL/ollama-linux-arm64-jetpack6.tar.zst"; then \
+      tar --zstd -C /usr/local -xf /tmp/ollama-jp6.tar.zst; \
+      rm /tmp/ollama-jp6.tar.zst; \
+      echo "Installed Ollama with JetPack 6 add-on"; \
+    else \
+      echo "JetPack 6 add-on unavailable, using generic Ollama runners only"; \
+    fi; \
+    /usr/local/bin/ollama --version
 
 # Route ALSA's "default" PCM to the PowerConf via `asym` (split playback
 # and capture) with `plug` on each leg for in-kernel rate conversion. We
@@ -102,11 +121,9 @@ ENV PATH="/app/venv/bin:$PATH"
 # ctranslate2 from source — the prebuilt aarch64 wheels on PyPI are
 # CPU-only (NVIDIA Jetson isn't a manylinux target). To get GPU
 # Whisper we have to build ctranslate2 against the JetPack CUDA +
-# cuDNN that l4t-jetpack provides. Pinned to v3.24.0: the last 3.x
-# release, which targets CUDA 11. ctranslate2 4.x requires CUDA 12+
-# and is incompatible with JetPack 5.1.x. faster-whisper 1.x in turn
-# requires ctranslate2 4.x, so requirements.txt pins faster-whisper
-# below 1.0 to match.
+# cuDNN that l4t-jetpack provides. Pinned to v4.5.0: targets CUDA 12
+# and cuDNN 8.x, matching JetPack 6.0 GA. faster-whisper 1.x requires
+# ctranslate2 4.x, so requirements.txt pins both accordingly.
 #
 # This step takes 10–15 min on first build; subsequent rebuilds hit
 # the layer cache so it's a one-time cost.
@@ -121,7 +138,7 @@ ARG CTRANSLATE2_CUDA_ARCH=87
 # usage in check on smaller Jetsons (Orin Nano 4 GB OOMs at full
 # nproc on the CUDA kernel compile).
 RUN cd /tmp && \
-    git clone --depth 1 --branch v3.24.0 --recursive \
+    git clone --depth 1 --branch v4.5.0 --recursive \
       https://github.com/OpenNMT/CTranslate2.git && \
     mkdir -p /tmp/CTranslate2/build && cd /tmp/CTranslate2/build && \
     cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
@@ -220,10 +237,10 @@ ENV WAKE_WORD_MODELS={{.WAKE_WORD_MODELS}}
 ENV WAKE_WORD_THRESHOLD={{.WAKE_WORD_THRESHOLD}}
 ENV WAKE_LISTEN_SECS={{.WAKE_LISTEN_SECS}}
 
-# Whisper compute target. l4t-jetpack ships CUDA 11.4 + cuDNN 8.x and
-# the ctranslate2 step above is built with WITH_CUDA=ON, so cuda+
-# float16 is the right pick on Jetson. If libcuda is missing at run
-# time, override with WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8.
+# Whisper compute target. l4t-jetpack:r36.3.0 ships CUDA 12.2 + cuDNN
+# 8.9 and the ctranslate2 step above is built with WITH_CUDA=ON, so
+# cuda+float16 is the right pick on Jetson. If libcuda is missing at
+# run time, override with WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8.
 ENV WHISPER_DEVICE=cuda
 ENV WHISPER_COMPUTE_TYPE=float16
 

@@ -1,3 +1,5 @@
+ARG JETSON_BASE_IMAGE=dustynv/tensorrt:8.6-r36.2.0
+
 # Stage 1 - Build React visualizer
 FROM node:22-slim AS frontend
 WORKDIR /frontend
@@ -8,15 +10,16 @@ RUN npm run build
 
 # Stage 2 - Pipecat runtime on Jetson with CUDA + cuDNN + on-device LLM.
 #
-# Base: nvcr.io/nvidia/l4t-jetpack:r36.3.0 — JetPack 6.0 GA on Ubuntu
-# 22.04 with CUDA 12.2, cuDNN 8.9, TensorRT, and Python 3.10 native.
+# Default base: dustynv/tensorrt:8.6-r36.2.0 — public Docker Hub Jetson
+# image with L4T r36, CUDA 12.2, cuDNN 8.9, TensorRT, and Python on
+# Ubuntu 22.04. This avoids requiring an NGC docker login during buildx
+# pulls while preserving the CUDA/cuDNN stack CTranslate2 needs.
 # CTranslate2 is pinned below to v4.4.0, the CUDA 12 + cuDNN 8 compatible
-# line. CTranslate2 v4.5.0+ moved to cuDNN 9, while this JetPack 6.0 base
-# ships cuDNN 8.9.
+# line. CTranslate2 v4.5.0+ moved to cuDNN 9.
 #
-# We need the full l4t-jetpack (not l4t-base) because CTranslate2's
+# We need a base with cuDNN, not just bare CUDA, because CTranslate2's
 # CUDA backend — which faster-whisper rides on — links against cuDNN.
-FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0
+FROM ${JETSON_BASE_IMAGE}
 
 # JetPack 6 ships Ubuntu 22.04 with Python 3.10 native — no deadsnakes
 # PPA needed (the previous r35/Ubuntu-20.04 base did, and the launchpad
@@ -44,7 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Ollama for on-device LLM serving. We deliberately bypass Ollama's
-# upstream install.sh: on l4t-jetpack:r36.x it silently aborts (the
+# upstream install.sh: on Jetson r36.x images it can silently abort (the
 # script's Jetson-detection branch fetches a JetPack-tagged bundle URL
 # its env-probe builds, and that path is fragile inside slim L4T
 # images). Downloading the tarballs directly is deterministic and
@@ -116,7 +119,7 @@ WORKDIR /app
 
 RUN python3.10 -m venv /app/venv
 # Put nvcc / cuda libs on PATH and LD_LIBRARY_PATH for the CTranslate2
-# source build. l4t-jetpack:r36.x ships CUDA at /usr/local/cuda but
+# source build. Jetson CUDA images ship CUDA at /usr/local/cuda but
 # does NOT add it to PATH by default, which causes cmake's CUDA
 # detection to fail silently and fall back to a CPU-only build (the
 # smoke test catches this — but only after a 9-min compile).
@@ -129,7 +132,7 @@ ENV OLLAMA_MODELS=/models/ollama
 
 # ctranslate2 from source. The generic aarch64 wheel does not reliably
 # target Jetson's L4T CUDA/cuDNN stack or Orin's SM architecture, so build
-# it in-image against the CUDA 12.2 + cuDNN 8.9 libraries that l4t-jetpack
+# it in-image against the CUDA 12.2 + cuDNN 8.9 libraries that the base
 # provides. Pin to v4.4.0: v4.5.0+ requires cuDNN 9, but JetPack 6.0 GA
 # ships cuDNN 8.9. faster-whisper 1.x accepts ctranslate2 4.x, and
 # requirements.txt pins this exact version so pip does not replace it.
@@ -148,7 +151,7 @@ ARG CTRANSLATE2_CUDA_ARCH=8.7
 # nproc on the CUDA kernel compile).
 RUN set -eu; \
     test -x "${CUDA_HOME}/bin/nvcc" \
-      || (echo "ERROR: nvcc not found at ${CUDA_HOME}/bin/nvcc; the l4t-jetpack base image is missing the CUDA toolkit." \
+      || (echo "ERROR: nvcc not found at ${CUDA_HOME}/bin/nvcc; the Jetson base image is missing the CUDA toolkit." \
           && ls -la /usr/local/ && exit 1); \
     cd /tmp; \
     git clone --depth 1 --branch v4.4.0 --recursive \
@@ -186,7 +189,7 @@ RUN set -eu; \
 # valid even on a buildkit without a GPU attached.
 RUN /app/venv/bin/python -c "import ctranslate2; \
 assert getattr(ctranslate2, 'contains_cuda', False), \
-'ctranslate2 built without CUDA support — check Dockerfile WITH_CUDA / WITH_CUDNN flags and that the l4t-jetpack base ships matching CUDA + cuDNN headers'"
+'ctranslate2 built without CUDA support — check Dockerfile WITH_CUDA / WITH_CUDNN flags and that the Jetson base ships matching CUDA + cuDNN headers'"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -258,7 +261,7 @@ ENV WAKE_WORD_MODELS={{.WAKE_WORD_MODELS}}
 ENV WAKE_WORD_THRESHOLD={{.WAKE_WORD_THRESHOLD}}
 ENV WAKE_LISTEN_SECS={{.WAKE_LISTEN_SECS}}
 
-# Whisper compute target. l4t-jetpack:r36.3.0 ships CUDA 12.2 + cuDNN
+# Whisper compute target. The default Jetson base ships CUDA 12.2 + cuDNN
 # 8.9 and the ctranslate2 step above is built with WITH_CUDA=ON, so
 # cuda+float16 is the right pick on Jetson. If libcuda is missing at
 # run time, override with WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8.

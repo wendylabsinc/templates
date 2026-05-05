@@ -47,6 +47,7 @@ actor AudioCapture {
     private var clients: [UUID: @Sendable (ByteBuffer) -> Void] = [:]
     private var currentDevice: String?
     private var isRunning = false
+    private var leftover = Data()
 
     func start() {
         guard !isRunning else { return }
@@ -86,10 +87,8 @@ actor AudioCapture {
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            var buffer = ByteBuffer()
-            buffer.writeBytes(data)
             Task {
-                await captureRef.broadcast(buffer)
+                await captureRef.ingest(data)
             }
         }
 
@@ -108,6 +107,21 @@ actor AudioCapture {
         outputPipe = nil
         process = nil
         isRunning = false
+        leftover.removeAll(keepingCapacity: false)
+    }
+
+    private func ingest(_ chunk: Data) {
+        // S16LE samples are 2 bytes — only forward aligned slices and carry
+        // any trailing odd byte into the next ingest. Otherwise the browser
+        // throws "byte length of Int16Array should be a multiple of 2".
+        leftover.append(chunk)
+        let aligned = leftover.count - (leftover.count % 2)
+        guard aligned > 0 else { return }
+        let payload = leftover.prefix(aligned)
+        leftover.removeFirst(aligned)
+        var buffer = ByteBuffer()
+        buffer.writeBytes(payload)
+        broadcast(buffer)
     }
 
     func switchMicrophone(to deviceID: String) {
@@ -224,22 +238,28 @@ func parseAudioDevices(_ executable: String) -> [AudioDevice] {
         return []
     }
 
-    return output.split(separator: "\n").compactMap { line in
-        guard line.hasPrefix("card ") else { return nil }
+    var seen = Set<String>()
+    var devices: [AudioDevice] = []
+    for line in output.split(separator: "\n") {
+        guard line.hasPrefix("card ") else { continue }
         let parts = line.split(separator: ":", maxSplits: 1)
-        guard parts.count == 2 else { return nil }
+        guard parts.count == 2 else { continue }
 
         let cardParts = parts[0].split(separator: " ")
-        guard cardParts.count >= 2 else { return nil }
+        guard cardParts.count >= 2 else { continue }
         let cardNum = cardParts[1].trimmingCharacters(in: CharacterSet(charactersIn: ":"))
+        let id = "hw:\(cardNum),0"
+        guard seen.insert(id).inserted else { continue }
+
         let name = parts[1]
             .split(separator: "[", maxSplits: 1)
             .first?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let display = (name?.isEmpty == false) ? name! : "Card \(cardNum)"
 
-        return AudioDevice(id: "hw:\(cardNum),0", name: display)
+        devices.append(AudioDevice(id: id, name: display))
     }
+    return devices
 }
 
 func resolveSoundPath(_ filename: String) -> String? {

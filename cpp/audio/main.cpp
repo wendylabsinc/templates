@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -248,17 +249,23 @@ static Json::Value listWavFiles() {
     DIR* dir = opendir("./assets");
     if (!dir) return arr;
 
+    std::vector<std::string> files;
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         std::string name(entry->d_name);
         if (name.size() > 4 && name.substr(name.size() - 4) == ".wav") {
-            Json::Value item;
-            item["name"] = displayName(name);
-            item["file"] = name;
-            arr.append(item);
+            files.push_back(std::move(name));
         }
     }
     closedir(dir);
+
+    std::sort(files.begin(), files.end());
+    for (const auto& name : files) {
+        Json::Value item;
+        item["name"] = displayName(name);
+        item["file"] = name;
+        arr.append(item);
+    }
     return arr;
 }
 
@@ -267,6 +274,7 @@ static Json::Value listAudioDevices(const char* command) {
     FILE* pipe = popen(command, "r");
     if (!pipe) return arr;
 
+    std::set<std::string> seen;
     char* line = nullptr;
     size_t len = 0;
     while (getline(&line, &len, pipe) != -1) {
@@ -283,6 +291,9 @@ static Json::Value listAudioDevices(const char* command) {
         if (card_num.empty()) continue;
         if (card_num.back() == ':') card_num.pop_back();
 
+        std::string id = "hw:" + card_num + ",0";
+        if (!seen.insert(id).second) continue;
+
         std::string name = value.substr(colon + 1);
         const auto bracket = name.find('[');
         if (bracket != std::string::npos) name = name.substr(0, bracket);
@@ -290,7 +301,7 @@ static Json::Value listAudioDevices(const char* command) {
         if (name.empty()) name = "Card " + card_num;
 
         Json::Value item;
-        item["id"] = "hw:" + card_num + ",0";
+        item["id"] = id;
         item["name"] = name;
         arr.append(item);
     }

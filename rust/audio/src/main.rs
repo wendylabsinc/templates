@@ -234,10 +234,20 @@ fn list_audio_devices(command: &str) -> Vec<Value> {
         return Vec::new();
     };
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(parse_audio_device_line)
-        .collect()
+    let mut seen = std::collections::HashSet::new();
+    let mut devices = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some(device) = parse_audio_device_line(line) else { continue };
+        let id = device
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if seen.insert(id) {
+            devices.push(device);
+        }
+    }
+    devices
 }
 
 fn parse_audio_device_line(line: &str) -> Option<Value> {

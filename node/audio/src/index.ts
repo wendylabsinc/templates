@@ -26,17 +26,22 @@ function parseAudioDevices(command: "arecord" | "aplay"): AudioDevice[] {
       timeout: 2000,
     });
 
-    return output
-      .split("\n")
-      .filter((line) => line.startsWith("card "))
-      .flatMap((line) => {
-        const [cardPart, rest = ""] = line.split(":", 2);
-        const cardNum = cardPart.split(/\s+/)[1]?.replace(/:$/, "");
-        if (!cardNum) return [];
+    const seen = new Set<string>();
+    const devices: AudioDevice[] = [];
+    for (const line of output.split("\n")) {
+      if (!line.startsWith("card ")) continue;
+      const [cardPart, rest = ""] = line.split(":", 2);
+      const cardNum = cardPart.split(/\s+/)[1]?.replace(/:$/, "");
+      if (!cardNum) continue;
 
-        const name = rest.trim().split("[")[0]?.trim() || `Card ${cardNum}`;
-        return [{ id: `hw:${cardNum},0`, name }];
-      });
+      const id = `hw:${cardNum},0`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+
+      const name = rest.trim().split("[")[0]?.trim() || `Card ${cardNum}`;
+      devices.push({ id, name });
+    }
+    return devices;
   } catch {
     return [];
   }
@@ -90,6 +95,7 @@ class AudioCapture {
   private process: ChildProcess | null = null;
   private clients: Set<WebSocket> = new Set();
   private currentDevice: string | null = null;
+  private leftover: Buffer = Buffer.alloc(0);
 
   private constructor() {}
 
@@ -143,7 +149,17 @@ class AudioCapture {
     ]);
 
     this.process.stdout?.on("data", (chunk: Buffer) => {
-      this.broadcastChunk(chunk);
+      // S16LE samples are 2 bytes — only forward aligned slices and carry the
+      // trailing odd byte (if any) into the next chunk. Otherwise the browser
+      // throws "byte length of Int16Array should be a multiple of 2".
+      const combined = this.leftover.length
+        ? Buffer.concat([this.leftover, chunk])
+        : chunk;
+      const aligned = combined.length - (combined.length % 2);
+      this.leftover = combined.subarray(aligned);
+      if (aligned > 0) {
+        this.broadcastChunk(combined.subarray(0, aligned));
+      }
     });
 
     this.process.stderr?.on("data", (data: Buffer) => {
@@ -161,6 +177,7 @@ class AudioCapture {
       this.process.kill("SIGTERM");
       this.process = null;
     }
+    this.leftover = Buffer.alloc(0);
   }
 
   switchMicrophone(deviceId: string): void {

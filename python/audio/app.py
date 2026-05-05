@@ -62,6 +62,7 @@ _current_speaker: str | None = None
 def _parse_arecord_or_aplay(cmd: str) -> list[dict]:
     """Parse `arecord -l` or `aplay -l` output into [{id, name}, ...]."""
     devices: list[dict] = []
+    seen: set[str] = set()
     try:
         out = subprocess.check_output(cmd.split(), stderr=subprocess.DEVNULL, timeout=2).decode()
         for line in out.splitlines():
@@ -69,8 +70,12 @@ def _parse_arecord_or_aplay(cmd: str) -> list[dict]:
                 parts = line.split(":")
                 if len(parts) >= 2:
                     card_num = line.split()[1].rstrip(":")
-                    name = parts[1].strip().split("[")[0].strip()
-                    devices.append({"id": f"hw:{card_num},0", "name": name})
+                    device_id = f"hw:{card_num},0"
+                    if device_id in seen:
+                        continue
+                    seen.add(device_id)
+                    name = parts[1].strip().split("[")[0].strip() or f"Card {card_num}"
+                    devices.append({"id": device_id, "name": name})
     except Exception:
         pass
     return devices

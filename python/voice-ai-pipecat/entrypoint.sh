@@ -15,6 +15,27 @@
 
 set -uo pipefail
 
+# Seed /etc/hosts at runtime. The dustynv JetPack base image ships an
+# empty /etc/hosts, which causes Python httpx (used by the openai
+# client → local Ollama integration) to fail getaddrinfo for
+# "localhost" with EAI_AGAIN. curl works (its own resolver shortcut),
+# but the openai client doesn't, so pipecat → Ollama is broken until
+# we pin loopback resolution. We can't do this in the Dockerfile
+# because BuildKit bind-mounts /etc/hosts read-only at build time.
+if ! grep -q '^127\.0\.0\.1[[:space:]]\+localhost' /etc/hosts 2>/dev/null; then
+  printf '127.0.0.1\tlocalhost\n::1\tlocalhost\n' > /etc/hosts || \
+    echo "[entrypoint] WARN: could not seed /etc/hosts (continuing anyway)"
+fi
+
+# Ensure model subdirs exist on the /models persist volume. The
+# Dockerfile creates these at build time, but wendy.json mounts a
+# fresh empty persist volume at /models on first run which hides the
+# image's content. Piper / faster-whisper / Ollama all expect their
+# subdirs to exist before they try to write into them; without this,
+# PiperTTSService.__init__ crashes with FileNotFoundError before
+# uvicorn can finish startup.
+mkdir -p /models/piper /models/huggingface /models/cache /models/ollama
+
 OLLAMA_LOG=/tmp/ollama.log
 OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
 # main.py reads this on startup and surfaces it on /api/status as

@@ -1131,6 +1131,11 @@ class SessionManager:
         # 500 ms tail) on on_bot_stopped.
         self._bot_speaking_at: Optional[float] = None
         self._bot_quiet_at: Optional[float] = None
+        # User mic kill-switch. Read by MuteGate each input frame.
+        # Lives on SessionManager so the state survives pipeline
+        # rebuilds (settings save, mode switch); flipping it does NOT
+        # require restarting anything.
+        self._muted: bool = False
 
     @property
     def mode(self) -> str:
@@ -1151,6 +1156,18 @@ class SessionManager:
     @property
     def output_name(self) -> Optional[str]:
         return self._output_name
+
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
+    def set_muted(self, value: bool) -> None:
+        self._muted = bool(value)
+
+    def is_muted(self) -> bool:
+        # Callable handed to build_pipeline_task → MuteGate. Reading a
+        # bool is atomic in CPython, so no lock needed.
+        return self._muted
 
     def is_owned_by(self, task: asyncio.Task) -> bool:
         return self._task is task
@@ -1403,6 +1420,7 @@ class SessionManager:
             on_wake_fired=self.on_wake_fired,
             on_wake_predict_error=self.on_wake_predict_error,
             is_bot_speaking=self.is_bot_currently_speaking,
+            is_muted=self.is_muted,
             on_turn_complete=_on_turn_complete,
             llm_provider=settings_store.llm_provider,
             llm_model=settings_store.llm_model,
@@ -1628,7 +1646,29 @@ async def api_status() -> dict[str, Any]:
         "last_response_time_ms": session._last_response_time_ms,  # noqa: SLF001
         "last_wake_at": session._last_wake_at,  # noqa: SLF001
         "wake_pulse": session._wake_pulse,  # noqa: SLF001
+        "muted": session.muted,
     }
+
+
+class MuteBody(BaseModel):
+    # If omitted, /api/mute toggles. If set, force the new state.
+    muted: Optional[bool] = None
+
+
+@app.get("/api/mute")
+async def api_get_mute() -> dict[str, Any]:
+    return {"muted": session.muted}
+
+
+@app.post("/api/mute", dependencies=[Depends(require_auth)])
+async def api_set_mute(body: MuteBody) -> dict[str, Any]:
+    """Mic kill-switch. Pass {"muted": true|false} to set explicitly,
+    or omit the body to toggle. Takes effect on the next audio frame
+    (~10 ms) without rebuilding the pipeline."""
+    next_state = (not session.muted) if body.muted is None else bool(body.muted)
+    session.set_muted(next_state)
+    logger.info("Mute state set to %s", next_state)
+    return {"muted": session.muted}
 
 
 @app.post("/api/conversation/reset", dependencies=[Depends(require_auth)])

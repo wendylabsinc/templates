@@ -21,7 +21,36 @@ and **emerald** for the bot's TTS.
 wendy run .
 ```
 
-The `postStart` hook opens the visualizer at `http://${WENDY_HOSTNAME}:{{.PORT}}`.
+The `postStart` hook opens the visualizer at `https://${WENDY_HOSTNAME}:{{.PORT}}`.
+
+### TLS and the browser warning
+
+The visualizer uses `navigator.mediaDevices.getUserMedia` to capture mic
+audio. Browsers gate that API behind a secure origin, so the server has
+to be reached over HTTPS (or `localhost`). On first boot the entrypoint
+generates a self-signed cert at `/models/tls/{cert,key}.pem` (persisted
+across container restarts) and uvicorn serves HTTPS on `{{.PORT}}`.
+
+Because the cert is self-signed, the **first time you open the page on a
+machine you'll see "Not secure" / "Your connection is not private"**. Click
+through (Chrome: *Advanced → Proceed*) once per browser; the exception is
+remembered and the mic API will work on subsequent visits.
+
+For zero browser warnings (and reliable Safari support, which is strict
+about self-signed certs), generate a trusted cert with
+[`mkcert`](https://github.com/FiloSottile/mkcert) on your dev machine and
+push it onto the device:
+
+```bash
+brew install mkcert
+mkcert -install
+mkcert ${WENDY_HOSTNAME} localhost 127.0.0.1
+# copy the resulting *.pem files into /models/tls/cert.pem and /models/tls/key.pem
+# (e.g. via `wendy device file push`), then restart the app.
+```
+
+The entrypoint detects existing cert files and skips the self-signed
+regen automatically.
 
 ## Running the frontend standalone
 

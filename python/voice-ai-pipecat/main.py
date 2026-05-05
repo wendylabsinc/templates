@@ -2001,13 +2001,28 @@ def main() -> None:
     # dict, which would otherwise overwrite our basicConfig + the
     # _MutePollingFilter on `uvicorn.access`. Without this the polling
     # endpoints flood stdout because uvicorn re-creates the handlers.
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=PORT,
-        log_level="info",
-        log_config=None,
-    )
+    kwargs: dict[str, Any] = {
+        "host": "0.0.0.0",
+        "port": PORT,
+        "log_level": "info",
+        "log_config": None,
+    }
+    # Serve HTTPS when entrypoint.sh has generated (or the user has
+    # provided) a TLS cert + key. Browsers require a secure origin to
+    # expose navigator.mediaDevices.getUserMedia for any host other
+    # than localhost — without this the React app crashes the moment
+    # it tries to ask for mic permissions. Falling back to plain HTTP
+    # when the env vars are unset / files missing keeps the failure
+    # mode obvious instead of refusing to start.
+    cert_file = os.environ.get("TLS_CERT_FILE", "")
+    key_file = os.environ.get("TLS_KEY_FILE", "")
+    if cert_file and key_file and Path(cert_file).is_file() and Path(key_file).is_file():
+        kwargs["ssl_certfile"] = cert_file
+        kwargs["ssl_keyfile"] = key_file
+        logger.info("Serving HTTPS on port %d (cert=%s)", PORT, cert_file)
+    else:
+        logger.info("Serving HTTP on port %d (no TLS cert configured)", PORT)
+    uvicorn.run(app, **kwargs)
 
 
 if __name__ == "__main__":

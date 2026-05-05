@@ -34,7 +34,63 @@ fi
 # subdirs to exist before they try to write into them; without this,
 # PiperTTSService.__init__ crashes with FileNotFoundError before
 # uvicorn can finish startup.
-mkdir -p /models/piper /models/huggingface /models/cache /models/ollama
+mkdir -p /models/piper /models/huggingface /models/cache /models/ollama /models/tls
+
+# TLS for the FastAPI/uvicorn server. Browsers gate the mic permissions
+# API (navigator.mediaDevices.getUserMedia) behind a secure origin —
+# HTTPS or `localhost`. Plain HTTP on the device's mDNS hostname is
+# treated as insecure and the React app crashes with
+# "undefined is not an object (evaluating 'navigator.mediaDevices.
+# getUserMedia')". Avoid forcing every user to ssh-tunnel to localhost
+# by serving HTTPS directly with a self-signed cert generated on first
+# boot. Cert lives on the /models persist volume so it survives
+# container restarts (and so the browser only prompts for the
+# self-signed-cert exception once per developer machine).
+#
+# Upgrade path for zero browser warnings (and Safari support, which is
+# strict about self-signed even after click-through): generate a cert
+# with mkcert on your dev machine and drop the resulting
+# `cert.pem` / `key.pem` into /models/tls/ before the container starts
+# (e.g. via `wendy device file push`). The check below skips the
+# self-signed regen whenever those files already exist.
+TLS_DIR=/models/tls
+TLS_CERT="$TLS_DIR/cert.pem"
+TLS_KEY="$TLS_DIR/key.pem"
+if [ ! -s "$TLS_CERT" ] || [ ! -s "$TLS_KEY" ]; then
+  echo "[entrypoint] generating self-signed TLS cert in $TLS_DIR"
+  # Pick the best hostname for the cert CN. Prefer WENDY_HOSTNAME (set
+  # by the wendy agent at deploy time) because $(hostname) inside the
+  # container only returns the short kernel hostname (e.g. "wendy"),
+  # not the device's actual mDNS name like "wendyos-mighty-kayak". Fall
+  # back to $(hostname).local. Either way ensure a single .local suffix
+  # so the CN matches what the browser will resolve.
+  TLS_PRIMARY_HOST="${WENDY_HOSTNAME:-$(hostname)}"
+  case "$TLS_PRIMARY_HOST" in
+    *.local) ;;
+    *)       TLS_PRIMARY_HOST="$TLS_PRIMARY_HOST.local" ;;
+  esac
+  # Stuff the cert with several SANs so it matches whichever hostname
+  # the developer happens to type into the browser. Order matters for
+  # the CN (first one wins); the rest are alternatives.
+  TLS_SHORT_HOST="$(hostname)"
+  TLS_SAN="DNS:$TLS_PRIMARY_HOST,DNS:$TLS_SHORT_HOST,DNS:$TLS_SHORT_HOST.local,DNS:localhost,IP:127.0.0.1"
+  if openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+       -keyout "$TLS_KEY" -out "$TLS_CERT" \
+       -subj "/CN=$TLS_PRIMARY_HOST" \
+       -addext "subjectAltName=$TLS_SAN" \
+       2>/dev/null; then
+    echo "[entrypoint] TLS cert generated for $TLS_PRIMARY_HOST (self-signed; SAN=$TLS_SAN)"
+  else
+    echo "[entrypoint] WARN: openssl cert generation failed; falling back to plain HTTP"
+    rm -f "$TLS_CERT" "$TLS_KEY"
+  fi
+else
+  echo "[entrypoint] TLS cert already present in $TLS_DIR (using existing)"
+fi
+if [ -s "$TLS_CERT" ] && [ -s "$TLS_KEY" ]; then
+  export TLS_CERT_FILE="$TLS_CERT"
+  export TLS_KEY_FILE="$TLS_KEY"
+fi
 
 OLLAMA_LOG=/tmp/ollama.log
 OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}

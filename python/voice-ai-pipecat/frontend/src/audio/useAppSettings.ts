@@ -7,6 +7,10 @@ export interface AppSettings {
   allowInterruptions: boolean
   wakeWordModels: string[]
   wakeWordDisabled: boolean
+  /** Play a rising chime when the listening window opens and a falling
+   *  chime when it closes. Off by default — most users find them
+   *  distracting; the visualizer already shows when the gate is open. */
+  chimesEnabled: boolean
   continuousConversation: boolean
   continuousWindowSecs: number
   sttLanguage: string
@@ -66,6 +70,7 @@ interface BackendSettings {
   allow_interruptions: boolean
   wake_word_models: string[]
   wake_word_disabled: boolean
+  chimes_enabled: boolean
   continuous_conversation: boolean
   continuous_window_secs: number
   stt_language: string
@@ -104,6 +109,7 @@ function fromBackend(s: BackendSettings): AppSettings {
     allowInterruptions: s.allow_interruptions,
     wakeWordModels: s.wake_word_models,
     wakeWordDisabled: s.wake_word_disabled,
+    chimesEnabled: s.chimes_enabled,
     continuousConversation: s.continuous_conversation,
     continuousWindowSecs: s.continuous_window_secs,
     sttLanguage: s.stt_language,
@@ -132,6 +138,7 @@ function toBackendPayload(next: Partial<AppSettings>): Record<string, unknown> {
   if (next.allowInterruptions !== undefined) out.allow_interruptions = next.allowInterruptions
   if (next.wakeWordModels !== undefined) out.wake_word_models = next.wakeWordModels
   if (next.wakeWordDisabled !== undefined) out.wake_word_disabled = next.wakeWordDisabled
+  if (next.chimesEnabled !== undefined) out.chimes_enabled = next.chimesEnabled
   if (next.continuousConversation !== undefined)
     out.continuous_conversation = next.continuousConversation
   if (next.continuousWindowSecs !== undefined)

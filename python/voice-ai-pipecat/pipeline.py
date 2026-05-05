@@ -204,7 +204,7 @@ def _build_stt_service(
         whisper_settings_kwargs["language"] = language
 
     # Resolve compute target. Dockerfile sets WHISPER_DEVICE=cuda for
-    # Jetson (ctranslate2 is built against CUDA 11.4 + cuDNN there); on
+    # Jetson (ctranslate2 is built against CUDA 12.2 + cuDNN 8.9 there); on
     # other hosts override at deploy time or set WHISPER_DEVICE=cpu /
     # WHISPER_COMPUTE_TYPE=int8 directly. "auto" lets the kwarg-rejected
     # fallback below silently downgrade to faster-whisper's defaults.
@@ -1327,7 +1327,7 @@ def build_pipeline_task(
 
     tts = PiperTTSService(
         settings=PiperTTSService.Settings(voice=voice),
-        download_dir=Path("/app/models/piper"),
+        download_dir=Path("/models/piper"),
         sample_rate=16000,
     )
 

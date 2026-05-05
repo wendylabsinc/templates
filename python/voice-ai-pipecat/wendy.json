@@ -11,6 +11,11 @@
         },
         {
             "type": "gpu"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-models",
+            "path": "/models"
         }
     ],
     "readiness": {

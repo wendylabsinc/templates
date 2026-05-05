@@ -77,5 +77,10 @@ re-detection.
   permission.
 - **Gemini returns an auth error** — confirm `GOOGLE_API_KEY` is set in the
   container (baked in from the template variable). Rotate by rebuilding.
-- **Jetson CUDA not detected** — swap the base image in `Dockerfile` to
-  `nvcr.io/nvidia/l4t-pytorch:r36.2.0-pth2.2-py3` (or match your JetPack).
+- **Base image pull returns `401 Unauthorized`** — the template defaults to the
+  public `dustynv/tensorrt:8.6-r36.2.0` Jetson image so normal builds do not
+  require an NGC login. Override `JETSON_BASE_IMAGE` only if you manage registry
+  credentials for your builder.
+- **Jetson CUDA not detected** — check the CTranslate2 build log in
+  `Dockerfile`. The template targets JetPack 6.0's CUDA 12.2 + cuDNN 8.9
+  stack with CTranslate2 4.4.0.

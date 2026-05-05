@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
     libuuid1 \
     zlib1g \
+    gstreamer1.0-tools \
     gstreamer1.0-plugins-base \
     gstreamer1.0-plugins-good \
     gstreamer1.0-alsa \

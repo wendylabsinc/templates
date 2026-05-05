@@ -1,4 +1,5 @@
 import Foundation
+import GStreamer
 import Hummingbird
 import HummingbirdWebSocket
 
@@ -42,86 +43,54 @@ final class SpeakerSelection: @unchecked Sendable {
 // MARK: - AudioCapture Actor
 
 actor AudioCapture {
-    private var process: Process?
-    private var outputPipe: Pipe?
+    private var source: AudioSource?
+    private var captureTask: Task<Void, Never>?
     private var clients: [UUID: @Sendable (ByteBuffer) -> Void] = [:]
     private var currentDevice: String?
-    private var isRunning = false
-    private var leftover = Data()
 
     func start() {
-        guard !isRunning else { return }
-        isRunning = true
-
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/gst-launch-1.0")
-
-        let sourceArgs: [String]
-        if let currentDevice {
-            sourceArgs = ["alsasrc", "device=\(currentDevice)"]
-        } else {
-            sourceArgs = ["autoaudiosrc"]
-        }
-
-        proc.arguments = sourceArgs + [
-            "!",
-            "audioconvert",
-            "!",
-            "audioresample",
-            "!",
-            "audio/x-raw,format=S16LE,channels=1,rate=16000",
-            "!",
-            "fdsink",
-            "fd=1",
-        ]
-
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-
-        self.process = proc
-        self.outputPipe = pipe
-
-        let captureRef = self
-
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard !data.isEmpty else { return }
-            Task {
-                await captureRef.ingest(data)
-            }
-        }
+        guard source == nil else { return }
 
         do {
-            try proc.run()
+            let builder: AudioSourceBuilder
+            if let currentDevice {
+                builder = try AudioSource.microphone(devicePath: currentDevice)
+            } else {
+                builder = AudioSource.microphone()
+            }
+
+            let source = try builder
+                .withSampleRate(16_000)
+                .withChannels(1)
+                .withFormat(.s16le)
+                .build()
+            self.source = source
+
+            captureTask = Task { [weak self] in
+                for await buffer in source.buffers() {
+                    var chunk = ByteBuffer()
+                    _ = buffer.bytes.withUnsafeBytes { raw in
+                        chunk.writeBytes(raw)
+                    }
+                    guard chunk.readableBytes > 0 else { continue }
+                    await self?.broadcast(chunk)
+                }
+            }
+
             print("[AudioCapture] GStreamer pipeline started")
         } catch {
             print("[AudioCapture] Failed to start GStreamer: \(error)")
-            isRunning = false
+            source = nil
         }
     }
 
     func stop() {
-        outputPipe?.fileHandleForReading.readabilityHandler = nil
-        process?.terminate()
-        outputPipe = nil
-        process = nil
-        isRunning = false
-        leftover.removeAll(keepingCapacity: false)
-    }
-
-    private func ingest(_ chunk: Data) {
-        // S16LE samples are 2 bytes — only forward aligned slices and carry
-        // any trailing odd byte into the next ingest. Otherwise the browser
-        // throws "byte length of Int16Array should be a multiple of 2".
-        leftover.append(chunk)
-        let aligned = leftover.count - (leftover.count % 2)
-        guard aligned > 0 else { return }
-        let payload = leftover.prefix(aligned)
-        leftover.removeFirst(aligned)
-        var buffer = ByteBuffer()
-        buffer.writeBytes(payload)
-        broadcast(buffer)
+        captureTask?.cancel()
+        captureTask = nil
+        if let source {
+            Task.detached { await source.stop() }
+        }
+        source = nil
     }
 
     func switchMicrophone(to deviceID: String) {
@@ -303,32 +272,20 @@ func playSound(filename: String, speaker: String?) -> Bool {
         return false
     }
 
-    let proc = Process()
-    proc.executableURL = URL(fileURLWithPath: "/usr/bin/gst-launch-1.0")
-    var args = [
-        "filesrc",
-        "location=\(path)",
-        "!",
-        "wavparse",
-        "!",
-        "audioconvert",
-        "!",
-        "audioresample",
-        "!",
-    ]
-
-    if let speaker {
-        args += ["alsasink", "device=\(speaker)"]
-    } else {
-        args += ["autoaudiosink"]
-    }
-
-    proc.arguments = args
-    proc.standardOutput = FileHandle.nullDevice
-    proc.standardError = FileHandle.nullDevice
+    let sink = speaker.map { "alsasink device=\($0)" } ?? "autoaudiosink"
+    let description =
+        "filesrc location=\(path) ! wavparse ! audioconvert ! audioresample ! \(sink)"
 
     do {
-        try proc.run()
+        let pipeline = try Pipeline(description)
+        try pipeline.play()
+        Task.detached {
+            for await message in pipeline.bus.messages(filter: [.eos, .error]) {
+                if case .eos = message { break }
+                if case .error = message { break }
+            }
+            pipeline.stop()
+        }
         return true
     } catch {
         return false

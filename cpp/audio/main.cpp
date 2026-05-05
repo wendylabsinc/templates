@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -269,6 +270,14 @@ static Json::Value listWavFiles() {
     return arr;
 }
 
+// `arecord -l` / `aplay -l` lines look like:
+//   card 0: PCH [HDA Intel PCH], device 3: HDMI 0 [HDMI 0]
+// HDMI outputs commonly use device 3, 7, etc., so we must capture the
+// device number alongside the card number and dedupe on the pair.
+static const std::regex kAlsaDeviceLine(
+    R"(^card\s+(\d+):\s*([^\[]*?)\s*(?:\[[^\]]*\])?\s*,\s*device\s+(\d+):\s*([^\[]*?)\s*(?:\[|$))"
+);
+
 static Json::Value listAudioDevices(const char* command) {
     Json::Value arr(Json::arrayValue);
     FILE* pipe = popen(command, "r");
@@ -279,26 +288,27 @@ static Json::Value listAudioDevices(const char* command) {
     size_t len = 0;
     while (getline(&line, &len, pipe) != -1) {
         std::string value(line);
-        if (value.rfind("card ", 0) != 0) continue;
+        std::smatch match;
+        if (!std::regex_search(value, match, kAlsaDeviceLine)) continue;
 
-        const auto colon = value.find(':');
-        if (colon == std::string::npos) continue;
+        const std::string card_num = match[1].str();
+        const std::string card_name = trim(match[2].str());
+        const std::string device_num = match[3].str();
+        const std::string device_name = trim(match[4].str());
 
-        std::istringstream card_stream(value.substr(0, colon));
-        std::string card_word;
-        std::string card_num;
-        card_stream >> card_word >> card_num;
-        if (card_num.empty()) continue;
-        if (card_num.back() == ':') card_num.pop_back();
-
-        std::string id = "hw:" + card_num + ",0";
+        std::string id = "hw:" + card_num + "," + device_num;
         if (!seen.insert(id).second) continue;
 
-        std::string name = value.substr(colon + 1);
-        const auto bracket = name.find('[');
-        if (bracket != std::string::npos) name = name.substr(0, bracket);
-        name = trim(name);
-        if (name.empty()) name = "Card " + card_num;
+        std::string name;
+        if (!card_name.empty() && !device_name.empty()) {
+            name = card_name + " - " + device_name;
+        } else if (!device_name.empty()) {
+            name = device_name;
+        } else if (!card_name.empty()) {
+            name = card_name;
+        } else {
+            name = "Card " + card_num + " device " + device_num;
+        }
 
         Json::Value item;
         item["id"] = id;

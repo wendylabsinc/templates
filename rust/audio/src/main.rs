@@ -250,27 +250,44 @@ fn list_audio_devices(command: &str) -> Vec<Value> {
     devices
 }
 
+// `arecord -l` / `aplay -l` lines look like:
+//   card 0: PCH [HDA Intel PCH], device 3: HDMI 0 [HDMI 0]
+// HDMI outputs commonly use device 3, 7, etc., so we must capture the
+// device number alongside the card number and dedupe on the pair.
 fn parse_audio_device_line(line: &str) -> Option<Value> {
     if !line.starts_with("card ") {
         return None;
     }
 
-    let (card_part, rest) = line.split_once(':')?;
-    let card_num = card_part.split_whitespace().nth(1)?.trim_end_matches(':');
-    let name = rest
+    let (card_part, device_part) = line.split_once(", device ")?;
+
+    let (card_prefix, card_rest) = card_part.split_once(':')?;
+    let card_num = card_prefix.split_whitespace().nth(1)?.trim_end_matches(':');
+    let card_name = card_rest
         .trim()
         .split('[')
         .next()
         .unwrap_or_default()
         .trim();
-    let name = if name.is_empty() {
-        format!("Card {card_num}")
-    } else {
-        name.to_string()
+
+    let (device_num_part, device_rest) = device_part.split_once(':')?;
+    let device_num = device_num_part.trim();
+    let device_name = device_rest
+        .trim()
+        .split('[')
+        .next()
+        .unwrap_or_default()
+        .trim();
+
+    let name = match (card_name.is_empty(), device_name.is_empty()) {
+        (false, false) => format!("{card_name} - {device_name}"),
+        (false, true) => card_name.to_string(),
+        (true, false) => device_name.to_string(),
+        (true, true) => format!("Card {card_num} device {device_num}"),
     };
 
     Some(json!({
-        "id": format!("hw:{card_num},0"),
+        "id": format!("hw:{card_num},{device_num}"),
         "name": name,
     }))
 }

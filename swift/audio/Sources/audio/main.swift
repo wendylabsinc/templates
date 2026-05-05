@@ -238,24 +238,49 @@ func parseAudioDevices(_ executable: String) -> [AudioDevice] {
         return []
     }
 
+    // `arecord -l` / `aplay -l` lines look like:
+    //   card 0: PCH [HDA Intel PCH], device 3: HDMI 0 [HDMI 0]
+    // HDMI outputs commonly use device 3, 7, etc., so we must capture the
+    // device number alongside the card number and dedupe on the pair.
     var seen = Set<String>()
     var devices: [AudioDevice] = []
     for line in output.split(separator: "\n") {
         guard line.hasPrefix("card ") else { continue }
-        let parts = line.split(separator: ":", maxSplits: 1)
-        guard parts.count == 2 else { continue }
+        guard let deviceRange = line.range(of: ", device ") else { continue }
+        let cardPortion = line[..<deviceRange.lowerBound]
+        let devicePortion = line[deviceRange.upperBound...]
 
-        let cardParts = parts[0].split(separator: " ")
-        guard cardParts.count >= 2 else { continue }
-        let cardNum = cardParts[1].trimmingCharacters(in: CharacterSet(charactersIn: ":"))
-        let id = "hw:\(cardNum),0"
+        let cardSplit = cardPortion.split(separator: ":", maxSplits: 1)
+        guard cardSplit.count == 2 else { continue }
+        let cardWords = cardSplit[0].split(separator: " ")
+        guard cardWords.count >= 2 else { continue }
+        let cardNum = String(cardWords[1])
+        let cardName = cardSplit[1]
+            .split(separator: "[", maxSplits: 1)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+
+        let deviceSplit = devicePortion.split(separator: ":", maxSplits: 1)
+        guard deviceSplit.count == 2 else { continue }
+        let deviceNum = deviceSplit[0].trimmingCharacters(in: .whitespacesAndNewlines)
+        let deviceName = deviceSplit[1]
+            .split(separator: "[", maxSplits: 1)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+
+        let id = "hw:\(cardNum),\(deviceNum)"
         guard seen.insert(id).inserted else { continue }
 
-        let name = parts[1]
-            .split(separator: "[", maxSplits: 1)
-            .first?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let display = (name?.isEmpty == false) ? name! : "Card \(cardNum)"
+        let display: String
+        if !cardName.isEmpty && !deviceName.isEmpty {
+            display = "\(cardName) - \(deviceName)"
+        } else if !deviceName.isEmpty {
+            display = deviceName
+        } else if !cardName.isEmpty {
+            display = cardName
+        } else {
+            display = "Card \(cardNum) device \(deviceNum)"
+        }
 
         devices.append(AudioDevice(id: id, name: display))
     }

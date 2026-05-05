@@ -18,6 +18,13 @@ type AudioDevice = {
   name: string;
 };
 
+// `arecord -l` / `aplay -l` lines look like:
+//   card 0: PCH [HDA Intel PCH], device 3: HDMI 0 [HDMI 0]
+// HDMI outputs commonly use device 3, 7, etc., so we must capture the
+// device number alongside the card number and dedupe on the pair.
+const ALSA_DEVICE_LINE =
+  /^card\s+(\d+):\s*([^[]*?)\s*(?:\[[^\]]*\])?\s*,\s*device\s+(\d+):\s*([^[]*?)\s*(?:\[|$)/;
+
 function parseAudioDevices(command: "arecord" | "aplay"): AudioDevice[] {
   try {
     const output = execFileSync(command, ["-l"], {
@@ -29,16 +36,20 @@ function parseAudioDevices(command: "arecord" | "aplay"): AudioDevice[] {
     const seen = new Set<string>();
     const devices: AudioDevice[] = [];
     for (const line of output.split("\n")) {
-      if (!line.startsWith("card ")) continue;
-      const [cardPart, rest = ""] = line.split(":", 2);
-      const cardNum = cardPart.split(/\s+/)[1]?.replace(/:$/, "");
-      if (!cardNum) continue;
+      const match = ALSA_DEVICE_LINE.exec(line);
+      if (!match) continue;
+      const [, cardNum, cardName, deviceNum, deviceName] = match;
 
-      const id = `hw:${cardNum},0`;
+      const id = `hw:${cardNum},${deviceNum}`;
       if (seen.has(id)) continue;
       seen.add(id);
 
-      const name = rest.trim().split("[")[0]?.trim() || `Card ${cardNum}`;
+      const card = cardName.trim();
+      const device = deviceName.trim();
+      const name =
+        card && device
+          ? `${card} - ${device}`
+          : device || card || `Card ${cardNum} device ${deviceNum}`;
       devices.push({ id, name });
     }
     return devices;
@@ -135,7 +146,7 @@ class AudioCapture {
       ? ["alsasrc", `device=${this.currentDevice}`]
       : ["autoaudiosrc"];
 
-    this.process = spawn("gst-launch-1.0", [
+    const child = spawn("gst-launch-1.0", [
       ...source,
       "!",
       "audioconvert",
@@ -147,8 +158,9 @@ class AudioCapture {
       "fdsink",
       "fd=1",
     ]);
+    this.process = child;
 
-    this.process.stdout?.on("data", (chunk: Buffer) => {
+    child.stdout?.on("data", (chunk: Buffer) => {
       // S16LE samples are 2 bytes — only forward aligned slices and carry the
       // trailing odd byte (if any) into the next chunk. Otherwise the browser
       // throws "byte length of Int16Array should be a multiple of 2".
@@ -162,13 +174,19 @@ class AudioCapture {
       }
     });
 
-    this.process.stderr?.on("data", (data: Buffer) => {
+    child.stderr?.on("data", (data: Buffer) => {
       console.error(`[gst] ${data.toString()}`);
     });
 
-    this.process.on("close", (code) => {
+    child.on("close", (code) => {
       console.log(`[gst] process exited with code ${code}`);
-      this.process = null;
+      // Only clear `this.process` if it still references the child whose
+      // close we're handling. Otherwise a switchMicrophone() that races with
+      // an in-flight close would null out the freshly-spawned pipeline and
+      // leak the new process.
+      if (this.process === child) {
+        this.process = null;
+      }
     });
   }
 

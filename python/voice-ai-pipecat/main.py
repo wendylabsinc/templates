@@ -322,6 +322,10 @@ DEFAULT_TTS_VOICE = "en_US-lessac-medium"
 DEFAULT_ALLOW_INTERRUPTIONS = False
 DEFAULT_WAKE_WORD_MODELS = ["hey_jarvis"]
 DEFAULT_WAKE_WORD_DISABLED = False
+# Audio chimes on listening-window open / close (rising 880 Hz on wake,
+# falling 550 Hz on close). Off by default — most users find them
+# distracting; the visualizer already shows when the gate is open.
+DEFAULT_CHIMES_ENABLED = False
 # Continuous-conversation ("follow-up mode"): keep the listening window
 # open for a short follow-up after the bot replies, like Alexa's
 # Follow-Up Mode / Google's Continued Conversation. Default ON because
@@ -690,6 +694,7 @@ class AppSettings:
         self.allow_interruptions: bool = DEFAULT_ALLOW_INTERRUPTIONS
         self.wake_word_models: list[str] = list(DEFAULT_WAKE_WORD_MODELS)
         self.wake_word_disabled: bool = DEFAULT_WAKE_WORD_DISABLED
+        self.chimes_enabled: bool = DEFAULT_CHIMES_ENABLED
         self.continuous_conversation: bool = DEFAULT_CONTINUOUS_CONVERSATION
         self.continuous_window_secs: float = DEFAULT_CONTINUOUS_WINDOW_SECS
         self.stt_language: str = DEFAULT_STT_LANGUAGE
@@ -738,6 +743,9 @@ class AppSettings:
                 self.wake_word_models = wake_models or list(DEFAULT_WAKE_WORD_MODELS)
             self.wake_word_disabled = bool(
                 data.get("wake_word_disabled", DEFAULT_WAKE_WORD_DISABLED)
+            )
+            self.chimes_enabled = bool(
+                data.get("chimes_enabled", DEFAULT_CHIMES_ENABLED)
             )
             self.continuous_conversation = bool(
                 data.get("continuous_conversation", DEFAULT_CONTINUOUS_CONVERSATION)
@@ -851,6 +859,7 @@ class AppSettings:
             "allow_interruptions": self.allow_interruptions,
             "wake_word_models": list(self.wake_word_models),
             "wake_word_disabled": self.wake_word_disabled,
+            "chimes_enabled": self.chimes_enabled,
             "continuous_conversation": self.continuous_conversation,
             "continuous_window_secs": self.continuous_window_secs,
             "stt_language": self.stt_language,
@@ -882,6 +891,7 @@ class AppSettings:
         allow_interruptions: Optional[bool] = None,
         wake_word_models: Optional[list[str]] = None,
         wake_word_disabled: Optional[bool] = None,
+        chimes_enabled: Optional[bool] = None,
         continuous_conversation: Optional[bool] = None,
         continuous_window_secs: Optional[float] = None,
         stt_language: Optional[str] = None,
@@ -923,6 +933,9 @@ class AppSettings:
                 changed = True
         if wake_word_disabled is not None and wake_word_disabled != self.wake_word_disabled:
             self.wake_word_disabled = wake_word_disabled
+            changed = True
+        if chimes_enabled is not None and chimes_enabled != self.chimes_enabled:
+            self.chimes_enabled = chimes_enabled
             changed = True
         if (
             continuous_conversation is not None
@@ -1037,6 +1050,7 @@ class AppSettings:
             "allow_interruptions": self.allow_interruptions,
             "wake_word_models": list(self.wake_word_models),
             "wake_word_disabled": self.wake_word_disabled,
+            "chimes_enabled": self.chimes_enabled,
             "continuous_conversation": self.continuous_conversation,
             "continuous_window_secs": self.continuous_window_secs,
             "stt_language": self.stt_language,
@@ -1376,6 +1390,7 @@ class SessionManager:
             allow_interruptions=settings_store.allow_interruptions,
             wake_word_models=settings_store.wake_word_models,
             wake_word_disabled=wake_disabled,
+            chimes_enabled=settings_store.chimes_enabled,
             continuous_conversation=settings_store.continuous_conversation,
             continuous_window_secs=settings_store.continuous_window_secs,
             stt_language=settings_store.stt_language,
@@ -1682,6 +1697,7 @@ class SettingsBody(BaseModel):
     allow_interruptions: Optional[bool] = None
     wake_word_models: Optional[list[str]] = None
     wake_word_disabled: Optional[bool] = None
+    chimes_enabled: Optional[bool] = None
     continuous_conversation: Optional[bool] = None
     continuous_window_secs: Optional[float] = None
     stt_language: Optional[str] = None
@@ -1837,6 +1853,7 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
                 allow_interruptions=body.allow_interruptions,
                 wake_word_models=body.wake_word_models,
                 wake_word_disabled=body.wake_word_disabled,
+                chimes_enabled=body.chimes_enabled,
                 continuous_conversation=body.continuous_conversation,
                 continuous_window_secs=body.continuous_window_secs,
                 stt_language=body.stt_language,
@@ -1876,6 +1893,7 @@ async def api_update_settings(body: SettingsBody) -> dict[str, Any]:
             "allow_interruptions",
             "wake_word_models",
             "wake_word_disabled",
+            "chimes_enabled",
             "continuous_conversation",
             "continuous_window_secs",
             "stt_language",

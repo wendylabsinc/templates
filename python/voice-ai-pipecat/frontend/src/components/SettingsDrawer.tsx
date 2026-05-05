@@ -269,6 +269,14 @@ export function SettingsDrawer({ open, onOpenChange }: SettingsDrawerProps) {
                   }
                 >
                   <Toggle
+                    id="chimes-enabled"
+                    checked={draft.chimesEnabled}
+                    onChange={(v) => updateDraft({ chimesEnabled: v })}
+                    label="Activation chimes"
+                    hint="Play a rising tone when the wake word fires and a falling tone when the listening window closes."
+                    disabled={draft.wakeWordDisabled}
+                  />
+                  <Toggle
                     id="continuous-conversation"
                     checked={draft.continuousConversation}
                     onChange={(v) => updateDraft({ continuousConversation: v })}

@@ -887,6 +887,7 @@ class WakeWordGate(FrameProcessor):
         predict_error_limit: int = 20,
         continuous_conversation: bool = False,
         continuous_window_secs: float = 6.0,
+        chimes_enabled: bool = False,
     ) -> None:
         super().__init__()
         from openwakeword.model import Model as OWWModel
@@ -933,6 +934,11 @@ class WakeWordGate(FrameProcessor):
         self._continuous_conversation = continuous_conversation
         self._continuous_window_secs = continuous_window_secs
         self._bot_was_speaking: bool = False
+        # Audio chimes on listening-window open / close. Off by default
+        # because users on desktop / quiet rooms find the beeps
+        # distracting; the visualizer already shows when the gate is
+        # open. Toggle via /api/settings.chimes_enabled.
+        self._chimes_enabled = chimes_enabled
 
     @property
     def _in_window(self) -> bool:
@@ -956,7 +962,8 @@ class WakeWordGate(FrameProcessor):
             return
         self._listening_until = None
         self._mute_oww_until = time.monotonic() + 0.25
-        await self._push_chime(self._chime_close)
+        if self._chimes_enabled:
+            await self._push_chime(self._chime_close)
         _log.info("WakeWordGate: closed listening window (%s)", reason)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
@@ -1044,7 +1051,8 @@ class WakeWordGate(FrameProcessor):
                                 self._on_wake_fired()
                             except Exception:
                                 _log.exception("WakeWordGate: on_wake_fired failed")
-                        await self._push_chime(self._chime_open)
+                        if self._chimes_enabled:
+                            await self._push_chime(self._chime_open)
                         return  # don't forward this frame to STT
             if self._in_window:
                 await self.push_frame(frame, direction)
@@ -1174,6 +1182,7 @@ def build_pipeline_task(
     wake_word_disabled: Optional[bool] = None,
     continuous_conversation: bool = False,
     continuous_window_secs: float = 6.0,
+    chimes_enabled: bool = False,
     stt_language: Optional[str] = None,
     google_search_enabled: Optional[bool] = None,
     greeting_message: Optional[str] = None,
@@ -1219,7 +1228,7 @@ def build_pipeline_task(
 
     _log.info(
         "building pipeline: llm=%s/%s%s stt=%s/%s tts=%s wake=%s "
-        "continuous=%s search=%s interrupt=%s history=%d",
+        "continuous=%s search=%s interrupt=%s chimes=%s history=%d",
         llm_provider,
         llm_model,
         f" @ {llm_base_url}" if llm_base_url else "",
@@ -1238,6 +1247,7 @@ def build_pipeline_task(
             else "off"
         ),
         "on" if interrupt else "off",
+        "on" if chimes_enabled else "off",
         len(conversation_history) if conversation_history else 0,
     )
 
@@ -1369,6 +1379,7 @@ def build_pipeline_task(
                 on_predict_error=on_wake_predict_error,
                 continuous_conversation=continuous_conversation,
                 continuous_window_secs=continuous_window_secs,
+                chimes_enabled=chimes_enabled,
             )
         )
     if greeting_message:

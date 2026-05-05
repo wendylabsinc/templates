@@ -163,14 +163,22 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
 
   const selectInput = React.useCallback(
     async (id: string) => {
+      // Look up whether the chosen device can actually output audio. The
+      // common case (USB speakerphones like the PowerConf) is mic+speaker
+      // on the same hardware, but selecting an input-only mic and copying
+      // the id into output_id would crash the backend's PortAudio init
+      // when it tries to open an output stream on a capture-only PCM.
+      // Mirror only when the device reports output channels; otherwise
+      // leave output unchanged (omit the field).
+      const match = devices.find((d) => d.id === id)
+      const body: { input_id: string; output_id?: string } = { input_id: id }
+      if (match?.hasOutput) {
+        body.output_id = id
+      }
       const res = await fetch("/api/local-audio/select", {
         method: "POST",
         headers: { "content-type": "application/json", ...authHeaders() },
-        // Use the device name for both input & output; for USB speakerphones
-        // (e.g. PowerConf) the same hardware does mic + speaker. Users with
-        // separate mic/speaker devices can still drive this via env vars at
-        // boot — we keep the API symmetric for now.
-        body: JSON.stringify({ input_id: id, output_id: id }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) {
         // Prefer the FastAPI HTTPException detail over a bare status so
@@ -191,7 +199,7 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
       }
       await tick()
     },
-    [tick],
+    [tick, devices],
   )
 
   const setMuted = React.useCallback(

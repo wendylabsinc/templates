@@ -4,7 +4,10 @@ ARG JETSON_BASE_IMAGE=dustynv/tensorrt:8.6-r36.2.0
 FROM node:22-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
-RUN npm install
+# `npm ci` for reproducible builds: it requires package-lock.json (which
+# we commit) and fails if the lockfile is out of sync rather than
+# silently repairing it the way `npm install` does.
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -83,44 +86,11 @@ RUN set -eu; \
     fi; \
     /usr/local/bin/ollama --version
 
-# Route ALSA's "default" PCM to the PowerConf via `asym` (split playback
-# and capture) with `plug` on each leg for in-kernel rate conversion. We
-# address the device by USB card *name* so the same setup works regardless
-# of slot order — the PowerConf can land on hw:0,0 or hw:2,0 depending on
-# what else is plugged in. The asound.conf heredoc below documents WHY
-# this layout was picked over dmix/dsnoop. To target a different USB mic,
-# change `CARD=PowerConf` to whatever `arecord -l` shows in
-# `card N: <NAME> [...]`.
-COPY <<'ASOUND_CONF' /etc/asound.conf
-# Default PCM is split per-direction via `asym`, with each leg routed
-# through its own `plug` for in-kernel rate/channel conversion. We
-# previously tried dmix/dsnoop here for shared access, but that hit a
-# `parameters->channelCount <= maxChans` PortAudio error after
-# settings-driven pipeline restarts: dmix's plug-reported max channel
-# count (128) doesn't roundtrip cleanly. The single-plug-per-direction
-# layout is the simplest config that supports concurrent pipeline
-# restarts without that failure mode.
-pcm.!default {
-    type asym
-    playback.pcm "wendy_playback"
-    capture.pcm  "wendy_capture"
-}
-
-pcm.wendy_playback {
-    type plug
-    slave.pcm "hw:CARD=PowerConf,DEV=0"
-}
-
-pcm.wendy_capture {
-    type plug
-    slave.pcm "hw:CARD=PowerConf,DEV=0"
-}
-
-ctl.!default {
-    type hw
-    card PowerConf
-}
-ASOUND_CONF
+# /etc/asound.conf is generated at container start by entrypoint.sh
+# based on the ALSA_CARD env var. Default targets the Anker PowerConf
+# (the template's reference USB speakerphone) but Pi / generic USB mic
+# setups can override it without rebuilding. The config layout (asym
+# split + plug per leg) is documented inline in entrypoint.sh.
 
 WORKDIR /app
 
@@ -134,6 +104,14 @@ ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="/app/venv/bin:${CUDA_HOME}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/usr/local/lib:${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
 ENV CTRANSLATE2_ROOT=/usr/local
+# Wendy mounts a fresh empty persist volume at /models on first run,
+# which hides anything we cached at /models/* during the build. Stage
+# downloads at /opt/seed-models so the image layer is preserved, then
+# entrypoint.sh copies missing files into /models on first boot.
+ENV SEED_MODELS_DIR=/opt/seed-models
+# Runtime defaults point at the persist mount; build-time download
+# steps below override these locally so the cached weights end up in
+# the seed dir instead.
 ENV HF_HOME=/models/huggingface
 ENV XDG_CACHE_HOME=/models/cache
 ENV OLLAMA_MODELS=/models/ollama
@@ -229,7 +207,9 @@ RUN /app/venv/bin/python -c "import nltk; nltk.download('punkt_tab', download_di
 # settings drawer's voice picker doesn't stall on first selection. Add
 # more by appending `<lang>/<region>/<speaker>/<quality>/<file>` triples
 # below — Piper hosts them all at the same /resolve/main/ prefix.
-RUN mkdir -p /models/piper /models/huggingface /models/cache /models/ollama && \
+# Stage everything under SEED_MODELS_DIR so the persist mount at /models
+# doesn't hide it. entrypoint.sh copies missing files across on first boot.
+RUN mkdir -p ${SEED_MODELS_DIR}/piper ${SEED_MODELS_DIR}/huggingface ${SEED_MODELS_DIR}/cache && \
     for triple in \
       "en/en_US/lessac/medium en_US-lessac-medium" \
       "en/en_US/ryan/high en_US-ryan-high" \
@@ -237,14 +217,14 @@ RUN mkdir -p /models/piper /models/huggingface /models/cache /models/ollama && \
       "en/en_GB/alan/medium en_GB-alan-medium" ; do \
         path="$(echo $triple | cut -d' ' -f1)"; \
         name="$(echo $triple | cut -d' ' -f2)"; \
-        curl -fsSL -o /models/piper/${name}.onnx \
+        curl -fsSL -o ${SEED_MODELS_DIR}/piper/${name}.onnx \
           https://huggingface.co/rhasspy/piper-voices/resolve/main/${path}/${name}.onnx && \
-        curl -fsSL -o /models/piper/${name}.onnx.json \
+        curl -fsSL -o ${SEED_MODELS_DIR}/piper/${name}.onnx.json \
           https://huggingface.co/rhasspy/piper-voices/resolve/main/${path}/${name}.onnx.json ; \
     done
 
-# Pre-download faster-whisper TINY (~75 MB) into HF_HOME so the first
-# WebSocket connection doesn't block on a HuggingFace round-trip.
+# Pre-download faster-whisper TINY (~75 MB) into the seed dir so the
+# first WebSocket connection doesn't block on a HuggingFace round-trip.
 # compute_type=float32 here (instead of the runtime int8/float16) only
 # because cross-building arm64 under qemu doesn't have a working int8
 # dispatch backend (CTranslate2 is built with WITH_MKL=OFF and no Ruy
@@ -252,14 +232,18 @@ RUN mkdir -p /models/piper /models/huggingface /models/cache /models/ollama && \
 # side effect we need from this step. At runtime on Jetson,
 # WHISPER_DEVICE=cuda + WHISPER_COMPUTE_TYPE below selects the actual
 # compute path.
-RUN /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='float32')"
+RUN HF_HOME=${SEED_MODELS_DIR}/huggingface \
+    XDG_CACHE_HOME=${SEED_MODELS_DIR}/cache \
+    /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='float32')"
 
 # Pre-download openWakeWord models (~few MB each). The pretrained set
 # includes "alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy", "ok_nabu".
 # At runtime WAKE_WORD_MODELS picks which to load. There is no pretrained
 # "Hey Wendy" — that requires training a custom model; the settings
 # drawer's wake-word picker only exposes the pretrained set.
-RUN /app/venv/bin/python -c "import openwakeword.utils as u; u.download_models()"
+RUN HF_HOME=${SEED_MODELS_DIR}/huggingface \
+    XDG_CACHE_HOME=${SEED_MODELS_DIR}/cache \
+    /app/venv/bin/python -c "import openwakeword.utils as u; u.download_models()"
 
 COPY main.py pipeline.py entrypoint.sh ./
 RUN chmod +x /app/entrypoint.sh

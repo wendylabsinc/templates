@@ -62,12 +62,67 @@ from pipeline import (
 
 
 PORT = int(os.environ.get("PORT", "3005"))
+# Hard cap on how long we'll wait for a cancelled pipeline task to
+# return. Pipecat / PortAudio / WS transports occasionally ignore
+# cancellation; without a timeout settings save, device switch, browser
+# handoff, and shutdown can hang forever holding the session lock.
+PIPELINE_CANCEL_TIMEOUT_SECS = float(
+    os.environ.get("PIPELINE_CANCEL_TIMEOUT_SECS", "5.0")
+)
+
+
+async def _await_task_bounded(
+    task: asyncio.Task, *, timeout: float, label: str
+) -> None:
+    """Await an already-cancelled task with an upper bound.
+
+    Used after ``task.cancel()``: returns once the task settles, or
+    after ``timeout`` if the task ignores cancellation. On overrun the
+    task is left running and the caller drops its reference — leaking
+    the task is preferable to freezing the whole app behind a stuck
+    PortAudio close or WS shutdown.
+    """
+    # asyncio.wait isn't cancelled when the inner task is cancelled, so
+    # using it here gives us a timeout without the shield/cancel dance
+    # that asyncio.wait_for inflicts on already-cancelled tasks.
+    done, _pending = await asyncio.wait({task}, timeout=timeout)
+    if not done:
+        stack_summary = ""
+        try:
+            frames = task.get_stack(limit=8)
+            if frames:
+                stack_summary = " | ".join(
+                    f"{f.f_code.co_filename}:{f.f_lineno} {f.f_code.co_name}"
+                    for f in frames
+                )
+        except Exception:
+            pass
+        logger.warning(
+            "%s did not respond to cancel within %.1fs; abandoning. stack=%s",
+            label,
+            timeout,
+            stack_summary or "(unavailable)",
+        )
+        return
+    # Drain the awaited task's exception so it isn't reported as
+    # "exception was never retrieved" at GC time.
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("%s shutdown error", label)
+
 STATIC_DIR = Path(os.environ.get("STATIC_DIR", Path(__file__).parent / "static"))
 HOTPLUG_POLL_SECS = float(os.environ.get("HOTPLUG_POLL_SECS", "3.0"))
-# Persist user-edited settings to a writable path. /tmp survives the
-# process but resets on container restart, which is fine for a demo
-# template — for true persistence mount a volume and point this here.
-SETTINGS_PATH = Path(os.environ.get("SETTINGS_PATH", "/tmp/voice-ai-settings.json"))
+# Persist user-edited settings on the /models persist volume so they
+# survive container restarts. The frontend's drawer (and the API key
+# entry boxes) imply durable settings, so defaulting to /tmp would lose
+# user data on every redeploy. Override with SETTINGS_PATH if you want
+# ephemeral state.
+SETTINGS_PATH = Path(
+    os.environ.get("SETTINGS_PATH", "/models/state/voice-ai-settings.json")
+)
 # Optional shared-secret gate on write routes (POST /api/settings,
 # /api/conversation/reset, /api/local-audio/select). When set, callers
 # must send `Authorization: Bearer <token>`; reads stay open since they
@@ -91,26 +146,44 @@ logger = logging.getLogger("voice-ai-pipecat")
 
 
 class _MutePollingFilter(logging.Filter):
-    """Drop uvicorn access logs for the polling endpoints.
+    """Drop uvicorn access logs for *successful* polling endpoint hits.
 
     The frontend polls /api/status, /api/audio-devices, and /api/settings
-    every ~1.2 s. At INFO level uvicorn emits one access line per request
-    per route, which drowns useful logs. The actual data still flows;
-    only the access record is suppressed.
+    every ~1.2 s. Uvicorn's access log emits one line per request, which
+    drowns the useful logs at INFO. We only mute the success rows — 4xx,
+    5xx, and slow responses are the signal users (and on-call) actually
+    need to see when these endpoints break.
+
+    Uvicorn's default access format is:
+      <client> - "<method> <path> <proto>" <status_code>
     """
 
-    NOISY = (
+    NOISY_PATHS = (
         '"GET /api/status',
         '"GET /api/audio-devices',
         '"GET /api/settings',
     )
+    # Match the response status field uvicorn appends after the request
+    # line. 2xx and 3xx are the rows we suppress; anything else (and any
+    # row where the status is missing) falls through to the log.
+    _STATUS_RE = re.compile(r'"\s+(\d{3})\b')
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
             msg = record.getMessage()
         except Exception:
             return True
-        return not any(p in msg for p in self.NOISY)
+        if not any(p in msg for p in self.NOISY_PATHS):
+            return True
+        match = self._STATUS_RE.search(msg)
+        if not match:
+            # Unfamiliar format — be conservative and log it so we don't
+            # silently swallow an upstream uvicorn change.
+            return True
+        status = int(match.group(1))
+        if status >= 400:
+            return True
+        return False
 
 
 logging.getLogger("uvicorn.access").addFilter(_MutePollingFilter())
@@ -204,6 +277,15 @@ def _silence_jack_errors() -> None:
 _silence_jack_errors()
 
 
+# TTL cache for the PyAudio enumeration. Probing ALSA via PyAudio() can
+# stall the calling thread for tens of ms on slow devices, and the
+# frontend hits /api/audio-devices on a 1.2 s poll. Caching for ~1.0 s
+# keeps the UI responsive without making hot-plug feel sluggish.
+_DEVICE_CACHE_TTL_SECS = float(os.environ.get("DEVICE_CACHE_TTL_SECS", "1.0"))
+_device_cache: tuple[float, list[dict[str, Any]]] = (0.0, [])
+_device_cache_lock = asyncio.Lock()
+
+
 def _enumerate_devices() -> list[dict[str, Any]]:
     """Return PyAudio's current device enumeration as plain dicts.
 
@@ -256,6 +338,24 @@ def _enumerate_devices() -> list[dict[str, Any]]:
         return devices
     finally:
         pa.terminate()
+
+
+async def _enumerate_devices_async(*, force: bool = False) -> list[dict[str, Any]]:
+    """Async wrapper around _enumerate_devices with a short TTL cache.
+
+    Used by the FastAPI handler so the polling endpoints don't pin the
+    uvicorn event loop on PyAudio's ALSA probe. Pass ``force=True`` to
+    bust the cache (e.g. after a deliberate device switch).
+    """
+    global _device_cache
+    async with _device_cache_lock:
+        cached_at, cached = _device_cache
+        now = time.monotonic()
+        if not force and (now - cached_at) < _DEVICE_CACHE_TTL_SECS and cached:
+            return cached
+        devices = await asyncio.to_thread(_enumerate_devices)
+        _device_cache = (now, devices)
+        return devices
 
 
 def _resolve_device(value: Optional[str], devices: list[dict[str, Any]]) -> tuple[Optional[int], Optional[str]]:
@@ -436,7 +536,9 @@ LLM_BASE_URL_DEFAULTS: dict[str, str] = {
 # can also drop in TAVILY_API_KEY and switch with /api/settings.
 SEARCH_BACKEND_ENV = "BRAVE_API_KEY"
 CONVERSATION_PATH = Path(
-    os.environ.get("CONVERSATION_PATH", "/tmp/voice-ai-conversation.json")
+    os.environ.get(
+        "CONVERSATION_PATH", "/models/state/voice-ai-conversation.json"
+    )
 )
 # Cap on persisted history so the file doesn't grow unbounded. The
 # context window will trim stale messages anyway, but loading 10k
@@ -624,23 +726,68 @@ def _persist_turn_blocking(user_text: str, bot_text: str) -> None:
     _save_conversation_history(history)
 
 
+# Single-writer queue for conversation persistence. The previous
+# fire-and-forget create_task per turn allowed concurrent read-modify-
+# write races on slow storage (SD/eMMC) — turn N reads history, turn N+1
+# reads the same history, both write back, one of the turns vanishes.
+# Funneling writes through a worker keeps history monotonic and lets
+# lifespan shutdown drain pending writes before the container exits.
+_conversation_queue: Optional[asyncio.Queue[tuple[str, str]]] = None
+_conversation_writer_task: Optional[asyncio.Task] = None
+# Bounded so a stuck disk doesn't pile up unbounded turns in memory.
+# Hitting the cap drops the oldest queued turn and logs — losing one
+# history entry is better than OOM-killing the pipeline.
+_CONVERSATION_QUEUE_MAX = 32
+
+
+async def _conversation_writer() -> None:
+    """Drain the conversation persist queue one turn at a time."""
+    assert _conversation_queue is not None
+    while True:
+        try:
+            user_text, bot_text = await _conversation_queue.get()
+        except asyncio.CancelledError:
+            raise
+        try:
+            await asyncio.to_thread(_persist_turn_blocking, user_text, bot_text)
+        except Exception:
+            logger.exception("conversation writer: persist failed")
+        finally:
+            _conversation_queue.task_done()
+
+
 def _on_turn_complete(user_text: str, bot_text: str) -> None:
     """Append a completed user/assistant turn to disk if persistence is on.
 
     Called synchronously from BotResponseLogger.process_frame on the
-    event loop; offload the disk I/O to a worker thread so the next
-    InputAudioRawFrame doesn't get queued behind a fsync.
+    event loop; we enqueue for a single background writer so concurrent
+    turns don't race on the read-modify-write step.
     """
     if not settings_store.persist_conversation:
         return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # Not on the event loop (shouldn't happen in production, but
-        # keeps the function callable from tests / repl).
+    if _conversation_queue is None:
+        # Lifespan hasn't started the writer yet (e.g. in tests). Fall
+        # back to a synchronous write so we don't drop the turn.
         _persist_turn_blocking(user_text, bot_text)
         return
-    loop.create_task(asyncio.to_thread(_persist_turn_blocking, user_text, bot_text))
+    try:
+        _conversation_queue.put_nowait((user_text, bot_text))
+    except asyncio.QueueFull:
+        # Drop the oldest entry to make room. We're already in a
+        # degraded state — if the writer is this far behind, the disk
+        # is misbehaving and the user's history will recover once the
+        # backlog drains.
+        try:
+            _conversation_queue.get_nowait()
+            _conversation_queue.task_done()
+        except asyncio.QueueEmpty:
+            pass
+        try:
+            _conversation_queue.put_nowait((user_text, bot_text))
+        except asyncio.QueueFull:
+            logger.warning(
+                "conversation writer queue full; dropping turn (history will be incomplete)"
+            )
 
 
 def _build_vad_analyzer() -> SileroVADAnalyzer:
@@ -879,7 +1026,29 @@ class AppSettings:
             "api_keys": dict(self.api_keys),
             "brave_api_key": self.brave_api_key,
         }
-        SETTINGS_PATH.write_text(json.dumps(payload, indent=2))
+        # Atomic write at mode 0600 so the on-disk file (which contains
+        # raw API keys) isn't world- or group-readable inside the
+        # container regardless of umask. Write to a tmp path with the
+        # mode set on creation, then rename — an in-place chmod after
+        # write_text leaves a brief window where a broadly-readable
+        # file exists.
+        tmp = SETTINGS_PATH.with_suffix(SETTINGS_PATH.suffix + ".tmp")
+        data = json.dumps(payload, indent=2).encode("utf-8")
+        fd = os.open(
+            tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+        )
+        try:
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(data)
+                fh.flush()
+                os.fsync(fh.fileno())
+        except Exception:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+        os.replace(tmp, SETTINGS_PATH)
         # Successful save invalidates any earlier load-time complaint.
         self.load_error = None
 
@@ -1243,7 +1412,9 @@ class SessionManager:
         in_spec = input_device if input_device is not None else self._configured_input
         out_spec = output_device if output_device is not None else self._configured_output
 
-        devices = _enumerate_devices()
+        # Force-refresh: device selection is a deliberate user action, so
+        # honor a freshly-plugged USB rather than the cached enum.
+        devices = await _enumerate_devices_async(force=True)
         in_idx, in_name = _resolve_device(in_spec, devices)
         out_idx, out_name = _resolve_device(out_spec, devices)
 
@@ -1372,12 +1543,9 @@ class SessionManager:
     async def _cancel_current_locked(self) -> None:
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("SessionManager: pipeline shutdown error")
+            await _await_task_bounded(
+                self._task, timeout=PIPELINE_CANCEL_TIMEOUT_SECS, label="pipeline"
+            )
         self._task = None
 
     async def _run_pipeline(
@@ -1400,49 +1568,66 @@ class SessionManager:
             if settings_store.persist_conversation
             else None
         )
-        task = build_pipeline_task(
-            transport,
-            system_prompt=settings_store.system_prompt,
-            tts_voice=settings_store.tts_voice,
-            allow_interruptions=settings_store.allow_interruptions,
-            wake_word_models=settings_store.wake_word_models,
-            wake_word_disabled=wake_disabled,
-            chimes_enabled=settings_store.chimes_enabled,
-            continuous_conversation=settings_store.continuous_conversation,
-            continuous_window_secs=settings_store.continuous_window_secs,
-            stt_language=settings_store.stt_language,
-            google_search_enabled=settings_store.google_search_enabled,
-            greeting_message=greeting,
-            conversation_history=history,
-            on_user_stopped=self.on_user_stopped,
-            on_bot_started=self.on_bot_started,
-            on_bot_stopped=self.on_bot_stopped,
-            on_wake_fired=self.on_wake_fired,
-            on_wake_predict_error=self.on_wake_predict_error,
-            is_bot_speaking=self.is_bot_currently_speaking,
-            is_muted=self.is_muted,
-            on_turn_complete=_on_turn_complete,
-            llm_provider=settings_store.llm_provider,
-            llm_model=settings_store.llm_model,
-            llm_api_key=settings_store.get_api_key(settings_store.llm_provider),
-            llm_base_url=(
-                settings_store.llm_base_url
-                or LLM_BASE_URL_DEFAULTS.get(settings_store.llm_provider, "")
-            ),
-            brave_api_key=settings_store.get_brave_key(),
-            stt_provider=settings_store.stt_provider,
-            stt_model=settings_store.stt_model,
-            stt_api_key=settings_store.get_api_key(settings_store.stt_provider),
-            output_sample_rate=output_sample_rate,
-        )
-        runner = PipelineRunner(handle_sigint=False)
+        # Build + run inside one guarded lifecycle. Construction failures
+        # (Whisper init, Piper init, openWakeWord load, missing keys for
+        # the selected provider) used to escape this method without
+        # setting _last_error or clearing _mode/_task — /api/status would
+        # then report mode="local" while no pipeline was running. Catch
+        # both phases below, surface the error, and reset state in
+        # finally so the next start_local can recover cleanly.
         try:
+            task = build_pipeline_task(
+                transport,
+                system_prompt=settings_store.system_prompt,
+                tts_voice=settings_store.tts_voice,
+                allow_interruptions=settings_store.allow_interruptions,
+                wake_word_models=settings_store.wake_word_models,
+                wake_word_disabled=wake_disabled,
+                chimes_enabled=settings_store.chimes_enabled,
+                continuous_conversation=settings_store.continuous_conversation,
+                continuous_window_secs=settings_store.continuous_window_secs,
+                stt_language=settings_store.stt_language,
+                google_search_enabled=settings_store.google_search_enabled,
+                greeting_message=greeting,
+                conversation_history=history,
+                on_user_stopped=self.on_user_stopped,
+                on_bot_started=self.on_bot_started,
+                on_bot_stopped=self.on_bot_stopped,
+                on_wake_fired=self.on_wake_fired,
+                on_wake_predict_error=self.on_wake_predict_error,
+                is_bot_speaking=self.is_bot_currently_speaking,
+                is_muted=self.is_muted,
+                on_turn_complete=_on_turn_complete,
+                llm_provider=settings_store.llm_provider,
+                llm_model=settings_store.llm_model,
+                llm_api_key=settings_store.get_api_key(settings_store.llm_provider),
+                llm_base_url=(
+                    settings_store.llm_base_url
+                    or LLM_BASE_URL_DEFAULTS.get(settings_store.llm_provider, "")
+                ),
+                brave_api_key=settings_store.get_brave_key(),
+                stt_provider=settings_store.stt_provider,
+                stt_model=settings_store.stt_model,
+                stt_api_key=settings_store.get_api_key(settings_store.stt_provider),
+                output_sample_rate=output_sample_rate,
+            )
+            runner = PipelineRunner(handle_sigint=False)
             await runner.run(task)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.exception("SessionManager: %s pipeline crashed", mode)
             self._last_error = f"{mode}: {exc}"
+        finally:
+            # Only reset state if this task is still the current one —
+            # a concurrent _switch_to may have already replaced it, and
+            # we don't want to wipe the new task's pointers.
+            current = asyncio.current_task()
+            if self._task is current:
+                self._task = None
+                self._mode = "idle"
+                self._processing = False
+                self._processing_started_mono = None
 
 
 session = SessionManager()
@@ -1469,7 +1654,7 @@ async def _hotplug_watchdog() -> None:
                 # No specific device was requested (PortAudio default).
                 # Nothing to watch for.
                 continue
-            devices = _enumerate_devices()
+            devices = await _enumerate_devices_async(force=True)
             in_idx, _in_name = (
                 _resolve_device(input_spec, devices)
                 if input_spec
@@ -1518,9 +1703,12 @@ async def _hotplug_watchdog() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    devices = _enumerate_devices()
+    global _conversation_queue, _conversation_writer_task
+    devices = await _enumerate_devices_async(force=True)
     _log_audio_devices(devices)
     _load_local_llm_error()
+    _conversation_queue = asyncio.Queue(maxsize=_CONVERSATION_QUEUE_MAX)
+    _conversation_writer_task = asyncio.create_task(_conversation_writer())
     await session.start_local()
     watchdog = asyncio.create_task(_hotplug_watchdog())
     ollama_watcher = asyncio.create_task(_ollama_health_watcher())
@@ -1535,6 +1723,23 @@ async def lifespan(_: FastAPI):
             except asyncio.CancelledError:
                 pass
         await session.stop()
+        # Drain any remaining persistence work before tearing down the
+        # writer. join() returns as soon as task_done has been called for
+        # every queued item; bound it so a wedged disk can't hang
+        # shutdown indefinitely.
+        if _conversation_queue is not None and _conversation_writer_task is not None:
+            try:
+                await asyncio.wait_for(_conversation_queue.join(), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "conversation writer didn't drain within 5s — %d pending",
+                    _conversation_queue.qsize(),
+                )
+            _conversation_writer_task.cancel()
+            try:
+                await _conversation_writer_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(lifespan=lifespan)
@@ -1611,7 +1816,7 @@ if STATIC_DIR.exists():
 @app.get("/api/audio-devices")
 async def api_audio_devices() -> dict[str, Any]:
     """Live enumeration of host audio devices for the device-side selector."""
-    devices = _enumerate_devices()
+    devices = await _enumerate_devices_async()
     return {
         "devices": devices,
         "selected": {
@@ -1713,6 +1918,40 @@ async def api_local_audio_select(body: LocalAudioSelectBody) -> dict[str, Any]:
     """
     if body.input_id is None and body.output_id is None:
         raise HTTPException(status_code=400, detail="input_id or output_id required")
+    # Validate channel direction before handing off to PortAudio. The
+    # frontend filters its picker to input-capable devices, so an
+    # input-only id arriving as `output_id` (e.g. the legacy mirror
+    # behavior) would crash LocalAudioTransport at stream open. Reject
+    # it cleanly with a 400 instead.
+    devices = await _enumerate_devices_async(force=True)
+
+    def _device_by_index(target_idx: int) -> Optional[dict[str, Any]]:
+        return next((d for d in devices if d["id"] == target_idx), None)
+
+    if body.input_id is not None:
+        idx, name = _resolve_device(body.input_id, devices)
+        if idx is not None:
+            d = _device_by_index(idx)
+            if d is not None and d.get("input_channels", 0) <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Device {name!r} has no input channels — pick a "
+                        "different mic."
+                    ),
+                )
+    if body.output_id is not None:
+        idx, name = _resolve_device(body.output_id, devices)
+        if idx is not None:
+            d = _device_by_index(idx)
+            if d is not None and d.get("output_channels", 0) <= 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Device {name!r} has no output channels — pick a "
+                        "different speaker."
+                    ),
+                )
     try:
         await session.start_local(
             input_device=body.input_id,
@@ -1994,8 +2233,71 @@ async def _wait_until_ws_closed(websocket: WebSocket) -> None:
         await asyncio.sleep(0.5)
 
 
+def _ws_origin_allowed(origin: Optional[str], host_header: Optional[str]) -> bool:
+    """Return True if the WebSocket origin is acceptable.
+
+    CORS doesn't apply to WebSockets, so we have to gate Origin manually.
+    Allow same-origin requests (Origin host == Host header) plus anything
+    explicitly listed in WENDY_CORS_ORIGINS. Browsers always send an
+    Origin header for WS connections; non-browser clients (curl, Pipecat
+    SDK on a server) don't, and we accept those when no allowlist is
+    configured to keep the existing local-trust template behavior intact
+    when running on a trusted LAN.
+    """
+    if origin is None:
+        # Non-browser client (no Origin header). Token check below is the
+        # only remaining gate.
+        return True
+    if origin in WENDY_CORS_ORIGINS:
+        return True
+    if not host_header:
+        return False
+    try:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(origin)
+    except Exception:
+        return False
+    origin_host = parsed.netloc
+    # Host header may include the port; treat it as canonical.
+    return origin_host == host_header
+
+
+def _ws_token_ok(websocket: WebSocket) -> bool:
+    """Validate a bearer token supplied via query string.
+
+    Browsers can't set custom headers on WebSocket connections, so the
+    only place a token can ride along on a same-origin handshake is the
+    query string. The check is no-op when WENDY_AUTH_TOKEN is unset.
+    """
+    if not WENDY_AUTH_TOKEN:
+        return True
+    candidate = websocket.query_params.get("token", "")
+    if not candidate:
+        return False
+    return hmac.compare_digest(candidate, WENDY_AUTH_TOKEN)
+
+
 @app.websocket("/bot-audio")
 async def bot_audio(websocket: WebSocket) -> None:
+    # Authenticate BEFORE accept() so we can close with a policy code
+    # instead of letting an unauthorized client open the audio stream.
+    origin = websocket.headers.get("origin")
+    host_header = websocket.headers.get("host")
+    if not _ws_origin_allowed(origin, host_header):
+        logger.warning(
+            "Rejecting /bot-audio: origin=%r not allowed (host=%r)",
+            origin,
+            host_header,
+        )
+        # 1008 = policy violation. Close before accept() to avoid the
+        # client interpreting a transient open as success.
+        await websocket.close(code=1008)
+        return
+    if not _ws_token_ok(websocket):
+        logger.warning("Rejecting /bot-audio: missing or invalid bearer token")
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     logger.info("Browser connected")
 
@@ -2016,12 +2318,11 @@ async def bot_audio(websocket: WebSocket) -> None:
                 pass
             if not pipeline_task.done():
                 pipeline_task.cancel()
-                try:
-                    await pipeline_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception:
-                    logger.exception("Pipeline error during shutdown")
+                await _await_task_bounded(
+                    pipeline_task,
+                    timeout=PIPELINE_CANCEL_TIMEOUT_SECS,
+                    label="browser pipeline",
+                )
     except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     except Exception:

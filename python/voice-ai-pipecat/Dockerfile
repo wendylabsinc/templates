@@ -50,6 +50,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         portaudio19-dev \
         libsndfile1 \
         ffmpeg \
+        openssl \
     && rm -rf /var/lib/apt/lists/*
 
 # Ollama for on-device LLM serving. We deliberately bypass Ollama's

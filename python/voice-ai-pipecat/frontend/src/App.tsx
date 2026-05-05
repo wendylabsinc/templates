@@ -87,7 +87,11 @@ function App() {
   // Surface backend-side audio errors (hot-plug events, pipeline crashes)
   // even when the user is on a browser mic — a USB unplug on the device
   // matters either way.
-  const { status: wendyosStatus, error: wendyosFetchError } = useWendyosMicrophones()
+  const {
+    status: wendyosStatus,
+    error: wendyosFetchError,
+    setMuted: setWendyosMuted,
+  } = useWendyosMicrophones()
   const wendyosNotice = React.useMemo<Error | null>(() => {
     if (wendyosFetchError) return wendyosFetchError
     if (!wendyosStatus) return null
@@ -240,6 +244,39 @@ function App() {
                 </Tooltip>
               )}
               <MicrophoneSelector onDeviceSelect={setSelection} />
+              {wendyosStatus?.mode === "local" && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void setWendyosMuted()
+                      }}
+                      aria-label={
+                        wendyosStatus?.muted ? "Unmute device mic" : "Mute device mic"
+                      }
+                      aria-pressed={!!wendyosStatus?.muted}
+                      className={
+                        "flex h-9 w-9 items-center justify-center rounded-md border bg-black/50 transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/60 " +
+                        (wendyosStatus?.muted
+                          ? "border-red-500/40 text-red-400 hover:bg-red-500/10"
+                          : "border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10")
+                      }
+                    >
+                      {wendyosStatus?.muted ? (
+                        <MicOff className="h-4 w-4" />
+                      ) : (
+                        <Mic className="h-4 w-4" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={8}>
+                    {wendyosStatus?.muted
+                      ? "Unmute device mic"
+                      : "Mute device mic (kill switch — bot stops hearing you)"}
+                  </TooltipContent>
+                </Tooltip>
+              )}
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button

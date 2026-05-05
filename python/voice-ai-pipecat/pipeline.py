@@ -1100,6 +1100,48 @@ class StartupAudioGate(FrameProcessor):
         await self.push_frame(frame, direction)
 
 
+class MuteGate(FrameProcessor):
+    """User-controlled mic kill-switch. Drops mic audio + VAD speaking
+    events when ``is_muted()`` returns True.
+
+    Sits at the front of the pipeline (after the startup warm-up gate,
+    before the wake-word gate). Lets the user instantly silence the
+    assistant from the UI without tearing the pipeline down — the bot
+    stops hearing anything while qwen / faster-whisper / Piper stay
+    warm in memory, so unmuting is instant.
+
+    The mute state lives in ``SessionManager`` (so it survives pipeline
+    rebuilds) and is read here via the supplied callable each frame.
+    Reading per-frame is cheap (it's just a bool fetch) and avoids any
+    cross-thread pubsub plumbing.
+    """
+
+    def __init__(
+        self,
+        is_muted: Optional[callable] = None,  # type: ignore[type-arg]
+    ) -> None:
+        super().__init__()
+        self._is_muted = is_muted or (lambda: False)
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        if self._is_muted():
+            # Drop only mic-side input frames + VAD events. Letting
+            # other frames (StartFrame, EndFrame, BotStartedSpeaking,
+            # cancellation, etc.) through keeps the pipeline alive and
+            # lets the bot finish whatever it's already saying.
+            if isinstance(
+                frame,
+                (
+                    InputAudioRawFrame,
+                    UserStartedSpeakingFrame,
+                    UserStoppedSpeakingFrame,
+                ),
+            ):
+                return
+        await self.push_frame(frame, direction)
+
+
 # Push the model toward search so questions about current state ("weather
 # in SF today", "score of the Lakers game", "who won the election")
 # actually hit the grounding tool instead of getting the canned "I don't
@@ -1194,6 +1236,7 @@ def build_pipeline_task(
     on_wake_predict_error: Optional[callable] = None,  # type: ignore[type-arg]
     on_turn_complete: Optional[callable] = None,  # type: ignore[type-arg]
     is_bot_speaking: Optional[callable] = None,  # type: ignore[type-arg]
+    is_muted: Optional[callable] = None,  # type: ignore[type-arg]
     llm_provider: str = "google",
     llm_model: str = "gemini-2.5-flash",
     llm_api_key: str = "",
@@ -1366,6 +1409,10 @@ def build_pipeline_task(
     processors: list[FrameProcessor] = [
         transport.input(),
         StartupAudioGate(warmup_secs=2.0),
+        # Mute gate sits before the wake-word gate so a muted mic
+        # doesn't even feed openWakeWord — that stops false-fires from
+        # ambient noise while muted, and saves the inference cost.
+        MuteGate(is_muted=is_muted),
     ]
     if not wake_disabled:
         processors.append(
@@ -1428,4 +1475,12 @@ def build_pipeline_task(
             allow_interruptions=interrupt,
             enable_metrics=True,
         ),
+        # Disable pipecat's idle-timeout watchdog. Default behaviour
+        # cancels the pipeline after ~5 min of no STT/LLM activity,
+        # which is wrong for an always-listening voice assistant: the
+        # whole point is to sit silently and wait for the user. Bumping
+        # to None makes the pipeline live forever; the user can still
+        # stop it via /api/settings save (rebuilds) or `wendy device
+        # apps stop`.
+        idle_timeout_secs=None,
     )

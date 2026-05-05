@@ -31,6 +31,10 @@ export interface WendyosStatus {
    *  it survives across polling intervals where timestamp may not yet
    *  have updated server-side. */
   wakePulse: number
+  /** Mic kill-switch state. When true, the backend's MuteGate drops
+   *  all input audio + VAD events, so the bot goes deaf until
+   *  toggled off. Set via setMuted() below. */
+  muted: boolean
 }
 
 export interface WendyosMicrophonesState {
@@ -42,6 +46,8 @@ export interface WendyosMicrophonesState {
   error: Error | null
   /** POSTs /api/local-audio/select. Returns when the backend has switched. */
   selectInput: (id: string) => Promise<void>
+  /** POSTs /api/mute. Pass undefined to toggle, or a bool to set explicitly. */
+  setMuted: (next?: boolean) => Promise<void>
 }
 
 // 1.2s gives a wake-flash latency the user actually notices; the
@@ -67,6 +73,7 @@ interface BackendStatus {
   last_response_time_ms: number | null
   last_wake_at: number | null
   wake_pulse: number
+  muted: boolean
 }
 
 /**
@@ -135,6 +142,7 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
         lastResponseTimeMs: statusData.last_response_time_ms,
         lastWakeAt: statusData.last_wake_at,
         wakePulse: statusData.wake_pulse ?? 0,
+        muted: !!statusData.muted,
       }
       const statusJson = JSON.stringify(nextStatus)
       if (statusJson !== lastStatusJson.current) {
@@ -186,5 +194,31 @@ export function useWendyosMicrophones(): WendyosMicrophonesState {
     [tick],
   )
 
-  return { devices, status, error, selectInput }
+  const setMuted = React.useCallback(
+    async (next?: boolean) => {
+      const res = await fetch("/api/mute", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...authHeaders() },
+        body: JSON.stringify(next === undefined ? {} : { muted: next }),
+      })
+      if (!res.ok) {
+        let detail = `Failed to toggle mute: ${res.status}`
+        try {
+          const body = (await res.json()) as { detail?: unknown }
+          if (typeof body?.detail === "string" && body.detail) detail = body.detail
+        } catch {
+          // non-JSON body
+        }
+        const err = new Error(detail)
+        setError(err)
+        throw err
+      }
+      // Optimistically refresh status so the icon flips before the
+      // next 1.2s poll rolls around.
+      await tick()
+    },
+    [tick],
+  )
+
+  return { devices, status, error, selectInput, setMuted }
 }

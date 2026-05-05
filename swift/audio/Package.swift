@@ -5,7 +5,7 @@ import PackageDescription
 let package = Package(
     name: "{{.APP_ID}}",
     platforms: [
-        .macOS(.v14),
+        .macOS("26.0"),
     ],
     dependencies: [
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.21.1"),
@@ -19,6 +19,7 @@ let package = Package(
             dependencies: [
                 .product(name: "Hummingbird", package: "hummingbird", condition: nil),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
+                .product(name: "GStreamer", package: "gstreamer-swift"),
             ]
         ),
     ]

@@ -3,17 +3,73 @@
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <fstream>
 #include <iostream>
 #include <mutex>
+#include <regex>
+#include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
 using namespace drogon;
+
+static std::string trim(const std::string& value) {
+    const auto start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return "";
+    const auto end = value.find_last_not_of(" \t\r\n");
+    return value.substr(start, end - start + 1);
+}
+
+static std::string gstQuote(const std::string& value) {
+    std::string escaped;
+    escaped.reserve(value.size());
+    for (char ch : value) {
+        if (ch == '\\' || ch == '"') escaped.push_back('\\');
+        escaped.push_back(ch);
+    }
+    return "\"" + escaped + "\"";
+}
+
+static std::string shellQuote(const std::string& value) {
+    std::string quoted = "'";
+    for (char ch : value) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(ch);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+static std::string displayName(const std::string& file) {
+    std::string name = file;
+    if (name.size() > 4 && name.substr(name.size() - 4) == ".wav") {
+        name.resize(name.size() - 4);
+    }
+
+    bool capitalize_next = true;
+    for (char& ch : name) {
+        if (ch == '-' || ch == '_') {
+            ch = ' ';
+            capitalize_next = true;
+        } else if (capitalize_next) {
+            ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            capitalize_next = false;
+        }
+    }
+    return name;
+}
 
 // ---------------------------------------------------------------------------
 // AudioCapture singleton — GStreamer pipeline with appsink
@@ -28,11 +84,19 @@ public:
     void start() {
         if (running_.exchange(true)) return;
 
-        pipeline_ = gst_parse_launch(
-            "autoaudiosrc ! audioconvert ! "
+        std::string device;
+        {
+            std::lock_guard<std::mutex> lock(deviceMutex_);
+            device = current_device_;
+        }
+        const std::string source =
+            device.empty() ? "autoaudiosrc" : "alsasrc device=" + gstQuote(device);
+        const std::string pipeline_desc =
+            source + " ! audioconvert ! audioresample ! "
             "audio/x-raw,format=S16LE,channels=1,rate=16000 ! "
-            "appsink name=sink emit-signals=true max-buffers=4 drop=true sync=false",
-            nullptr);
+            "appsink name=sink emit-signals=true max-buffers=4 drop=true sync=false";
+
+        pipeline_ = gst_parse_launch(pipeline_desc.c_str(), nullptr);
 
         if (!pipeline_) {
             std::cerr << "Failed to create GStreamer pipeline" << std::endl;
@@ -92,6 +156,15 @@ public:
         return buffer_;
     }
 
+    void switchMicrophone(const std::string& device) {
+        {
+            std::lock_guard<std::mutex> lock(deviceMutex_);
+            current_device_ = device;
+        }
+        stop();
+        start();
+    }
+
 private:
     AudioCapture() = default;
     ~AudioCapture() { stop(); }
@@ -103,7 +176,9 @@ private:
     std::thread loop_thread_;
     std::atomic<bool> running_{false};
     std::mutex mutex_;
+    std::mutex deviceMutex_;
     std::vector<uint8_t> buffer_;
+    std::string current_device_;
 };
 
 // ---------------------------------------------------------------------------
@@ -112,8 +187,18 @@ private:
 class StreamWs : public WebSocketController<StreamWs> {
 public:
     void handleNewMessage(const WebSocketConnectionPtr&,
-                          std::string&&,
-                          const WebSocketMessageType&) override {}
+                          std::string&& message,
+                          const WebSocketMessageType&) override {
+        Json::Value root;
+        Json::CharReaderBuilder builder;
+        std::string errors;
+        std::istringstream stream(message);
+        if (!Json::parseFromStream(builder, stream, &root, &errors)) return;
+
+        if (root.isMember("switch_microphone") && root["switch_microphone"].isString()) {
+            AudioCapture::instance().switchMicrophone(root["switch_microphone"].asString());
+        }
+    }
 
     void handleNewConnection(const HttpRequestPtr&,
                              const WebSocketConnectionPtr& conn) override {
@@ -165,20 +250,92 @@ static Json::Value listWavFiles() {
     DIR* dir = opendir("./assets");
     if (!dir) return arr;
 
+    std::vector<std::string> files;
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         std::string name(entry->d_name);
         if (name.size() > 4 && name.substr(name.size() - 4) == ".wav") {
-            Json::Value item;
-            // Friendly name: strip extension
-            item["name"] = name.substr(0, name.size() - 4);
-            item["file"] = name;
-            arr.append(item);
+            files.push_back(std::move(name));
         }
     }
     closedir(dir);
+
+    std::sort(files.begin(), files.end());
+    for (const auto& name : files) {
+        Json::Value item;
+        item["name"] = displayName(name);
+        item["file"] = name;
+        arr.append(item);
+    }
     return arr;
 }
+
+// `arecord -l` / `aplay -l` lines look like:
+//   card 0: PCH [HDA Intel PCH], device 3: HDMI 0 [HDMI 0]
+// HDMI outputs commonly use device 3, 7, etc., so we must capture the
+// device number alongside the card number and dedupe on the pair.
+static const std::regex kAlsaDeviceLine(
+    R"(^card\s+(\d+):\s*([^\[]*?)\s*(?:\[[^\]]*\])?\s*,\s*device\s+(\d+):\s*([^\[]*?)\s*(?:\[|$))"
+);
+
+static Json::Value listAudioDevices(const char* command) {
+    Json::Value arr(Json::arrayValue);
+    FILE* pipe = popen(command, "r");
+    if (!pipe) return arr;
+
+    std::set<std::string> seen;
+    char* line = nullptr;
+    size_t len = 0;
+    while (getline(&line, &len, pipe) != -1) {
+        std::string value(line);
+        std::smatch match;
+        if (!std::regex_search(value, match, kAlsaDeviceLine)) continue;
+
+        const std::string card_num = match[1].str();
+        const std::string card_name = trim(match[2].str());
+        const std::string device_num = match[3].str();
+        const std::string device_name = trim(match[4].str());
+
+        std::string id = "hw:" + card_num + "," + device_num;
+        if (!seen.insert(id).second) continue;
+
+        std::string name;
+        if (!card_name.empty() && !device_name.empty()) {
+            name = card_name + " - " + device_name;
+        } else if (!device_name.empty()) {
+            name = device_name;
+        } else if (!card_name.empty()) {
+            name = card_name;
+        } else {
+            name = "Card " + card_num + " device " + device_num;
+        }
+
+        Json::Value item;
+        item["id"] = id;
+        item["name"] = name;
+        arr.append(item);
+    }
+
+    free(line);
+    pclose(pipe);
+    return arr;
+}
+
+static bool resolveSoundPath(const std::string& filename, std::string& out) {
+    if (filename.find('/') != std::string::npos ||
+        filename.find('\\') != std::string::npos ||
+        filename.size() <= 4 ||
+        filename.substr(filename.size() - 4) != ".wav") {
+        return false;
+    }
+
+    out = "./assets/" + filename;
+    std::ifstream file(out);
+    return file.good();
+}
+
+static std::mutex speakerMutex;
+static std::string currentSpeaker;
 
 // ---------------------------------------------------------------------------
 // main
@@ -199,6 +356,77 @@ int main(int argc, char* argv[]) {
             callback(resp);
         },
         {Get});
+
+    app().registerHandler(
+        "/microphones",
+        [](const HttpRequestPtr&, std::function<void(const HttpResponsePtr&)>&& callback) {
+            auto resp = HttpResponse::newHttpJsonResponse(listAudioDevices("arecord -l 2>/dev/null"));
+            callback(resp);
+        },
+        {Get});
+
+    app().registerHandler(
+        "/speakers",
+        [](const HttpRequestPtr&, std::function<void(const HttpResponsePtr&)>&& callback) {
+            auto resp = HttpResponse::newHttpJsonResponse(listAudioDevices("aplay -l 2>/dev/null"));
+            callback(resp);
+        },
+        {Get});
+
+    app().registerHandler(
+        "/speaker/{1}",
+        [](const HttpRequestPtr&,
+           std::function<void(const HttpResponsePtr&)>&& callback,
+           const std::string& device_id) {
+            {
+                std::lock_guard<std::mutex> lock(speakerMutex);
+                currentSpeaker = device_id;
+            }
+            Json::Value json;
+            json["status"] = "ok";
+            json["speaker"] = device_id;
+            callback(HttpResponse::newHttpJsonResponse(json));
+        },
+        {Post});
+
+    app().registerHandler(
+        "/play/{1}",
+        [](const HttpRequestPtr&,
+           std::function<void(const HttpResponsePtr&)>&& callback,
+           const std::string& filename) {
+            std::string filepath;
+            if (!resolveSoundPath(filename, filepath)) {
+                Json::Value json;
+                json["error"] = "not found";
+                auto resp = HttpResponse::newHttpJsonResponse(json);
+                resp->setStatusCode(k404NotFound);
+                callback(resp);
+                return;
+            }
+
+            std::string speaker;
+            {
+                std::lock_guard<std::mutex> lock(speakerMutex);
+                speaker = currentSpeaker;
+            }
+
+            std::string sink = speaker.empty()
+                ? "autoaudiosink"
+                : "alsasink device=" + shellQuote(speaker);
+            std::string command =
+                "gst-launch-1.0 -q filesrc location=" + shellQuote(filepath) +
+                " ! wavparse ! audioconvert ! audioresample ! " + sink;
+
+            std::thread([command]() {
+                std::system(command.c_str());
+            }).detach();
+
+            Json::Value json;
+            json["status"] = "playing";
+            json["file"] = filename;
+            callback(HttpResponse::newHttpJsonResponse(json));
+        },
+        {Post});
 
     // GET /health
     app().registerHandler(

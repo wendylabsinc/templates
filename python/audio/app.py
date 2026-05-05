@@ -10,6 +10,7 @@ import collections
 import glob
 import json
 import logging
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -59,21 +60,50 @@ _current_speaker: str | None = None
 # ---------------------------------------------------------------------------
 
 
-def _parse_arecord_or_aplay(cmd: str) -> list[dict]:
-    """Parse `arecord -l` or `aplay -l` output into [{id, name}, ...]."""
+# `arecord -l` / `aplay -l` lines look like:
+#   card 0: PCH [HDA Intel PCH], device 3: HDMI 0 [HDMI 0]
+# The device number is not always 0 (HDMI outputs commonly use 3, 7, …),
+# so we capture both the card and device numbers and dedupe on the pair.
+_DEVICE_LINE_RE = re.compile(
+    r"^card\s+(\d+):\s*([^\[]*?)\s*(?:\[[^\]]*\])?\s*,"
+    r"\s*device\s+(\d+):\s*([^\[]*?)\s*(?:\[|$)"
+)
+
+
+def _parse_alsa_listing(output: str) -> list[dict]:
+    """Parse `arecord -l` / `aplay -l` text into [{id, name}, ...]."""
     devices: list[dict] = []
+    seen: set[str] = set()
+    for line in output.splitlines():
+        match = _DEVICE_LINE_RE.match(line)
+        if not match:
+            continue
+        card_num, card_name, device_num, dev_name = match.groups()
+        device_id = f"hw:{card_num},{device_num}"
+        if device_id in seen:
+            continue
+        seen.add(device_id)
+        card_name = card_name.strip()
+        dev_name = dev_name.strip()
+        if card_name and dev_name:
+            name = f"{card_name} - {dev_name}"
+        elif dev_name:
+            name = dev_name
+        elif card_name:
+            name = card_name
+        else:
+            name = f"Card {card_num} device {device_num}"
+        devices.append({"id": device_id, "name": name})
+    return devices
+
+
+def _parse_arecord_or_aplay(cmd: str) -> list[dict]:
+    """Run `arecord -l` / `aplay -l` and parse the listing."""
     try:
         out = subprocess.check_output(cmd.split(), stderr=subprocess.DEVNULL, timeout=2).decode()
-        for line in out.splitlines():
-            if line.startswith("card "):
-                parts = line.split(":")
-                if len(parts) >= 2:
-                    card_num = line.split()[1].rstrip(":")
-                    name = parts[1].strip().split("[")[0].strip()
-                    devices.append({"id": f"hw:{card_num},0", "name": name})
     except Exception:
-        pass
-    return devices
+        return []
+    return _parse_alsa_listing(out)
 
 
 def _list_microphones() -> list[dict]:

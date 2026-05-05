@@ -21,12 +21,11 @@ RUN npm run build
 # CUDA backend — which faster-whisper rides on — links against cuDNN.
 FROM ${JETSON_BASE_IMAGE}
 
-# The dustynv JetPack base ships an empty /etc/hosts. Without an entry
-# for `localhost`, Python httpx (used by the openai client → Ollama
-# integration) fails getaddrinfo with EAI_AGAIN and pipecat can't reach
-# the local LLM at http://localhost:11434, even though curl from the
-# same container resolves and connects fine. Pin loopback resolution.
-RUN printf '127.0.0.1\tlocalhost\n::1\tlocalhost\n' > /etc/hosts
+# Note: the dustynv JetPack base ships an empty /etc/hosts, which
+# breaks Python httpx's loopback resolution and the openai client →
+# Ollama integration. We can't seed /etc/hosts here because BuildKit
+# bind-mounts it read-only during builds; entrypoint.sh writes it at
+# container start instead.
 
 # JetPack 6 ships Ubuntu 22.04 with Python 3.10 native — no deadsnakes
 # PPA needed (the previous r35/Ubuntu-20.04 base did, and the launchpad

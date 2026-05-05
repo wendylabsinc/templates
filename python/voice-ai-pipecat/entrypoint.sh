@@ -58,13 +58,28 @@ TLS_CERT="$TLS_DIR/cert.pem"
 TLS_KEY="$TLS_DIR/key.pem"
 if [ ! -s "$TLS_CERT" ] || [ ! -s "$TLS_KEY" ]; then
   echo "[entrypoint] generating self-signed TLS cert in $TLS_DIR"
-  TLS_HOST="$(hostname).local"
+  # Pick the best hostname for the cert CN. Prefer WENDY_HOSTNAME (set
+  # by the wendy agent at deploy time) because $(hostname) inside the
+  # container only returns the short kernel hostname (e.g. "wendy"),
+  # not the device's actual mDNS name like "wendyos-mighty-kayak". Fall
+  # back to $(hostname).local. Either way ensure a single .local suffix
+  # so the CN matches what the browser will resolve.
+  TLS_PRIMARY_HOST="${WENDY_HOSTNAME:-$(hostname)}"
+  case "$TLS_PRIMARY_HOST" in
+    *.local) ;;
+    *)       TLS_PRIMARY_HOST="$TLS_PRIMARY_HOST.local" ;;
+  esac
+  # Stuff the cert with several SANs so it matches whichever hostname
+  # the developer happens to type into the browser. Order matters for
+  # the CN (first one wins); the rest are alternatives.
+  TLS_SHORT_HOST="$(hostname)"
+  TLS_SAN="DNS:$TLS_PRIMARY_HOST,DNS:$TLS_SHORT_HOST,DNS:$TLS_SHORT_HOST.local,DNS:localhost,IP:127.0.0.1"
   if openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
        -keyout "$TLS_KEY" -out "$TLS_CERT" \
-       -subj "/CN=$TLS_HOST" \
-       -addext "subjectAltName=DNS:$TLS_HOST,DNS:localhost,IP:127.0.0.1" \
+       -subj "/CN=$TLS_PRIMARY_HOST" \
+       -addext "subjectAltName=$TLS_SAN" \
        2>/dev/null; then
-    echo "[entrypoint] TLS cert generated for $TLS_HOST (self-signed)"
+    echo "[entrypoint] TLS cert generated for $TLS_PRIMARY_HOST (self-signed; SAN=$TLS_SAN)"
   else
     echo "[entrypoint] WARN: openssl cert generation failed; falling back to plain HTTP"
     rm -f "$TLS_CERT" "$TLS_KEY"

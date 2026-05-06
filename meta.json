@@ -1,6 +1,24 @@
 {
     "templates": [
         {
+            "name": "blink-led",
+            "description": "Blink the built-in LED on an ESP32 using GPIO",
+            "targets": ["wendy-lite"],
+            "languages": ["swift"]
+        },
+        {
+            "name": "hello-world",
+            "description": "Make an HTTPS request from a Wendy Lite device",
+            "targets": ["wendy-lite"],
+            "languages": ["swift"]
+        },
+        {
+            "name": "mini",
+            "description": "Minimal Wendy Lite application",
+            "targets": ["wendy-lite"],
+            "languages": ["swift"]
+        },
+        {
             "name": "simple-api",
             "description": "Minimal HTTP API with JSON endpoints"
         },

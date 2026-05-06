@@ -1,0 +1,4 @@
+{
+    "name": "blink-led",
+    "description": "Blink the built-in LED on an ESP32 using GPIO"
+}

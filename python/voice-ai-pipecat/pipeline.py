@@ -16,6 +16,7 @@ import asyncio
 import logging
 import os
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -48,6 +49,17 @@ from pipecat.services.whisper.stt import WhisperSTTService, Model
 from pipecat.transports.base_transport import BaseTransport
 
 _log = logging.getLogger("voice-ai-pipecat.pipeline")
+
+# Per-turn transcript content (user STT text, bot TTS text, turn snippet)
+# is private speech. Off by default so production logs don't capture it;
+# set LOG_TRANSCRIPTS=true to re-enable for debugging. Latency telemetry
+# stays on regardless — it's content-free.
+_LOG_TRANSCRIPTS = os.environ.get("LOG_TRANSCRIPTS", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 
 # Lazy imports for optional providers — pipecat-ai's [deepgram], [openai],
@@ -150,6 +162,36 @@ class _WhisperRuntimeState:
 
 
 whisper_state = _WhisperRuntimeState()
+
+
+# Shared httpx client for outbound tool calls (Brave Search etc.). One
+# client per process amortizes DNS/TLS/connection setup across turns;
+# previously every web_search call built and discarded a fresh client,
+# adding ~80–150 ms of TLS handshake to a latency-sensitive path. Built
+# lazily so module import has no I/O side effects.
+_HTTP_CLIENT: Optional["object"] = None
+_HTTP_CLIENT_LOCK = asyncio.Lock()
+
+
+async def _get_http_client():
+    """Return the process-wide httpx.AsyncClient, creating it if needed.
+
+    Imports httpx lazily so non-search code paths don't pay the cost.
+    """
+    global _HTTP_CLIENT
+    if _HTTP_CLIENT is not None:
+        return _HTTP_CLIENT
+    async with _HTTP_CLIENT_LOCK:
+        if _HTTP_CLIENT is None:
+            import httpx
+
+            _HTTP_CLIENT = httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=3.0, read=8.0, write=5.0, pool=5.0),
+                limits=httpx.Limits(
+                    max_connections=10, max_keepalive_connections=5
+                ),
+            )
+    return _HTTP_CLIENT
 
 
 def _provider_unavailable(name: str, load_error: Optional[str]) -> RuntimeError:
@@ -640,7 +682,10 @@ class STTUserTextCapture(FrameProcessor):
             text = (getattr(frame, "text", "") or "").strip()
             if text:
                 self.last_user_text = text
-                _log.info("STT ▸ %s", text)
+                if _LOG_TRANSCRIPTS:
+                    _log.info("STT ▸ %s", text)
+                else:
+                    _log.info("STT ▸ (%d chars; LOG_TRANSCRIPTS=true to log content)", len(text))
         await self.push_frame(frame, direction)
 
 
@@ -680,7 +725,13 @@ class BotResponseLogger(FrameProcessor):
             if self._chunks:
                 full = "".join(self._chunks).strip()
                 if full:
-                    _log.info("TTS ▸ %s", full)
+                    if _LOG_TRANSCRIPTS:
+                        _log.info("TTS ▸ %s", full)
+                    else:
+                        _log.info(
+                            "TTS ▸ (%d chars; LOG_TRANSCRIPTS=true to log content)",
+                            len(full),
+                        )
                     if self._on_turn_complete and self._user_capture is not None:
                         user_text = self._user_capture.consume_user_text()
                         if user_text:
@@ -775,10 +826,14 @@ class TurnTelemetry(FrameProcessor):
         llm = ms(self._stt_done_at, self._llm_first_at)
         tts = ms(self._llm_first_at, self._tts_first_at)
         total = ms(self._user_stopped_at, self._tts_first_at)
-        snippet = self._user_text[:60] + ("…" if len(self._user_text) > 60 else "")
+        if _LOG_TRANSCRIPTS:
+            snippet = self._user_text[:60] + ("…" if len(self._user_text) > 60 else "")
+            user_repr = repr(snippet)
+        else:
+            user_repr = f"<{len(self._user_text)} chars>"
         _log.info(
-            "turn complete: user=%r stt=%s llm_ttft=%s tts_ttft=%s total=%s",
-            snippet,
+            "turn complete: user=%s stt=%s llm_ttft=%s tts_ttft=%s total=%s",
+            user_repr,
             stt,
             llm,
             tts,
@@ -926,6 +981,15 @@ class WakeWordGate(FrameProcessor):
         self._predict_error_limit = max(1, predict_error_limit)
         self._consecutive_predict_errors: int = 0
         self._predict_error_notified: bool = False
+        self._predict_circuit_open: bool = False
+        self._last_predict_error_log_at: float = 0.0
+        # Pre-roll buffer of recent input frames. Without it the gate
+        # drops every frame up to and including the one that triggered
+        # wake, so users speaking "hey jarvis, what time is it" in one
+        # breath lose the first word or two of the command. Keep ~600 ms
+        # worth so STT still sees the lead-in once the window opens.
+        self._preroll: "deque[InputAudioRawFrame]" = deque()
+        self._preroll_secs: float = 0.6
         # Continuous-conversation: re-open the listening window
         # automatically after the bot finishes speaking, so the user can
         # ask a follow-up without re-saying the wake word. We detect the
@@ -946,6 +1010,34 @@ class WakeWordGate(FrameProcessor):
             self._listening_until is not None
             and time.monotonic() < self._listening_until
         )
+
+    def _trim_preroll(self, now: float) -> None:
+        """Drop pre-roll frames older than ``self._preroll_secs``.
+
+        Frame duration depends on sample_rate and audio length, so we
+        compute it per-frame instead of assuming a fixed cadence. The
+        buffer holds at most a fraction of a second so the cost is low.
+        """
+        # Walk newest → oldest accumulating duration; once we've covered
+        # the pre-roll window, drop everything older. Approximate frame
+        # duration as len(audio) / 2 / sr (int16 mono); a stereo frame
+        # reads twice the bytes so we'd slightly overestimate — that
+        # only means a frame is dropped one tick earlier than strictly
+        # necessary, harmless given ~10 ms granularity.
+        durations = [
+            max(len(f.audio) // 2, 1)
+            / max(int(getattr(f, "sample_rate", 0)) or 16000, 1)
+            for f in self._preroll
+        ]
+        cumulative = 0.0
+        keep_from = 0
+        for i in range(len(durations) - 1, -1, -1):
+            cumulative += durations[i]
+            if cumulative >= self._preroll_secs:
+                keep_from = i
+                break
+        for _ in range(keep_from):
+            self._preroll.popleft()
 
     async def _push_chime(self, audio: bytes) -> None:
         await self.push_frame(
@@ -1006,6 +1098,19 @@ class WakeWordGate(FrameProcessor):
         self._bot_was_speaking = bot_speaking
 
         if isinstance(frame, InputAudioRawFrame):
+            # Maintain a rolling pre-roll buffer of recent input frames.
+            # When wake fires we flush this into the listening window so
+            # words spoken just before the trigger ("hey jarvis what time
+            # is it") still reach STT. Skip while in-window or during
+            # bot TTS — those frames are either already being forwarded
+            # or shouldn't be queued for the next turn.
+            if not self._in_window and not bot_speaking:
+                self._preroll.append(frame)
+                # Frames are ~10–20 ms each at 16 kHz; cap by approximate
+                # duration computed from sample_rate to stay tolerant of
+                # different transports without holding tens of seconds
+                # on a stuck pipeline.
+                self._trim_preroll(now)
             # Run wake detector unless we just played a chime, are
             # already inside a listening window, or the bot is
             # currently speaking (its TTS leaks back into the mic).
@@ -1013,28 +1118,51 @@ class WakeWordGate(FrameProcessor):
                 now >= self._mute_oww_until
                 and not self._in_window
                 and not bot_speaking
+                and not self._predict_circuit_open
             ):
                 audio = np.frombuffer(frame.audio, dtype=np.int16)
                 try:
                     prediction = self._oww.predict(audio)
                     self._consecutive_predict_errors = 0
                 except Exception as exc:
-                    _log.exception("WakeWordGate: predict failed")
                     prediction = {}
                     self._consecutive_predict_errors += 1
+                    # Rate-limit the stack trace: at audio rates a broken
+                    # model dumps ~50 tracebacks/sec into the log. Print
+                    # the first one and then 1-line WARNs every ~5 s
+                    # until the circuit trips.
+                    if self._consecutive_predict_errors == 1:
+                        _log.exception("WakeWordGate: predict failed")
+                    elif now - self._last_predict_error_log_at >= 5.0:
+                        _log.warning(
+                            "WakeWordGate: predict still failing (%d consecutive): %s",
+                            self._consecutive_predict_errors,
+                            exc,
+                        )
+                        self._last_predict_error_log_at = now
                     if (
                         self._consecutive_predict_errors >= self._predict_error_limit
-                        and not self._predict_error_notified
-                        and self._on_predict_error
+                        and not self._predict_circuit_open
                     ):
+                        # Open the circuit: stop calling predict() at all
+                        # so we're not burning CPU on a broken model.
                         # Without this notification the gate stays closed
                         # forever and the user has no signal — the device
                         # appears unresponsive to the wake word.
-                        self._predict_error_notified = True
-                        try:
-                            self._on_predict_error(str(exc))
-                        except Exception:
-                            _log.exception("WakeWordGate: on_predict_error failed")
+                        self._predict_circuit_open = True
+                        if not self._predict_error_notified and self._on_predict_error:
+                            self._predict_error_notified = True
+                            try:
+                                self._on_predict_error(str(exc))
+                            except Exception:
+                                _log.exception(
+                                    "WakeWordGate: on_predict_error failed"
+                                )
+                        _log.error(
+                            "WakeWordGate: circuit opened after %d consecutive "
+                            "predict() failures — wake-word disabled until restart",
+                            self._consecutive_predict_errors,
+                        )
                 if prediction:
                     score = max(prediction.values())
                     if score >= self._threshold:
@@ -1053,7 +1181,16 @@ class WakeWordGate(FrameProcessor):
                                 _log.exception("WakeWordGate: on_wake_fired failed")
                         if self._chimes_enabled:
                             await self._push_chime(self._chime_open)
-                        return  # don't forward this frame to STT
+                        # Flush the pre-roll buffer (which already contains
+                        # this frame, since we appended above) so STT sees
+                        # the lead-in audio that ran up to the wake word.
+                        # Whisper handles the wake phonemes fine, and the
+                        # alternative is dropping the start of the user's
+                        # actual command.
+                        for buffered in list(self._preroll):
+                            await self.push_frame(buffered, direction)
+                        self._preroll.clear()
+                        return
             if self._in_window:
                 await self.push_frame(frame, direction)
             return
@@ -1305,7 +1442,15 @@ def build_pipeline_task(
     # native google_search grounding (no function calls). For
     # OpenAI/Anthropic/Groq we register a `web_search` function backed
     # by Brave Search — the LLM decides when to call it.
-    api_key_for_llm = llm_api_key or os.environ.get("GOOGLE_API_KEY", "")
+    # Only fall back to GOOGLE_API_KEY when the active provider is
+    # Google. Otherwise a missing OpenAI/Anthropic/Groq key would silently
+    # become a Google key and the next turn would 4xx with a confusing
+    # provider-mismatch error. main.py already resolves the per-provider
+    # env var into llm_api_key, so the only remaining fallback is the
+    # build-time GOOGLE_API_KEY env for the Google provider.
+    api_key_for_llm = llm_api_key
+    if not api_key_for_llm and llm_provider == "google":
+        api_key_for_llm = os.environ.get("GOOGLE_API_KEY", "")
     llm, tools_schema, handler_spec = _build_llm_service(
         llm_provider,
         llm_model,
@@ -1332,16 +1477,25 @@ def build_pipeline_task(
                 # at pipeline-build time, so settings rotation only
                 # takes effect on the next pipeline rebuild.
                 async def _web_search(params, _key=captured_key) -> None:  # type: ignore[no-untyped-def]
-                    import httpx
-
                     query = (params.arguments or {}).get("query", "")
                     if not _key:
                         await params.result_callback(
                             {"error": "Web search not configured"}
                         )
                         return
-                    try:
-                        async with httpx.AsyncClient(timeout=10) as client:
+                    client = await _get_http_client()
+                    # Retry on transient 429/5xx with exponential backoff.
+                    # Three attempts caps the worst-case stall around 3 s
+                    # — long enough to ride out a single rate-limit but
+                    # short enough that a degraded search doesn't make
+                    # the whole turn feel broken.
+                    attempts = 3
+                    backoff = 0.4
+                    last_status: Optional[int] = None
+                    last_error: Optional[str] = None
+                    started = time.monotonic()
+                    for attempt in range(1, attempts + 1):
+                        try:
                             resp = await client.get(
                                 "https://api.search.brave.com/res/v1/web/search",
                                 headers={
@@ -1350,27 +1504,75 @@ def build_pipeline_task(
                                 },
                                 params={"q": query, "count": 3},
                             )
-                        if resp.status_code != 200:
+                        except Exception as exc:
+                            last_error = str(exc)
+                            _log.warning(
+                                "Brave search attempt %d/%d failed: %s",
+                                attempt,
+                                attempts,
+                                exc,
+                            )
+                            if attempt == attempts:
+                                break
+                            await asyncio.sleep(backoff)
+                            backoff *= 2
+                            continue
+                        last_status = resp.status_code
+                        if resp.status_code == 200:
+                            try:
+                                data = resp.json()
+                            except Exception as exc:
+                                _log.exception(
+                                    "Brave search returned non-JSON body (status=%s)",
+                                    resp.status_code,
+                                )
+                                await params.result_callback(
+                                    {"error": f"Search response not JSON: {exc}"}
+                                )
+                                return
+                            results = data.get("web", {}).get("results", [])
+                            top = [
+                                {
+                                    "title": r.get("title", ""),
+                                    "url": r.get("url", ""),
+                                    "snippet": r.get("description", ""),
+                                }
+                                for r in results[:3]
+                            ]
+                            duration_ms = int((time.monotonic() - started) * 1000)
+                            _log.info(
+                                "Brave search ok: query_len=%d status=200 duration=%dms",
+                                len(query),
+                                duration_ms,
+                            )
                             await params.result_callback(
-                                {"error": f"Search returned {resp.status_code}"}
+                                {"results": top, "query": query}
                             )
                             return
-                        data = resp.json()
-                        results = data.get("web", {}).get("results", [])
-                        top = [
-                            {
-                                "title": r.get("title", ""),
-                                "url": r.get("url", ""),
-                                "snippet": r.get("description", ""),
-                            }
-                            for r in results[:3]
-                        ]
+                        # Retry only on transient classes; treat 4xx
+                        # other than 429 as terminal so a bad key or
+                        # bad query stops fast.
+                        if resp.status_code != 429 and resp.status_code < 500:
+                            break
+                        if attempt < attempts:
+                            await asyncio.sleep(backoff)
+                            backoff *= 2
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    _log.warning(
+                        "Brave search failed: query_len=%d status=%s error=%s duration=%dms",
+                        len(query),
+                        last_status,
+                        last_error,
+                        duration_ms,
+                    )
+                    if last_status is not None:
                         await params.result_callback(
-                            {"results": top, "query": query}
+                            {"error": f"Search returned {last_status}"}
                         )
-                    except Exception as exc:
-                        _log.exception("Brave search failed")
-                        await params.result_callback({"error": f"Search failed: {exc}"})
+                    else:
+                        await params.result_callback(
+                            {"error": f"Search failed: {last_error or 'unknown error'}"}
+                        )
 
                 llm.register_function(name, _trace_tool(name, _web_search))
             else:

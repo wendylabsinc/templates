@@ -9,17 +9,28 @@ re-copy into those template directories (see the template READMEs).
 The visualizer reads frequency data from two Web Audio `AnalyserNode`s:
 
 - **blue** lines react to the user's microphone (`useMicrophoneSource`)
-- **emerald** lines react to the bot's TTS audio coming back over a WebSocket
-  (`useWebSocketSource`, configured in `src/App.tsx`)
+- **emerald** lines react to the bot's TTS audio coming back over the
+  Pipecat WebSocket (`usePipecatClient`, configured in `src/App.tsx`)
 
 Everything else — microphone selection, WebSocket URL, error surfacing — is wiring
-around those two `AnalyserNode`s.
+around those two `AnalyserNode`s. The lower-level `useWebSocketSource` /
+`useWebRtcSource` hooks documented further down still exist for non-Pipecat
+audio sources, but the default `App.tsx` path uses Pipecat's client SDK.
 
 ## Connecting to a backend
 
 `src/App.tsx` derives the bot WebSocket URL from the current page origin
-(`ws://<host>/bot-audio`). When developing the frontend standalone against a
-running Pipecat backend, override it:
+(`ws://<host>/bot-audio`). When developing the frontend standalone, the
+template's `vite.config.ts` proxies `/api/*` and `/bot-audio` to the backend
+named by the `DEV_BACKEND_URL` env var (default `https://localhost:3005`):
+
+```bash
+DEV_BACKEND_URL=https://localhost:3005 npm run dev
+```
+
+If you only want to override the WebSocket URL (e.g. point at a different
+host) without proxying `/api/*`, `VITE_BOT_WS_URL` still wins over the
+page-origin default:
 
 ```bash
 VITE_BOT_WS_URL=ws://localhost:3005/bot-audio npm run dev

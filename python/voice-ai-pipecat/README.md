@@ -54,13 +54,21 @@ regen automatically.
 
 ## Running the frontend standalone
 
-If you want to iterate on the UI against a local Pipecat backend:
+If you want to iterate on the UI against a running Pipecat backend, start
+the backend first (e.g. `wendy run .` on a device, or `python main.py`
+locally), then point Vite's dev proxy at it:
 
 ```bash
 cd frontend
-npm install
-VITE_BOT_WS_URL=ws://localhost:{{.PORT}}/bot-audio npm run dev
+npm ci
+DEV_BACKEND_URL=https://localhost:{{.PORT}} npm run dev
 ```
+
+`vite.config.ts` proxies `/api/*` and `/bot-audio` to `DEV_BACKEND_URL`,
+so the standalone frontend uses the same relative paths that the
+production build does — no per-call origin overrides needed. If you want
+to override just the WebSocket (e.g. point at a different backend host),
+`VITE_BOT_WS_URL` still wins over the page origin.
 
 The canonical source for the frontend lives at
 `common/voice-ai-pipecat-frontend/` in the `wendylabsinc/templates` repo. The
@@ -78,10 +86,19 @@ re-copy it into this directory before shipping.
 
 ## First-run note
 
-The first time the container starts, faster-whisper downloads its tiny model
-(~500 MB) and Piper downloads the selected voice. Both land in `/models/`,
-which is backed by a persistent volume, so subsequent starts are instant.
-Expect the readiness probe to take up to a minute on the first boot.
+On first boot the container does three downloads:
+
+- **faster-whisper** tiny model (~75 MB) and **Piper** voices are seeded from
+  the image into `/models/` (a persistent volume), so subsequent starts are
+  instant. The seed copy happens automatically in `entrypoint.sh`.
+- **Ollama** pulls the model named in the `LOCAL_LLM_MODEL` template variable
+  (default `qwen2.5:3b`, ~2 GB). On WiFi this typically takes 1–3 minutes.
+  Set the variable to an empty string at scaffold time to skip the pull —
+  the daemon still starts so you can pull a model later via the settings
+  drawer, or you can disable Ollama entirely with `ENABLE_OLLAMA=0`.
+
+Expect the readiness probe to take a few minutes on first boot when the
+Ollama model pull is enabled. Subsequent boots are fast.
 
 ## Picking a model
 

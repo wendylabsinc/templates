@@ -1,0 +1,79 @@
+services:
+  go2-motion:
+    build: ./go2-motion
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - PORT=3201
+      - GO2_NETWORK_INTERFACE=eth0
+
+  go2-camera:
+    build: ./go2-camera
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - PORT=8000
+      - GO2_IP={{.GO2_IP}}
+
+  go2-brain:
+    build: ./go2-brain
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - go2-motion
+{{if eq .ENABLE_WATCHTOWER "true"}}
+      - go2-watchtower
+{{end}}
+    environment:
+      - GO2_IP={{.GO2_IP}}
+      - GO2_MOTION_URL=http://127.0.0.1:3201
+      - BRAIN_SAFETY_STRICT=1
+
+  go2-mcp:
+    build: ./go2-mcp
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - go2-motion
+      - go2-brain
+    environment:
+      - MCP_TRANSPORT=streamable-http
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3400
+      - GO2_MOTION_URL=http://127.0.0.1:3201
+      - GO2_BRAIN_URL=http://127.0.0.1:3300
+
+  go2-rc:
+    build: ./go2-rc
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - go2-motion
+      - go2-camera
+    environment:
+      - PORT=3500
+      - GO2_MOTION_URL=http://127.0.0.1:3201
+      - CAMERA_UPSTREAM_URL=http://127.0.0.1:8000/stream/color
+{{if eq .ENABLE_WATCHTOWER "true"}}
+
+  go2-watchtower:
+    build: ./go2-watchtower
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - GO2_IP={{.GO2_IP}}
+      - FOXGLOVE_PORT={{.WATCHTOWER_PORT}}
+{{end}}
+{{if eq .ENABLE_BROADCASTER "true"}}
+
+  go2-broadcaster:
+    build: ./go2-broadcaster
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - go2-camera
+    environment:
+      - PORT=3700
+      - CAMERA_UPSTREAM_URL=http://127.0.0.1:8000/stream/color
+      - TWITCH_STREAM_KEY={{.TWITCH_STREAM_KEY}}
+{{end}}

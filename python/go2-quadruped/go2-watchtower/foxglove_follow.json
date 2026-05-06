@@ -1,0 +1,130 @@
+{
+  "configById": {
+    "Image!camera": {
+      "topic": "/go2/vision/tracked_overlay/compressed",
+      "calibrationTopic": "",
+      "transformMarkers": false,
+      "synchronize": false,
+      "smooth": true,
+      "flipHorizontal": false,
+      "flipVertical": false,
+      "rotation": 0,
+      "minValue": 0,
+      "maxValue": 10000,
+      "mode": "fit"
+    },
+    "Indicator!uwbseen": {
+      "path": "/go2/uwb/health.data[0]",
+      "style": "background",
+      "fallbackColor": "#6b7280",
+      "fallbackLabel": "UNKNOWN",
+      "rules": [
+        { "operator": "=", "rawValue": "1", "color": "#22c55e", "label": "TAG SEEN" },
+        { "operator": "=", "rawValue": "0", "color": "#ef4444", "label": "TAG LOST" }
+      ]
+    },
+    "Gauge!uwbrange": {
+      "path": "/go2/uwb/range.data",
+      "minValue": 0,
+      "maxValue": 15,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false
+    },
+    "StateTransitions!uwbstate": {
+      "paths": [
+        { "value": "/go2/uwb/state.data", "timestampMethod": "receiveTime", "label": "tracking state" }
+      ],
+      "isSynced": true
+    },
+    "RawMessages!uwbdecision": {
+      "topicPath": "/go2/uwb/decision.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!brainintent": {
+      "topicPath": "/go2/brain/intent.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!posejson": {
+      "topicPath": "/go2/dog/pose_json.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 11
+    },
+    "RawMessages!freespace": {
+      "topicPath": "/go2/perception/free_space.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 11
+    },
+    "Plot!uwbtrend": {
+      "title": "UWB — range, bearing, velocity",
+      "paths": [
+        { "value": "/go2/uwb/range.data", "enabled": true, "timestampMethod": "receiveTime", "label": "range (m)" },
+        { "value": "/go2/uwb/bearing_deg.data", "enabled": true, "timestampMethod": "receiveTime", "label": "bearing (°, +ve = left)" },
+        { "value": "/go2/uwb/target.twist.twist.linear.x", "enabled": true, "timestampMethod": "receiveTime", "label": "vx (m/s)" },
+        { "value": "/go2/uwb/target.twist.twist.linear.y", "enabled": true, "timestampMethod": "receiveTime", "label": "vy (m/s)" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "first": "Image!camera",
+    "second": {
+      "first": {
+        "first": "Indicator!uwbseen",
+        "second": "Gauge!uwbrange",
+        "direction": "row",
+        "splitPercentage": 40
+      },
+      "second": {
+        "first": "StateTransitions!uwbstate",
+        "second": {
+          "first": "RawMessages!uwbdecision",
+          "second": {
+            "first": "RawMessages!brainintent",
+            "second": {
+              "first": "RawMessages!posejson",
+              "second": {
+                "first": "RawMessages!freespace",
+                "second": "Plot!uwbtrend",
+                "direction": "column",
+                "splitPercentage": 35
+              },
+              "direction": "column",
+              "splitPercentage": 25
+            },
+            "direction": "column",
+            "splitPercentage": 35
+          },
+          "direction": "column",
+          "splitPercentage": 25
+        },
+        "direction": "column",
+        "splitPercentage": 15
+      },
+      "direction": "column",
+      "splitPercentage": 18
+    },
+    "direction": "row",
+    "splitPercentage": 55
+  }
+}

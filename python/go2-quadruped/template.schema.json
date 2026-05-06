@@ -1,0 +1,73 @@
+{
+    "phases": [
+        {
+            "id": "robot",
+            "title": "Robot",
+            "questions": [
+                {
+                    "id": "GO2_IP",
+                    "label": "Go2 IP address (on the 192.168.123.0/24 dog subnet)",
+                    "type": "input",
+                    "required": true,
+                    "default": "192.168.123.161"
+                }
+            ]
+        },
+        {
+            "id": "optional-services",
+            "title": "Optional Services",
+            "questions": [
+                {
+                    "id": "ENABLE_WATCHTOWER",
+                    "label": "Include Watchtower (ROS2 + Foxglove)? Heavy first build (~10 min).",
+                    "type": "radio",
+                    "required": true,
+                    "default": "false",
+                    "options": [
+                        { "value": "false", "label": "No — skip Watchtower" },
+                        { "value": "true",  "label": "Yes — include Watchtower" }
+                    ]
+                },
+                {
+                    "id": "ENABLE_BROADCASTER",
+                    "label": "Include go2-broadcaster (RTMP push to Twitch)?",
+                    "type": "radio",
+                    "required": true,
+                    "default": "false",
+                    "options": [
+                        { "value": "false", "label": "No — skip broadcaster" },
+                        { "value": "true",  "label": "Yes — include broadcaster" }
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "watchtower-config",
+            "title": "Watchtower",
+            "when": { "questionId": "ENABLE_WATCHTOWER", "equals": "true" },
+            "questions": [
+                {
+                    "id": "WATCHTOWER_PORT",
+                    "label": "Foxglove WebSocket port",
+                    "type": "input",
+                    "required": true,
+                    "default": "8765"
+                }
+            ]
+        },
+        {
+            "id": "broadcaster-config",
+            "title": "Twitch Broadcaster",
+            "when": { "questionId": "ENABLE_BROADCASTER", "equals": "true" },
+            "questions": [
+                {
+                    "id": "TWITCH_STREAM_KEY",
+                    "label": "Twitch stream key",
+                    "type": "input",
+                    "required": true,
+                    "secret": true
+                }
+            ]
+        }
+    ]
+}

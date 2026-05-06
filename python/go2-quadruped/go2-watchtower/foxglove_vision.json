@@ -1,0 +1,131 @@
+{
+  "configById": {
+    "Image!visionoverlay": {
+      "imageTopic": "/go2/vision/tracked_overlay/compressed",
+      "synchronize": false,
+      "rotation": 0,
+      "smooth": true,
+      "minValue": 0,
+      "maxValue": 1
+    },
+    "RawMessages!visionsummary": {
+      "topicPath": "/go2/vision/tracks_summary.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 13
+    },
+    "Indicator!visionmodel": {
+      "path": "/go2/vision/health.data[2]",
+      "style": "background",
+      "fallbackColor": "#6b7280",
+      "fallbackLabel": "model: ?",
+      "rules": [
+        { "operator": "=", "rawValue": "0", "color": "#eab308", "label": "MODEL: LOADING" },
+        { "operator": "=", "rawValue": "1", "color": "#22c55e", "label": "MODEL: READY" },
+        { "operator": "=", "rawValue": "2", "color": "#ef4444", "label": "MODEL: ERROR" }
+      ]
+    },
+    "Indicator!visioncamera": {
+      "path": "/go2/vision/health.data[3]",
+      "style": "background",
+      "fallbackColor": "#6b7280",
+      "fallbackLabel": "camera: ?",
+      "rules": [
+        { "operator": "=", "rawValue": "0", "color": "#ef4444", "label": "CAMERA: NO FRAMES" },
+        { "operator": "=", "rawValue": "1", "color": "#22c55e", "label": "CAMERA: OK" },
+        { "operator": "=", "rawValue": "2", "color": "#eab308", "label": "CAMERA: STALE" }
+      ]
+    },
+    "RawMessages!yolofps": {
+      "topicPath": "/go2/vision/health.data[0]",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 28
+    },
+    "Plot!visionrate": {
+      "title": "YOLO FPS",
+      "paths": [
+        { "value": "/go2/vision/health.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "yolo fps" },
+        { "value": "/go2/vision/health.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "yolo dropped (frames/s)" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "RawMessages!visiondets": {
+      "topicPath": "/go2/vision/raw_detections.detections",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 11
+    },
+    "RawMessages!tracksjson": {
+      "topicPath": "/go2/vision/tracked_persons_json.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 11
+    },
+    "Plot!trackerhealth": {
+      "title": "Tracker — fps + active tracks",
+      "paths": [
+        { "value": "/go2/vision/tracker_health.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "tracker fps" },
+        { "value": "/go2/vision/tracker_health.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "active tracks" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "first": "Image!visionoverlay",
+    "second": {
+      "first": {
+        "first": "Indicator!visionmodel",
+        "second": "Indicator!visioncamera",
+        "direction": "row"
+      },
+      "second": {
+        "first": "RawMessages!yolofps",
+        "second": {
+          "first": "RawMessages!visionsummary",
+          "second": {
+            "first": "Plot!visionrate",
+            "second": {
+              "first": "Plot!trackerhealth",
+              "second": {
+                "first": "RawMessages!tracksjson",
+                "second": "RawMessages!visiondets",
+                "direction": "column",
+                "splitPercentage": 50
+              },
+              "direction": "column",
+              "splitPercentage": 40
+            },
+            "direction": "column",
+            "splitPercentage": 35
+          },
+          "direction": "column",
+          "splitPercentage": 25
+        },
+        "direction": "column",
+        "splitPercentage": 12
+      },
+      "direction": "column",
+      "splitPercentage": 15
+    },
+    "direction": "row",
+    "splitPercentage": 65
+  }
+}

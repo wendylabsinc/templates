@@ -1,0 +1,11 @@
+{
+    "appId": "go2-broadcaster",
+    "version": "0.1.0",
+    "entitlements": [
+        { "type": "network", "mode": "host" }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": 3700 },
+        "timeoutSeconds": 30
+    }
+}

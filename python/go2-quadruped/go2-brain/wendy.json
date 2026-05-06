@@ -1,0 +1,7 @@
+{
+    "appId": "go2-brain",
+    "version": "0.1.0",
+    "entitlements": [
+        { "type": "network", "mode": "host" }
+    ]
+}

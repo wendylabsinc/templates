@@ -1,0 +1,52 @@
+{
+    "name": "go2-quadruped",
+    "description": "Unitree Go2 stack — brain, camera, motion, mcp, RC, broadcaster, and optional Watchtower (ROS2 + Foxglove)",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Compose project name (also used as the agent app prefix)",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "GO2_IP",
+            "description": "Robot IP address on the 192.168.123.0/24 dog subnet",
+            "type": "string",
+            "default": "192.168.123.161",
+            "prompt": "Go2 IP",
+            "validate": { "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$" }
+        },
+        {
+            "name": "WATCHTOWER_PORT",
+            "description": "Foxglove WebSocket port for Watchtower",
+            "type": "integer",
+            "default": 8765,
+            "prompt": "Watchtower (Foxglove) port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "ENABLE_WATCHTOWER",
+            "description": "Include Watchtower (heavy ROS2 + Foxglove image; ~10 min first build)",
+            "type": "string",
+            "default": "false",
+            "prompt": "Enable Watchtower?",
+            "validate": { "enum": ["true", "false"] }
+        },
+        {
+            "name": "ENABLE_BROADCASTER",
+            "description": "Include go2-broadcaster (RTMP push to Twitch)",
+            "type": "string",
+            "default": "false",
+            "prompt": "Enable Twitch broadcaster?",
+            "validate": { "enum": ["true", "false"] }
+        },
+        {
+            "name": "TWITCH_STREAM_KEY",
+            "description": "Twitch stream key (only used when broadcaster is enabled; never bake into the image)",
+            "type": "string",
+            "default": "",
+            "prompt": "Twitch stream key"
+        }
+    ]
+}

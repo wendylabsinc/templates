@@ -1,0 +1,8 @@
+{
+  "appId": "go2-mcp",
+  "version": "0.1.0",
+  "entitlements": [
+    { "type": "network", "mode": "host" },
+    { "type": "mcp", "port": 3400 }
+  ]
+}

@@ -49,6 +49,11 @@
         {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG"
+        },
+        {
+            "name": "go2-quadruped",
+            "description": "Unitree Go2 stack: brain + camera + motion + mcp + RC, with optional Watchtower (ROS2/Foxglove) and Twitch broadcaster",
+            "languages": ["python"]
         }
     ],
     "languages": [

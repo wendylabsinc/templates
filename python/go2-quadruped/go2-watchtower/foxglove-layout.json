@@ -1,0 +1,259 @@
+{
+  "configById": {
+    "3D!lidar": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 15,
+        "phi": 60,
+        "thetaOffset": 45,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-none",
+      "followTf": "utlidar_lidar",
+      "scene": { "transforms": { "showLabel": false } },
+      "transforms": {},
+      "topics": {
+        "/utlidar/cloud_deskewed": {
+          "visible": true,
+          "colorMode": "colormap",
+          "colorField": "z",
+          "colorMap": "turbo",
+          "pointSize": 2
+        },
+        "/go2/uwb/point": {
+          "visible": true,
+          "type": "sphere",
+          "color": "#22c55e",
+          "scale": [0.25, 0.25, 0.25]
+        },
+        "/go2/uwb/pose": {
+          "visible": true,
+          "type": "arrow",
+          "color": "#22c55e"
+        },
+        "/go2/uwb/target": {
+          "visible": true,
+          "type": "arrow",
+          "color": "#3b82f6",
+          "covariance": { "visible": true, "color": "#3b82f6" }
+        }
+      },
+      "layers": {
+        "grid": { "layerId": "foxglove.Grid", "size": 10, "divisions": 20, "visible": true }
+      }
+    },
+    "Image!camera": {
+      "imageTopic": "/go2/vision/tracked_overlay/compressed",
+      "synchronize": false,
+      "rotation": 0,
+      "smooth": true,
+      "minValue": 0,
+      "maxValue": 1
+    },
+    "Plot!battery": {
+      "title": "Battery & Body IMU",
+      "paths": [
+        { "value": "/lowstate.bms_state.soc", "enabled": true, "timestampMethod": "receiveTime", "label": "battery %" },
+        { "value": "/lowstate.imu_state.gyroscope[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "gyro x" },
+        { "value": "/lowstate.imu_state.gyroscope[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "gyro y" },
+        { "value": "/lowstate.imu_state.gyroscope[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "gyro z" },
+        { "value": "/lowstate.imu_state.rpy[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "roll" },
+        { "value": "/lowstate.imu_state.rpy[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "pitch" },
+        { "value": "/lowstate.imu_state.rpy[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "yaw" }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "Plot!joints": {
+      "title": "Joint positions (q) & foot forces",
+      "paths": [
+        { "value": "/lowstate.motor_state[0].q", "enabled": true, "timestampMethod": "receiveTime", "label": "FR_hip" },
+        { "value": "/lowstate.motor_state[1].q", "enabled": true, "timestampMethod": "receiveTime", "label": "FR_thigh" },
+        { "value": "/lowstate.motor_state[2].q", "enabled": true, "timestampMethod": "receiveTime", "label": "FR_calf" },
+        { "value": "/lowstate.motor_state[3].q", "enabled": true, "timestampMethod": "receiveTime", "label": "FL_hip" },
+        { "value": "/lowstate.motor_state[4].q", "enabled": true, "timestampMethod": "receiveTime", "label": "FL_thigh" },
+        { "value": "/lowstate.motor_state[5].q", "enabled": true, "timestampMethod": "receiveTime", "label": "FL_calf" },
+        { "value": "/lowstate.motor_state[6].q", "enabled": true, "timestampMethod": "receiveTime", "label": "RR_hip" },
+        { "value": "/lowstate.motor_state[7].q", "enabled": true, "timestampMethod": "receiveTime", "label": "RR_thigh" },
+        { "value": "/lowstate.motor_state[8].q", "enabled": true, "timestampMethod": "receiveTime", "label": "RR_calf" },
+        { "value": "/lowstate.motor_state[9].q", "enabled": true, "timestampMethod": "receiveTime", "label": "RL_hip" },
+        { "value": "/lowstate.motor_state[10].q", "enabled": true, "timestampMethod": "receiveTime", "label": "RL_thigh" },
+        { "value": "/lowstate.motor_state[11].q", "enabled": true, "timestampMethod": "receiveTime", "label": "RL_calf" },
+        { "value": "/lowstate.foot_force[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "foot FR" },
+        { "value": "/lowstate.foot_force[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "foot FL" },
+        { "value": "/lowstate.foot_force[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "foot RR" },
+        { "value": "/lowstate.foot_force[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "foot RL" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "Plot!mic": {
+      "title": "Mic — RMS & spectrum",
+      "paths": [
+        { "value": "/go2/mic/levels.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "RMS" },
+        { "value": "/go2/mic/levels.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "bin 1 (~20Hz)" },
+        { "value": "/go2/mic/levels.data[8]", "enabled": true, "timestampMethod": "receiveTime", "label": "bin 8 (~160Hz)" },
+        { "value": "/go2/mic/levels.data[16]", "enabled": true, "timestampMethod": "receiveTime", "label": "bin 16 (~320Hz)" },
+        { "value": "/go2/mic/levels.data[24]", "enabled": true, "timestampMethod": "receiveTime", "label": "bin 24 (~480Hz)" },
+        { "value": "/go2/mic/levels.data[31]", "enabled": true, "timestampMethod": "receiveTime", "label": "bin 31 (~620Hz)" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "Plot!pose": {
+      "title": "Pose (xyz) & velocity",
+      "paths": [
+        { "value": "/sportmodestate.position[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "x" },
+        { "value": "/sportmodestate.position[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "y" },
+        { "value": "/sportmodestate.position[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "z" },
+        { "value": "/sportmodestate.velocity[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "vx" },
+        { "value": "/sportmodestate.velocity[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "vy" },
+        { "value": "/sportmodestate.velocity[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "vz" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "RawMessages!uwbinfo": {
+      "topicPath": "/go2/uwb/info.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 14
+    },
+    "Gauge!uwbrange": {
+      "path": "/go2/uwb/range.data",
+      "minValue": 0,
+      "maxValue": 15,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false
+    },
+    "Indicator!uwbseen": {
+      "path": "/go2/uwb/health.data[0]",
+      "style": "background",
+      "fallbackColor": "#6b7280",
+      "fallbackLabel": "UNKNOWN",
+      "rules": [
+        { "operator": "=", "rawValue": "1", "color": "#22c55e", "label": "TAG SEEN" },
+        { "operator": "=", "rawValue": "0", "color": "#ef4444", "label": "TAG LOST" }
+      ]
+    },
+    "Plot!uwbtrend": {
+      "title": "UWB — range, bearing, velocity",
+      "paths": [
+        { "value": "/go2/uwb/range.data", "enabled": true, "timestampMethod": "receiveTime", "label": "range (m)" },
+        { "value": "/go2/uwb/bearing_deg.data", "enabled": true, "timestampMethod": "receiveTime", "label": "bearing (°, +ve = left)" },
+        { "value": "/go2/uwb/target.twist.twist.linear.x", "enabled": true, "timestampMethod": "receiveTime", "label": "vx (m/s)" },
+        { "value": "/go2/uwb/target.twist.twist.linear.y", "enabled": true, "timestampMethod": "receiveTime", "label": "vy (m/s)" },
+        { "value": "/go2/uwb/health.data[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "rate (Hz)" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "StateTransitions!uwbstate": {
+      "paths": [
+        { "value": "/go2/uwb/state.data", "timestampMethod": "receiveTime", "label": "tracking" }
+      ],
+      "isSynced": true
+    },
+    "Plot!audiolevels": {
+      "title": "Robot audio — levels (RMS/peak)",
+      "paths": [
+        { "value": "/go2/audio/sender/levels.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "speaker rms" },
+        { "value": "/go2/audio/sender/levels.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "speaker peak" },
+        { "value": "/go2/audio/receiver/levels.data[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "mic rms" },
+        { "value": "/go2/audio/receiver/levels.data[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "mic peak" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "Plot!audiowave": {
+      "title": "Robot audio — waveform (last 20 ms)",
+      "paths": [
+        { "value": "/go2/audio/sender/waveform.data[:]", "enabled": true, "timestampMethod": "receiveTime", "label": "speaker" },
+        { "value": "/go2/audio/receiver/waveform.data[:]", "enabled": true, "timestampMethod": "receiveTime", "label": "mic" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "index",
+      "isSynced": false
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "first": {
+      "first": "3D!lidar",
+      "second": "Image!camera",
+      "direction": "row",
+      "splitPercentage": 55
+    },
+    "second": {
+      "first": {
+        "first": "Plot!battery",
+        "second": "Plot!joints",
+        "direction": "row"
+      },
+      "second": {
+        "first": {
+          "first": "Plot!mic",
+          "second": "Plot!audiolevels",
+          "direction": "column"
+        },
+        "second": {
+          "first": {
+            "first": "Plot!pose",
+            "second": "Plot!audiowave",
+            "direction": "column"
+          },
+          "second": {
+            "first": {
+              "first": "Indicator!uwbseen",
+              "second": "Gauge!uwbrange",
+              "direction": "row",
+              "splitPercentage": 40
+            },
+            "second": {
+              "first": "StateTransitions!uwbstate",
+              "second": {
+                "first": "RawMessages!uwbinfo",
+                "second": "Plot!uwbtrend",
+                "direction": "column"
+              },
+              "direction": "column",
+              "splitPercentage": 20
+            },
+            "direction": "column",
+            "splitPercentage": 20
+          },
+          "direction": "row"
+        },
+        "direction": "row"
+      },
+      "direction": "column"
+    },
+    "direction": "column",
+    "splitPercentage": 50
+  }
+}

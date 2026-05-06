@@ -1,0 +1,18 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "entitlements": [
+        { "type": "network", "mode": "host" },
+        { "type": "audio" },
+        { "type": "gpu" }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.WATCHTOWER_PORT}} },
+        "timeoutSeconds": 120
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "echo 'Foxglove WebSocket: ws://${WENDY_HOSTNAME}:{{.WATCHTOWER_PORT}} — open Foxglove Studio → Open Connection → paste this URL'"
+        }
+    }
+}

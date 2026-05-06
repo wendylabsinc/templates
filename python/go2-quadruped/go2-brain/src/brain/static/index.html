@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111">
+<title>go2-brain</title>
+<style>
+  :root {
+    --bg: #0e0f12;
+    --panel: #181a20;
+    --panel-2: #21242c;
+    --fg: #e8e8e8;
+    --muted: #888c95;
+    --accent: #4ea3ff;
+    --ok: #5acf6a;
+    --warn: #f0b144;
+    --danger: #e6555c;
+    --stop: #c5343a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    min-height: 100vh;
+    padding: 12px;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  h1 { font-size: 16px; margin: 0; letter-spacing: 0.04em; opacity: 0.9; }
+  h2 { font-size: 12px; margin: 0 0 8px 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  .wrap { max-width: 640px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  .panel { background: var(--panel); border-radius: 10px; padding: 14px; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row + .row { margin-top: 10px; }
+  .header { display: flex; align-items: center; justify-content: space-between; }
+  .header .mode-pill {
+    font-size: 12px; padding: 4px 10px; border-radius: 999px; background: var(--panel-2);
+    color: var(--muted); font-variant: small-caps; letter-spacing: 0.05em;
+  }
+  .header .mode-pill.unitree { background: #2c4a2f; color: var(--ok); }
+  .header .mode-pill.mock { background: #2c3a4a; color: var(--accent); }
+
+  button {
+    font: inherit; border: 0; cursor: pointer;
+    background: var(--panel-2); color: var(--fg);
+    padding: 12px 16px; border-radius: 8px;
+    min-height: 44px;
+    transition: filter 0.1s ease;
+  }
+  button:hover { filter: brightness(1.15); }
+  button:active { filter: brightness(0.85); }
+  button.primary { background: #2a4a76; }
+  button.ok { background: #2c5a36; }
+  button.ok.active { background: var(--ok); color: #000; font-weight: 600; }
+  button.accent { background: #1f3a5e; }
+  button.accent.active { background: var(--accent); color: #000; font-weight: 600; }
+  button.stop {
+    background: var(--stop); color: #fff; font-weight: 700;
+    font-size: 16px; flex: 1; min-height: 56px;
+    letter-spacing: 0.1em;
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.small { padding: 6px 10px; min-height: 0; font-size: 12px; }
+
+  .controls-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .controls-row .group { display: flex; gap: 6px; flex: 1 1 auto; }
+  .controls-row .group button { flex: 1 1 0; }
+
+  .param {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    column-gap: 12px;
+    row-gap: 4px;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #23262e;
+  }
+  .param:last-child { border-bottom: 0; }
+  .param .label { font-size: 13px; color: var(--fg); }
+  .param .value {
+    font-variant-numeric: tabular-nums;
+    color: var(--accent);
+    font-weight: 600;
+    text-align: right;
+    min-width: 64px;
+  }
+  .param input[type=range] {
+    grid-column: 1 / span 2;
+    width: 100%;
+    accent-color: var(--accent);
+    height: 28px;
+  }
+  .param.dirty .value { color: var(--warn); }
+  .param.saved .value { color: var(--ok); }
+
+  /* Info icon + popover. Shows on hover (desktop) and on click (mobile,
+     where there's no hover). The native `title` attribute is set as a
+     fallback for assistive tech and mid-press iOS tooltips. */
+  .info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--panel-2);
+    color: var(--muted);
+    font-size: 11px;
+    font-style: italic;
+    font-weight: 700;
+    font-family: Georgia, serif;
+    margin-left: 6px;
+    cursor: help;
+    user-select: none;
+    vertical-align: middle;
+    position: relative;
+    transition: background 0.1s, color 0.1s;
+  }
+  .info:hover, .info:focus, .info.show { background: var(--accent); color: #000; outline: none; }
+  .info::after {
+    content: attr(data-tip);
+    position: absolute;
+    left: 0; top: calc(100% + 6px);
+    width: max-content; max-width: min(280px, 80vw);
+    background: #000;
+    color: var(--fg);
+    padding: 8px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 400;
+    font-family: inherit;
+    line-height: 1.4;
+    text-align: left;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(-4px);
+    transition: opacity 0.12s, transform 0.12s;
+    z-index: 20;
+  }
+  .info:hover::after, .info:focus::after, .info.show::after {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%);
+    background: var(--panel-2); color: var(--fg);
+    padding: 8px 14px; border-radius: 6px; font-size: 13px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    opacity: 0; transition: opacity 0.2s ease;
+    pointer-events: none;
+    z-index: 10;
+    max-width: calc(100% - 32px);
+  }
+  .toast.show { opacity: 1; }
+  .toast.error { background: var(--danger); color: #fff; }
+  .toast.ok { background: var(--ok); color: #000; }
+
+  .footer { color: var(--muted); font-size: 11px; text-align: center; }
+  .footer code { background: var(--panel-2); padding: 1px 6px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel header">
+    <h1>go2-brain</h1>
+    <span id="mode-pill" class="mode-pill">…</span>
+  </div>
+
+  <div class="panel">
+    <h2>Mode</h2>
+    <div class="controls-row">
+      <div class="group">
+        <button id="mode-mock" class="accent" onclick="setMode('mock')">mock</button>
+        <button id="mode-unitree" class="ok" onclick="setMode('unitree')">unitree</button>
+      </div>
+      <button class="stop" onclick="emergencyStop()">STOP</button>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Tunables</h2>
+    <div id="params"><div style="color: var(--muted)">loading…</div></div>
+  </div>
+
+  <div class="panel">
+    <div class="controls-row">
+      <button class="small" onclick="refresh()">↻ refresh</button>
+      <button class="small" onclick="resetParams()">reset to env defaults</button>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span id="status">go2-brain · UI v1</span><br>
+    <span id="persistence-info" style="color: var(--muted)">…</span>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+
+let params = {};
+let defaults = {};
+let bounds = {};
+let persistencePath = null;
+let currentMode = null;
+
+const $params = document.getElementById("params");
+const $modePill = document.getElementById("mode-pill");
+const $modeMock = document.getElementById("mode-mock");
+const $modeUnitree = document.getElementById("mode-unitree");
+const $toast = document.getElementById("toast");
+const $status = document.getElementById("status");
+
+let toastTimer = null;
+function toast(msg, kind = "") {
+  $toast.textContent = msg;
+  $toast.className = `toast show ${kind}`;
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { $toast.classList.remove("show"); }, 2200);
+}
+
+async function fetchJSON(url, opts = {}) {
+  const r = await fetch(url, opts);
+  const text = await r.text();
+  let data = null;
+  if (text) {
+    try { data = JSON.parse(text); } catch (e) { /* leave null */ }
+  }
+  if (!r.ok) {
+    const msg = (data && data.error) || `${r.status} ${r.statusText}`;
+    throw new Error(msg);
+  }
+  return data;
+}
+
+async function refresh() {
+  try {
+    const [p, m] = await Promise.all([
+      fetchJSON("/params"),
+      fetchJSON("/mode"),
+    ]);
+    params = p.params;
+    defaults = p.defaults;
+    bounds = p.bounds;
+    persistencePath = p.persistence_path || null;
+    currentMode = m.mode;
+    renderMode();
+    renderParams();
+    renderPersistence();
+    $status.textContent = `loaded · ${Object.keys(params).length} params`;
+  } catch (e) {
+    toast(`refresh failed: ${e.message}`, "error");
+  }
+}
+
+function renderMode() {
+  $modePill.textContent = currentMode || "?";
+  $modePill.className = `mode-pill ${currentMode || ""}`;
+  $modeMock.classList.toggle("active", currentMode === "mock");
+  $modeUnitree.classList.toggle("active", currentMode === "unitree");
+}
+
+function renderPersistence() {
+  const el = document.getElementById("persistence-info");
+  if (persistencePath) {
+    el.textContent = `settings saved to ${persistencePath} · survive brain restart`;
+  } else {
+    el.textContent = "persistence disabled — changes will be lost on restart";
+  }
+}
+
+function fmt(value, step) {
+  // Integer step → integer formatting; else show enough decimals to
+  // distinguish neighbouring slider stops.
+  if (step >= 1) return String(Math.round(value));
+  const decimals = Math.max(0, -Math.floor(Math.log10(step)));
+  return Number(value).toFixed(decimals);
+}
+
+function renderParams() {
+  $params.innerHTML = "";
+  for (const [name, b] of Object.entries(bounds)) {
+    const value = params[name];
+    const def = defaults[name];
+    const node = document.createElement("div");
+    node.className = "param";
+    node.dataset.name = name;
+    // The info text comes from PARAM_BOUNDS in state_machine.py. Escape
+    // attribute payload so a stray quote in a description can't break layout.
+    // We DON'T set the native `title` attribute — the custom popover
+    // already covers desktop hover, mobile tap, and keyboard focus, and
+    // `title` would double up on top. aria-label carries the text for
+    // screen readers.
+    const tip = (b.info || "").replace(/"/g, "&quot;");
+    node.innerHTML = `
+      <div class="label">${b.label}<span class="info" tabindex="0" role="button" aria-label="${tip}" data-tip="${tip}">i</span><span style="color:var(--muted);font-size:11px"> · default ${fmt(def, b.step)}</span></div>
+      <div class="value" data-val>${fmt(value, b.step)}</div>
+      <input type="range" min="${b.min}" max="${b.max}" step="${b.step}" value="${value}" data-slider>
+    `;
+    const slider = node.querySelector("[data-slider]");
+    const valEl = node.querySelector("[data-val]");
+    // Live label update while dragging — no network.
+    slider.addEventListener("input", () => {
+      valEl.textContent = fmt(slider.value, b.step);
+      node.classList.add("dirty");
+      node.classList.remove("saved");
+    });
+    // Commit on release (or keyboard step end). One POST per slider stop.
+    slider.addEventListener("change", async () => {
+      const raw = b.step >= 1 ? parseInt(slider.value, 10) : parseFloat(slider.value);
+      try {
+        const r = await fetchJSON("/params", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({[name]: raw}),
+        });
+        params = r.params;
+        node.classList.remove("dirty");
+        node.classList.add("saved");
+        valEl.textContent = fmt(params[name], b.step);
+        slider.value = params[name];
+      } catch (e) {
+        toast(`${name}: ${e.message}`, "error");
+        // Revert to last-known-good value.
+        slider.value = params[name];
+        valEl.textContent = fmt(params[name], b.step);
+        node.classList.remove("dirty");
+      }
+    });
+    $params.appendChild(node);
+  }
+}
+
+async function setMode(name) {
+  try {
+    const r = await fetchJSON(`/mode/${name}`, {method: "POST"});
+    currentMode = r.mode;
+    renderMode();
+    toast(`mode → ${r.mode}`, "ok");
+  } catch (e) {
+    toast(`mode switch failed: ${e.message}`, "error");
+  }
+}
+
+async function emergencyStop() {
+  try {
+    const r = await fetchJSON("/stop", {method: "POST"});
+    currentMode = r.mode;
+    renderMode();
+    toast("STOPPED · dropped to mock", "ok");
+  } catch (e) {
+    toast(`stop failed: ${e.message}`, "error");
+  }
+}
+
+async function resetParams() {
+  try {
+    const r = await fetchJSON("/params/reset", {method: "POST"});
+    params = r.params;
+    renderParams();
+    toast("params reset to env defaults", "ok");
+  } catch (e) {
+    toast(`reset failed: ${e.message}`, "error");
+  }
+}
+
+// Mobile-friendly tooltip toggle: on a touch device there's no hover, so
+// tapping the "i" icon toggles the popover. Tapping anywhere else closes
+// any open popover. Desktop hover keeps working via CSS :hover.
+document.addEventListener("click", (ev) => {
+  const target = ev.target.closest(".info");
+  document.querySelectorAll(".info.show").forEach((el) => {
+    if (el !== target) el.classList.remove("show");
+  });
+  if (target) {
+    ev.preventDefault();
+    target.classList.toggle("show");
+  }
+});
+
+refresh();
+</script>
+</body>
+</html>

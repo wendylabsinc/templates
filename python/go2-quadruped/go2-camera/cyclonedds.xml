@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+    <Domain id="any">
+        <General>
+            <Interfaces>
+                <!-- eth0 must be the NIC that has the 192.168.123.0/24
+                     address on the deploy host. On the Go2's onboard Jetson
+                     this is eth0; if you ever deploy elsewhere, edit this. -->
+                <NetworkInterface name="eth0" priority="default" multicast="default" />
+            </Interfaces>
+            <AllowMulticast>true</AllowMulticast>
+            <MaxMessageSize>65500B</MaxMessageSize>
+        </General>
+        <Discovery>
+            <ParticipantIndex>auto</ParticipantIndex>
+            <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+        </Discovery>
+    </Domain>
+</CycloneDDS>

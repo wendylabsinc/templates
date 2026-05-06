@@ -1,0 +1,16 @@
+{
+    "appId": "go2-rc",
+    "version": "0.1.0",
+    "entitlements": [
+        { "type": "network", "mode": "host" }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": 3500 },
+        "timeoutSeconds": 30
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "open http://localhost:3500"
+        }
+    }
+}

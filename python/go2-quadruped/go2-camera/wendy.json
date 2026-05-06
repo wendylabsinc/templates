@@ -1,0 +1,16 @@
+{
+  "appId": "go2-camera",
+  "version": "0.1.0",
+  "entitlements": [
+    { "type": "network", "mode": "host" }
+  ],
+  "readiness": {
+    "tcpSocket": { "port": 8000 },
+    "timeoutSeconds": 30
+  },
+  "hooks": {
+    "postStart": {
+      "cli": "echo 'go2-camera MJPEG: http://${WENDY_HOSTNAME}:8000/stream/color — point go2-RC at this URL'"
+    }
+  }
+}

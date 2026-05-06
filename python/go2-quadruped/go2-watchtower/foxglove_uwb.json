@@ -1,0 +1,144 @@
+{
+  "configById": {
+    "3D!uwbview": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 8,
+        "phi": 50,
+        "thetaOffset": 30,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-none",
+      "followTf": "base_link",
+      "scene": { "transforms": { "showLabel": false } },
+      "transforms": {},
+      "topics": {
+        "/go2/dog/marker": {
+          "visible": true
+        },
+        "/go2/dog/follow_zone": {
+          "visible": true
+        },
+        "/go2/uwb/point": {
+          "visible": true,
+          "type": "sphere",
+          "color": "#22c55e",
+          "scale": [0.25, 0.25, 0.25]
+        },
+        "/go2/uwb/pose": {
+          "visible": true,
+          "type": "arrow",
+          "color": "#22c55e"
+        },
+        "/go2/uwb/target": {
+          "visible": true,
+          "type": "arrow",
+          "color": "#3b82f6",
+          "covariance": { "visible": true, "color": "#3b82f6" }
+        },
+        "/go2/uwb/path": {
+          "visible": true,
+          "type": "line",
+          "color": "#60a5fa",
+          "lineWidth": 0.05
+        }
+      },
+      "layers": {
+        "grid": { "layerId": "foxglove.Grid", "size": 10, "divisions": 20, "visible": true }
+      }
+    },
+    "Indicator!uwbseen": {
+      "path": "/go2/uwb/health.data[0]",
+      "style": "background",
+      "fallbackColor": "#6b7280",
+      "fallbackLabel": "UNKNOWN",
+      "rules": [
+        { "operator": "=", "rawValue": "1", "color": "#22c55e", "label": "TAG SEEN" },
+        { "operator": "=", "rawValue": "0", "color": "#ef4444", "label": "TAG LOST" }
+      ]
+    },
+    "Gauge!uwbrange": {
+      "path": "/go2/uwb/range.data",
+      "minValue": 0,
+      "maxValue": 15,
+      "colorMode": "colormap",
+      "colorMap": "turbo",
+      "reverse": false
+    },
+    "StateTransitions!uwbstate": {
+      "paths": [
+        { "value": "/go2/uwb/state.data", "timestampMethod": "receiveTime", "label": "tracking state" }
+      ],
+      "isSynced": true
+    },
+    "RawMessages!uwbinfo": {
+      "topicPath": "/go2/uwb/info.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 14
+    },
+    "RawMessages!uwbdecision": {
+      "topicPath": "/go2/uwb/decision.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "Plot!uwbtrend": {
+      "title": "UWB — range, bearing, velocity",
+      "paths": [
+        { "value": "/go2/uwb/range.data", "enabled": true, "timestampMethod": "receiveTime", "label": "range (m)" },
+        { "value": "/go2/uwb/bearing_deg.data", "enabled": true, "timestampMethod": "receiveTime", "label": "bearing (°, +ve = left)" },
+        { "value": "/go2/uwb/target.twist.twist.linear.x", "enabled": true, "timestampMethod": "receiveTime", "label": "vx (m/s)" },
+        { "value": "/go2/uwb/target.twist.twist.linear.y", "enabled": true, "timestampMethod": "receiveTime", "label": "vy (m/s)" },
+        { "value": "/go2/uwb/health.data[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "rate (Hz)" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "first": "3D!uwbview",
+    "second": {
+      "first": {
+        "first": "Indicator!uwbseen",
+        "second": "Gauge!uwbrange",
+        "direction": "row",
+        "splitPercentage": 40
+      },
+      "second": {
+        "first": "StateTransitions!uwbstate",
+        "second": {
+          "first": "RawMessages!uwbinfo",
+          "second": {
+            "first": "RawMessages!uwbdecision",
+            "second": "Plot!uwbtrend",
+            "direction": "column",
+            "splitPercentage": 35
+          },
+          "direction": "column",
+          "splitPercentage": 18
+        },
+        "direction": "column",
+        "splitPercentage": 18
+      },
+      "direction": "column",
+      "splitPercentage": 18
+    },
+    "direction": "row",
+    "splitPercentage": 55
+  }
+}

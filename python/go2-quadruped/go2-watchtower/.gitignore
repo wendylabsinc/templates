@@ -1,0 +1,22 @@
+# Claude Code per-user state
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Local scratch / scaffold renders
+/build/
+/dist/
+*.log

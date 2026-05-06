@@ -1,0 +1,89 @@
+{
+  "configById": {
+    "3D!lidarview": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 12,
+        "phi": 55,
+        "thetaOffset": 30,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "base_link",
+      "scene": { "transforms": { "showLabel": false } },
+      "transforms": {},
+      "topics": {
+        "/utlidar/cloud_deskewed": {
+          "visible": true,
+          "colorMode": "colormap",
+          "colorMap": "turbo",
+          "colorField": "z",
+          "pointSize": 2
+        },
+        "/go2/dog/marker": {
+          "visible": true
+        },
+        "/go2/dog/follow_zone": {
+          "visible": true
+        },
+        "/go2/uwb/point": {
+          "visible": true,
+          "type": "sphere",
+          "color": "#22c55e",
+          "scale": [0.25, 0.25, 0.25]
+        }
+      },
+      "layers": {
+        "grid": { "layerId": "foxglove.Grid", "size": 10, "divisions": 20, "visible": true }
+      }
+    },
+    "RawMessages!freespace": {
+      "topicPath": "/go2/perception/free_space.data",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 11
+    },
+    "RawMessages!lidarstate": {
+      "topicPath": "/utlidar/lidar_state",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    },
+    "RawMessages!rangeinfo": {
+      "topicPath": "/utlidar/range_info",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 12
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "first": "3D!lidarview",
+    "second": {
+      "first": "RawMessages!freespace",
+      "second": {
+        "first": "RawMessages!lidarstate",
+        "second": "RawMessages!rangeinfo",
+        "direction": "column",
+        "splitPercentage": 50
+      },
+      "direction": "column",
+      "splitPercentage": 60
+    },
+    "direction": "row",
+    "splitPercentage": 65
+  }
+}

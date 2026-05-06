@@ -1,0 +1,11 @@
+{
+    "appId": "go2-motion",
+    "version": "0.1.0",
+    "entitlements": [
+        { "type": "network", "mode": "host" }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": 3201 },
+        "timeoutSeconds": 30
+    }
+}

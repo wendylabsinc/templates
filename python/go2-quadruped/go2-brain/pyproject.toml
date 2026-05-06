@@ -1,0 +1,19 @@
+[project]
+name = "go2-brain"
+version = "0.1.0"
+description = "Autonomy / control brain for the Unitree Go2 follow-me system"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    # cyclonedds-python ships a bundled cyclonedds C runtime in its wheels,
+    # so we don't need a separate apt/system install. Same wheel format works
+    # on macOS arm64 (dev) and linux/arm64 (Jetson at deploy time).
+    "cyclonedds>=0.10",
+    "rich>=13.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/brain"]

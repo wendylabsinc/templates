@@ -1,23 +1,33 @@
 # {{.APP_ID}}
 
-Fire/water/gauge detection demo: YOLO models + Qwen3-VL VLM. Two services, deployed separately.
+Fire/water/gauge detection demo: YOLO models + Qwen3-VL VLM. Two services in one compose project.
 
 ## Deploy
 
-The VLM service must be running before the detector starts (the detector calls it on `127.0.0.1:8090`).
-
 ```sh
-# 1. VLM first — first build downloads ~5 GB Qwen3-VL weights, takes a while
-cd vlm
-sudo wendy run --device <jetson>
-
-# 2. Detector — once VLM is up
-cd ..
 sudo wendy run --device <jetson>
 ```
 
-Both must land on the same Jetson with `network: host` so the detector can reach the VLM at `127.0.0.1:8090`.
+That's it. Builds and deploys both services in one shot. The VLM image first build pulls the Qwen3-VL-2B weights from Hugging Face (~5 GB) — slow once, cached after.
 
-## Why two `wendy run` calls
+## What's in compose.yml
 
-Both services need the `gpu` entitlement, and the detector also needs `camera`/`audio`/`bluetooth`. The Wendy compose path (`compose.yml`) only synthesizes `network` and `persist` entitlements today — it doesn't pass through GPU or device permissions. So we deploy each service from its own directory with its own `wendy.json`.
+| Service | Port | Image base | Entitlements |
+|---|---|---|---|
+| `vlm` | 8090 | `ubuntu:22.04` + Jetson AI Lab pytorch | `gpu`, host network |
+| `detector` | 5702 | `ultralytics/ultralytics:latest-jetson-jetpack6` | `gpu`, `camera`, `audio`, `bluetooth`, host network, persist mounts |
+
+`gpu` / `camera` / `audio` / `bluetooth` come from the `x-wendy-entitlements:` block on each service — a Wendy compose extension. The `x-` prefix is the Compose-spec namespace for custom fields, so `docker compose up` (locally on macOS, etc.) silently ignores them.
+
+The detector talks to the VLM at `127.0.0.1:8090` over host networking. Both must land on the same Jetson.
+
+## Apps that appear on the device
+
+After `wendy run`, `wendy device apps list` shows:
+
+```
+{{.APP_ID}}-vlm
+{{.APP_ID}}-detector
+```
+
+(The `<projectDirName>-<serviceName>` naming is what `compose.go:269` synthesizes per service.)

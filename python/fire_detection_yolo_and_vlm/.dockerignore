@@ -1,0 +1,14 @@
+vlm/
+compose.yml
+template.json
+template.schema.json
+.dockerignore
+.gitignore
+.git
+README.md
+**/__pycache__
+**/.venv
+**/node_modules
+**/build
+**/.DS_Store
+**/.pytest_cache

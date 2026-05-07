@@ -1,0 +1,23 @@
+services:
+  vlm:
+    build: ./vlm
+    network_mode: host
+    restart: unless-stopped
+    x-wendy-entitlements:
+      - type: gpu
+
+  detector:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - vlm
+    volumes:
+      - {{.APP_ID}}-models:/models
+      - {{.APP_ID}}-yolo-models:/yolo-models
+      - {{.APP_ID}}-logs:/logs
+    x-wendy-entitlements:
+      - type: gpu
+      - type: camera
+      - type: audio
+      - type: bluetooth

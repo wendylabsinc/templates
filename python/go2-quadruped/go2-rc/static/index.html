@@ -605,11 +605,19 @@
         return a + (b - a) * t;
       }
 
+      function maxAbs(a, b) {
+        return Math.abs(a) >= Math.abs(b) ? a : b;
+      }
+
       async function tick() {
         const a = feelAlpha();
-        current.vx = lerp(current.vx, target.vx, a);
-        current.vy = lerp(current.vy, target.vy, a);
-        current.vyaw = lerp(current.vyaw, target.vyaw, a);
+        // Blend touch and gamepad: whichever axis has larger magnitude wins.
+        const tgtVx   = maxAbs(target.vx,   gamepadTarget.vx);
+        const tgtVy   = maxAbs(target.vy,   gamepadTarget.vy);
+        const tgtVyaw = maxAbs(target.vyaw, gamepadTarget.vyaw);
+        current.vx   = lerp(current.vx,   tgtVx,   a);
+        current.vy   = lerp(current.vy,   tgtVy,   a);
+        current.vyaw = lerp(current.vyaw, tgtVyaw, a);
         // Snap small residuals to zero so we don't dribble at 0.001 m/s.
         if (Math.abs(current.vx) < 1e-3) current.vx = 0;
         if (Math.abs(current.vy) < 1e-3) current.vy = 0;
@@ -619,8 +627,8 @@
           current.vx === 0 && current.vy === 0 && current.vyaw === 0;
         if (isZero && lastSentZero) return; // skip — nothing changed
         const body = {
-          vx: clamp(current.vx, MAX.vx),
-          vy: clamp(current.vy, MAX.vy),
+          vx:   clamp(current.vx,   MAX.vx),
+          vy:   clamp(current.vy,   MAX.vy),
           vyaw: clamp(current.vyaw, MAX.vyaw),
         };
         const ok = await postJSON("/api/velocity", body);

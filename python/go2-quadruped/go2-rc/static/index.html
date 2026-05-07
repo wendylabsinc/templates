@@ -1055,6 +1055,63 @@
       let lastSnap = null;
       let lastSnapAt = 0; // performance.now() of the most recent applySnap
 
+      // === Gamepad polling ================================================
+      // Called each animation frame (~60 Hz). Reads the first connected
+      // gamepad, applies a 0.12 deadzone, and writes into gamepadTarget.
+      // Buttons fire on rising edge only (set tracked in prevButtonsPressed).
+      // gamepadRunBoost is set BEFORE speedScale() is called so RT applies
+      // the same 1.25× boost as the Shift key.
+      function readGamepad() {
+        const gp = [...navigator.getGamepads()].find((g) => g);
+        if (!gp) {
+          gamepadTarget.vx = gamepadTarget.vy = gamepadTarget.vyaw = 0;
+          gamepadRunBoost = false;
+          return;
+        }
+
+        const DEAD = 0.12;
+        function axis(i) {
+          const v = gp.axes[i] ?? 0;
+          return Math.abs(v) < DEAD ? 0 : v;
+        }
+
+        // Set RT boost flag before speedScale() reads it.
+        gamepadRunBoost = gp.buttons[7]?.pressed ?? false;
+        const s = speedScale();
+
+        // Standard mapping: axis 1 = left stick Y (up = negative = forward),
+        // axis 0 = left stick X (right = positive = strafe right = -vy),
+        // axis 2 = right stick X (right = positive = turn CW = -vyaw).
+        gamepadTarget.vx   = -axis(1) * MAX.vx   * s;
+        gamepadTarget.vy   = -axis(0) * MAX.vy   * s;
+        gamepadTarget.vyaw = -axis(2) * MAX.vyaw  * s;
+
+        // Button actions — fire on rising edge only.
+        const nowPressed = new Set(
+          gp.buttons.map((b, i) => (b.pressed ? i : -1)).filter((i) => i >= 0)
+        );
+        const ACTIONS = {
+          0: "stand",
+          1: "sit",
+          2: "lie",
+          3: "hello",
+          4: "dance",
+          5: "bark",
+        };
+        for (const [idx, action] of Object.entries(ACTIONS)) {
+          if (nowPressed.has(+idx) && !prevButtonsPressed.has(+idx)) {
+            postJSON(`/api/${action}`);
+          }
+        }
+        // Start/Menu (button 9) → emergency stop.
+        if (nowPressed.has(9) && !prevButtonsPressed.has(9)) {
+          stopBtn.click();
+        }
+
+        prevButtonsPressed.clear();
+        nowPressed.forEach((i) => prevButtonsPressed.add(i));
+      }
+
       function drawRadar() {
         const W = radar.width, H = radar.height;
         const cx = W / 2, cy = H / 2;
@@ -1139,6 +1196,7 @@
       // Animation: redraw every frame so the latest scan fades smoothly
       // between WS messages. Cheap (≤500 points × 1 scan).
       function loop() {
+        readGamepad();
         applyStaleness();
         drawRadar();
         requestAnimationFrame(loop);

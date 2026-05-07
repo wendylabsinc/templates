@@ -1,0 +1,13 @@
+{
+    "name": "fire_detection_yolo_and_vlm",
+    "description": "Fire/water/gauge detection demo: 7 YOLO models + Qwen3-VL vision-language model on Jetson",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Compose project name (also used as the agent app prefix)",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

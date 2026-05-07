@@ -1,0 +1,16 @@
+services:
+  vlm:
+    build: ./vlm
+    network_mode: host
+    restart: unless-stopped
+
+  detector:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - vlm
+    volumes:
+      - detector-models:/models
+      - detector-yolo-models:/yolo-models
+      - detector-logs:/logs

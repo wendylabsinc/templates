@@ -49,6 +49,11 @@
         {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG"
+        },
+        {
+            "name": "fire_detection_yolo_and_vlm",
+            "description": "Fire/water/gauge detection: YOLO models + Qwen3-VL VLM on Jetson",
+            "languages": ["python"]
         }
     ],
     "languages": [

@@ -79,26 +79,22 @@ re-copy it into this directory before shipping.
 
 | Entitlement | Why |
 | --- | --- |
-| `network` (host) | outbound to Gemini API, plus serving the frontend |
+| `network` (host) | outbound to cloud LLM/STT APIs, plus serving the frontend |
 | `audio` | ALSA mic + speaker access for the PowerConf |
-| `gpu` | faster-whisper CUDA acceleration on Jetson |
-| `persist` (`/models`) | caches faster-whisper (~500 MB) and Piper voices across restarts |
+| `persist` (`/models`) | caches the seeded Piper voice + Whisper TINY across restarts, and persists TLS cert + saved settings |
 
 ## First-run note
 
-On first boot the container does three downloads:
+On first boot the container seeds the **faster-whisper** tiny model (~75 MB)
+and the default **Piper** voice (`en_US-lessac-medium`, ~63 MB) from the image
+into `/models/` (a persistent volume), so subsequent starts are instant. The
+seed copy happens automatically in `entrypoint.sh`.
 
-- **faster-whisper** tiny model (~75 MB) and **Piper** voices are seeded from
-  the image into `/models/` (a persistent volume), so subsequent starts are
-  instant. The seed copy happens automatically in `entrypoint.sh`.
-- **Ollama** pulls the model named in the `LOCAL_LLM_MODEL` template variable
-  (default `qwen2.5:3b`, ~2 GB). On WiFi this typically takes 1–3 minutes.
-  Set the variable to an empty string at scaffold time to skip the pull —
-  the daemon still starts so you can pull a model later via the settings
-  drawer, or you can disable Ollama entirely with `ENABLE_OLLAMA=0`.
-
-Expect the readiness probe to take a few minutes on first boot when the
-Ollama model pull is enabled. Subsequent boots are fast.
+This is the cloud-LLM build — pick a provider (Google / OpenAI / Anthropic /
+Groq) in the settings drawer. The "ollama" option remains in the dropdown for
+backward compatibility but the daemon isn't bundled in this image; selecting
+it surfaces a `Local LLM disabled in this build` banner via `/api/status`.
+For an offline LLM build see the WIP `voice-ai-pipecat-jetson` template.
 
 ## Picking a model
 

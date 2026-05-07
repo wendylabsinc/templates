@@ -1,5 +1,3 @@
-ARG JETSON_BASE_IMAGE=dustynv/tensorrt:8.6-r36.2.0
-
 # Stage 1 - Build React visualizer
 FROM node:22-slim AS frontend
 WORKDIR /frontend
@@ -11,43 +9,39 @@ RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-# Stage 2 - Pipecat runtime on Jetson with CUDA + cuDNN + on-device LLM.
+# Stage 2 - Pipecat runtime, lightweight cloud-LLM build.
 #
-# Default base: dustynv/tensorrt:8.6-r36.2.0 — public Docker Hub Jetson
-# image with L4T r36, CUDA 12.2, cuDNN 8.9, TensorRT, and Python on
-# Ubuntu 22.04. This avoids requiring an NGC docker login during buildx
-# pulls while preserving the CUDA/cuDNN stack CTranslate2 needs.
-# CTranslate2 is pinned below to v4.4.0, the CUDA 12 + cuDNN 8 compatible
-# line. CTranslate2 v4.5.0+ moved to cuDNN 9.
-#
-# We need a base with cuDNN, not just bare CUDA, because CTranslate2's
-# CUDA backend — which faster-whisper rides on — links against cuDNN.
-FROM ${JETSON_BASE_IMAGE}
+# Base: debian:bookworm-slim. Image is ~700 MB compressed, ~1 GB
+# extracted — roughly 10× lighter than the previous dustynv/tensorrt
+# Jetson base. Trade-offs:
+#   * No CUDA, no GPU acceleration. faster-whisper runs on CPU
+#     int8 (~300-500 ms per turn on Orin's Cortex-A78AE — usable
+#     for a voice loop, slower than CUDA float16 was).
+#   * No on-device LLM daemon. Pick a cloud provider in the settings
+#     drawer (Google / OpenAI / Anthropic / Groq). The "ollama"
+#     provider still appears in the dropdown but the daemon isn't
+#     bundled — selecting it surfaces "Local LLM disabled in this
+#     build" in /api/status.
+#   * Portable across Pi 5 / x86_64 / generic ARM64 hosts again.
+# To get GPU Whisper + offline LLM back, see the
+# voice-ai-pipecat-jetson template (work in progress) or the
+# `cn/voice-ai-pipecat-local-llm` history before it was reverted.
+FROM debian:bookworm-slim
 
-# Note: the dustynv JetPack base ships an empty /etc/hosts, which
-# breaks Python httpx's loopback resolution and the openai client →
-# Ollama integration. We can't seed /etc/hosts here because BuildKit
-# bind-mounts it read-only during builds; entrypoint.sh writes it at
-# container start instead.
-
-# JetPack 6 ships Ubuntu 22.04 with Python 3.10 native — no deadsnakes
-# PPA needed (the previous r35/Ubuntu-20.04 base did, and the launchpad
-# infrastructure for that turned out to be flaky enough to repeatedly
-# break the build).
+# Bookworm ships Python 3.11 — pipecat-ai requires 3.10+. Most heavy
+# Python deps install as prebuilt manylinux wheels (ctranslate2,
+# faster-whisper, piper-tts, onnxruntime, numpy, scipy, …), but PyAudio
+# is source-only — it ships an sdist and compiles its `_portaudio` C
+# extension at install time, so we keep `gcc` in the runtime base.
+# python3-dev is already required for the same reason.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3.10 \
-        python3.10-venv \
-        python3.10-dev \
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-dev \
+        gcc \
         ca-certificates \
         curl \
-        gnupg \
-        zstd \
-        gcc \
-        g++ \
-        cmake \
-        git \
-        pkg-config \
-        libopenblas-dev \
         alsa-utils \
         libasound2 \
         portaudio19-dev \
@@ -56,143 +50,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl \
     && rm -rf /var/lib/apt/lists/*
 
-# Ollama for on-device LLM serving. We deliberately bypass Ollama's
-# upstream install.sh: on Jetson r36.x images it can silently abort (the
-# script's Jetson-detection branch fetches a JetPack-tagged bundle URL
-# its env-probe builds, and that path is fragile inside slim L4T
-# images). Downloading the tarballs directly is deterministic and
-# avoids the install script entirely.
-#
-# Ollama's distribution layout (as of recent releases): the generic
-# arm64 tarball ships the binary + base runners, and the JetPack 6
-# tarball is an additive bundle that drops CUDA-tuned runners on top.
-# install.sh installs both in turn — we mirror that. Format is
-# .tar.zst, hence zstd in the apt step above.
-RUN set -eu; \
-    BASE_URL="https://ollama.com/download"; \
-    curl -fsSL --retry 5 --retry-delay 3 --max-time 300 \
-        -o /tmp/ollama.tar.zst \
-        "$BASE_URL/ollama-linux-arm64.tar.zst"; \
-    tar --zstd -C /usr/local -xf /tmp/ollama.tar.zst; \
-    rm /tmp/ollama.tar.zst; \
-    if curl -fsSL --retry 3 --retry-delay 3 --max-time 300 \
-            -o /tmp/ollama-jp6.tar.zst \
-            "$BASE_URL/ollama-linux-arm64-jetpack6.tar.zst"; then \
-      tar --zstd -C /usr/local -xf /tmp/ollama-jp6.tar.zst; \
-      rm /tmp/ollama-jp6.tar.zst; \
-      echo "Installed Ollama with JetPack 6 add-on"; \
-    else \
-      echo "JetPack 6 add-on unavailable, using generic Ollama runners only"; \
-    fi; \
-    /usr/local/bin/ollama --version
-
-# /etc/asound.conf is generated at container start by entrypoint.sh
-# based on the ALSA_CARD env var. Default targets the Anker PowerConf
-# (the template's reference USB speakerphone) but Pi / generic USB mic
-# setups can override it without rebuilding. The config layout (asym
-# split + plug per leg) is documented inline in entrypoint.sh.
-
 WORKDIR /app
 
-RUN python3.10 -m venv /app/venv
-# Put nvcc / cuda libs on PATH and LD_LIBRARY_PATH for the CTranslate2
-# source build. Jetson CUDA images ship CUDA at /usr/local/cuda but
-# does NOT add it to PATH by default, which causes cmake's CUDA
-# detection to fail silently and fall back to a CPU-only build (the
-# smoke test catches this — but only after a 9-min compile).
-ENV CUDA_HOME=/usr/local/cuda
-ENV PATH="/app/venv/bin:${CUDA_HOME}/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/local/lib:${CUDA_HOME}/lib64:${LD_LIBRARY_PATH:-}"
-ENV CTRANSLATE2_ROOT=/usr/local
-# Wendy mounts a fresh empty persist volume at /models on first run,
-# which hides anything we cached at /models/* during the build. Stage
-# downloads at /opt/seed-models so the image layer is preserved, then
-# entrypoint.sh copies missing files into /models on first boot.
+RUN python3 -m venv /app/venv
+ENV PATH="/app/venv/bin:$PATH"
+# Stage seed assets at /opt/seed-models so the persist mount at
+# /models on first run can't hide them. entrypoint.sh copies them
+# into /models on first boot.
 ENV SEED_MODELS_DIR=/opt/seed-models
-# Runtime defaults point at the persist mount; build-time download
-# steps below override these locally so the cached weights end up in
-# the seed dir instead.
+# Runtime defaults point at the persist mount. The pre-download
+# steps below override these locally so the cached weights end up
+# in the seed dir instead of the (empty) persist mount.
 ENV HF_HOME=/models/huggingface
 ENV XDG_CACHE_HOME=/models/cache
-ENV OLLAMA_MODELS=/models/ollama
-
-# ctranslate2 from source. The generic aarch64 wheel does not reliably
-# target Jetson's L4T CUDA/cuDNN stack or Orin's SM architecture, so build
-# it in-image against the CUDA 12.2 + cuDNN 8.9 libraries that the base
-# provides. Pin to v4.4.0: v4.5.0+ requires cuDNN 9, but JetPack 6.0 GA
-# ships cuDNN 8.9. faster-whisper 1.x accepts ctranslate2 4.x, and
-# requirements.txt pins this exact version so pip does not replace it.
-#
-# This step takes 10–15 min on first build; subsequent rebuilds hit
-# the layer cache so it's a one-time cost.
-# CUDA_ARCH_LIST is the SM (compute capability) the kernels are
-# compiled for. Default 8.7 = Jetson Orin (Nano/NX/AGX). For Xavier
-# (sm_72), TX2 (sm_62), or non-Jetson CUDA builds, override at build
-# time: `--build-arg CTRANSLATE2_CUDA_ARCH="7.2;7.5;8.6;8.7"`. Listing
-# multiple arches makes the image portable at the cost of a longer
-# build and a larger wheel.
-ARG CTRANSLATE2_CUDA_ARCH=8.7
-# Cap parallelism at half the available cores to keep nvcc memory
-# usage in check on smaller Jetsons (Orin Nano 4 GB OOMs at full
-# nproc on the CUDA kernel compile).
-RUN set -eu; \
-    test -x "${CUDA_HOME}/bin/nvcc" \
-      || (echo "ERROR: nvcc not found at ${CUDA_HOME}/bin/nvcc; the Jetson base image is missing the CUDA toolkit." \
-          && ls -la /usr/local/ && exit 1); \
-    cd /tmp; \
-    git clone --depth 1 --branch v4.4.0 --recursive \
-      https://github.com/OpenNMT/CTranslate2.git; \
-    mkdir -p /tmp/CTranslate2/build; \
-    cd /tmp/CTranslate2/build; \
-    cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
-          -DCMAKE_BUILD_TYPE=Release \
-          -DWITH_CUDA=ON -DWITH_CUDNN=ON \
-          -DWITH_MKL=OFF -DOPENMP_RUNTIME=COMP \
-          -DCMAKE_CUDA_COMPILER="${CUDA_HOME}/bin/nvcc" \
-          -DCUDAToolkit_ROOT="${CUDA_HOME}" \
-          -DCUDA_NVCC_FLAGS="-Xfatbin=-compress-all" \
-          -DCUDA_ARCH_LIST="${CTRANSLATE2_CUDA_ARCH}" \
-          .. > /tmp/cmake.log 2>&1 || (cat /tmp/cmake.log && exit 1); \
-    cat /tmp/cmake.log; \
-    if grep -qE "Could NOT find (CUDA|CUDNN|cuDNN)|cuDNN (include directory|libraries) not found" /tmp/cmake.log; then \
-      echo "ERROR: cmake failed to find CUDA or cuDNN — see log above"; \
-      exit 1; \
-    fi; \
-    make -j"$(( $(nproc) / 2 + 1 ))" install; \
-    ldconfig; \
-    cd /tmp/CTranslate2/python; \
-    /app/venv/bin/pip install --no-cache-dir -r install_requirements.txt; \
-    /app/venv/bin/python setup.py bdist_wheel; \
-    /app/venv/bin/pip install --no-cache-dir dist/ctranslate2*.whl; \
-    rm -rf /tmp/CTranslate2 /tmp/cmake.log
-
-# Smoke-test the ctranslate2 install. Without this, a partial install
-# where the Python wheel landed but the native .so failed to link CUDA
-# succeeds at build time and fails at the first transcription with an
-# opaque "OSError: libctranslate2.so.3: cannot open shared object file"
-# (or worse, a clean import that can't actually use CUDA). CTranslate2
-# 4.4.0 does not expose a compile-time boolean on the Python module; asking
-# for CUDA compute types reaches the compile-time CUDA guard before any
-# runtime GPU requirement.
-# A BuildKit host without a GPU may still fail the runtime CUDA probe, so
-# only reject the explicit "not compiled with CUDA support" error.
-RUN /app/venv/bin/python - <<'PY'
-import ctranslate2
-
-try:
-    ctranslate2.get_supported_compute_types("cuda")
-except Exception as exc:
-    message = str(exc)
-    if "not compiled with CUDA support" in message:
-        raise AssertionError(
-            "ctranslate2 built without CUDA support — check Dockerfile "
-            "WITH_CUDA / WITH_CUDNN flags and that the Jetson base ships "
-            "matching CUDA + cuDNN headers"
-        ) from exc
-    print(f"ctranslate2 CUDA support present; runtime CUDA probe skipped: {message}")
-else:
-    print("ctranslate2 CUDA support present")
-PY
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -203,18 +73,19 @@ RUN pip install --no-cache-dir -r requirements.txt
 ENV NLTK_DATA=/usr/local/share/nltk_data
 RUN /app/venv/bin/python -c "import nltk; nltk.download('punkt_tab', download_dir='/usr/local/share/nltk_data')"
 
-# Pre-download a curated set of Piper voices (~63-100 MB each) so the
-# settings drawer's voice picker doesn't stall on first selection. Add
-# more by appending `<lang>/<region>/<speaker>/<quality>/<file>` triples
-# below — Piper hosts them all at the same /resolve/main/ prefix.
-# Stage everything under SEED_MODELS_DIR so the persist mount at /models
-# doesn't hide it. entrypoint.sh copies missing files across on first boot.
+# Pre-download only the default Piper voice (~63 MB) so the
+# settings drawer renders immediately on first connection. Other voices
+# in the picker (en_US-ryan-high, en_US-amy-medium, en_GB-alan-medium)
+# fetch on first selection — this is fine because PiperTTSService
+# already handles missing files by downloading them at load time, and
+# saves ~190 MB of image bloat that most deployments never use. Override
+# the default below by changing the `tts_voice` setting in /api/settings;
+# add custom voices by dropping <name>.onnx + <name>.onnx.json into
+# /models/piper/ on the device. Piper hosts all voices under the same
+# /resolve/main/ prefix on rhasspy/piper-voices.
 RUN mkdir -p ${SEED_MODELS_DIR}/piper ${SEED_MODELS_DIR}/huggingface ${SEED_MODELS_DIR}/cache && \
     for triple in \
-      "en/en_US/lessac/medium en_US-lessac-medium" \
-      "en/en_US/ryan/high en_US-ryan-high" \
-      "en/en_US/amy/medium en_US-amy-medium" \
-      "en/en_GB/alan/medium en_GB-alan-medium" ; do \
+      "en/en_US/lessac/medium en_US-lessac-medium" ; do \
         path="$(echo $triple | cut -d' ' -f1)"; \
         name="$(echo $triple | cut -d' ' -f2)"; \
         curl -fsSL -o ${SEED_MODELS_DIR}/piper/${name}.onnx \
@@ -223,18 +94,12 @@ RUN mkdir -p ${SEED_MODELS_DIR}/piper ${SEED_MODELS_DIR}/huggingface ${SEED_MODE
           https://huggingface.co/rhasspy/piper-voices/resolve/main/${path}/${name}.onnx.json ; \
     done
 
-# Pre-download faster-whisper TINY (~75 MB) into the seed dir so the
-# first WebSocket connection doesn't block on a HuggingFace round-trip.
-# compute_type=float32 here (instead of the runtime int8/float16) only
-# because cross-building arm64 under qemu doesn't have a working int8
-# dispatch backend (CTranslate2 is built with WITH_MKL=OFF and no Ruy
-# fallback in the qemu environment). Caching the weights is the only
-# side effect we need from this step. At runtime on Jetson,
-# WHISPER_DEVICE=cuda + WHISPER_COMPUTE_TYPE below selects the actual
-# compute path.
+# Pre-download faster-whisper TINY (~75 MB). compute_type=int8 here
+# matches the runtime path on this CPU-only base, so the pre-download
+# warms the right kernels too.
 RUN HF_HOME=${SEED_MODELS_DIR}/huggingface \
     XDG_CACHE_HOME=${SEED_MODELS_DIR}/cache \
-    /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='float32')"
+    /app/venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8')"
 
 # Pre-download openWakeWord models (~few MB each). The pretrained set
 # includes "alexa", "hey_jarvis", "hey_mycroft", "hey_rhasspy", "ok_nabu".
@@ -277,24 +142,17 @@ ENV WAKE_WORD_MODELS={{.WAKE_WORD_MODELS}}
 ENV WAKE_WORD_THRESHOLD={{.WAKE_WORD_THRESHOLD}}
 ENV WAKE_LISTEN_SECS={{.WAKE_LISTEN_SECS}}
 
-# Whisper compute target. The default Jetson base ships CUDA 12.2 + cuDNN
-# 8.9 and the ctranslate2 step above is built with WITH_CUDA=ON, so
-# cuda+float16 is the right pick on Jetson. If libcuda is missing at
-# run time, override with WHISPER_DEVICE=cpu / WHISPER_COMPUTE_TYPE=int8.
-ENV WHISPER_DEVICE=cuda
-ENV WHISPER_COMPUTE_TYPE=float16
-
-# On-device LLM model that the entrypoint pulls into Ollama on first
-# boot (and skips on subsequent boots if already cached). Empty
-# disables the pull step — the container still starts the Ollama
-# daemon so the user can pull a model later via the UI's settings,
-# but no LLM is available locally until they do. See entrypoint.sh.
-ENV LOCAL_LLM_MODEL={{.LOCAL_LLM_MODEL}}
+# CPU-only Whisper. faster-whisper's int8 path on Cortex-A78AE / x86
+# is plenty for the voice loop (~300-500 ms per turn). Override at
+# runtime with WHISPER_DEVICE=cuda + WHISPER_COMPUTE_TYPE=float16 if
+# you swap in a CUDA-capable base image; the runtime code respects
+# both env vars without a rebuild.
+ENV WHISPER_DEVICE=cpu
+ENV WHISPER_COMPUTE_TYPE=int8
 
 EXPOSE {{.PORT}}
 
-# entrypoint.sh starts Ollama in the background, optionally pulls
-# LOCAL_LLM_MODEL, then exec's the Python app. Pipecat itself doesn't
-# need to know about Ollama — it talks to it as just another OpenAI-
-# compatible endpoint via the runtime settings store.
+# entrypoint.sh sets up ALSA / TLS / persist seed, then exec's the
+# Python app. No on-device LLM daemon in this build — pick a cloud
+# provider from the settings drawer.
 CMD ["/app/entrypoint.sh"]

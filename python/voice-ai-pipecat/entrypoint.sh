@@ -156,13 +156,19 @@ if [ -s "$TLS_CERT" ] && [ -s "$TLS_KEY" ]; then
   export TLS_KEY_FILE="$TLS_KEY"
 fi
 
-# main.py polls this file at startup and surfaces it on /api/status
-# as `local_llm_load_error`. In this lightweight cloud-LLM build the
-# Ollama daemon is not bundled, so we write a clear message here that
-# the UI can show as a banner if the user picks the "ollama" provider.
+# Clear any stale local-LLM error from a prior deploy. main.py reads
+# this file once at startup and surfaces it on /api/status as
+# `local_llm_load_error`; we don't want a leftover "Ollama daemon
+# died…" message from a previous Jetson build to keep showing.
+#
+# We deliberately don't write a "Local LLM disabled in this build"
+# banner here either: main.py's _ollama_health_watcher already polls
+# Ollama and only surfaces an error when the user has actively
+# selected the "ollama" provider in settings. Writing an unconditional
+# disabled-message would make the banner persist for users who picked
+# a cloud provider, which is the wrong UX.
 LOCAL_LLM_ERROR_FILE=${LOCAL_LLM_ERROR_FILE:-/tmp/voice-ai-local-llm-error.txt}
-printf 'Local LLM disabled in this build — pick a cloud provider in settings.\n' \
-  > "$LOCAL_LLM_ERROR_FILE"
+rm -f "$LOCAL_LLM_ERROR_FILE"
 
 # Hand off to Pipecat.
 echo "[entrypoint] starting pipecat app"

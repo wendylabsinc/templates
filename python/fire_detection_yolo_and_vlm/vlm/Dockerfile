@@ -54,11 +54,12 @@ RUN pip3 install --no-cache-dir \
     opentelemetry-exporter-otlp-proto-http
 
 # Download Qwen3-VL-2B-Instruct (~5 GB) into the image. Public model, no HF
-# token required. Isolated layer so application-code changes don't invalidate
-# the download cache. Only re-runs if this RUN line itself changes.
-RUN huggingface-cli download Qwen/Qwen3-VL-2B-Instruct \
-        --local-dir /app/models/Qwen3-VL-2B-Instruct \
-        --max-workers 4
+# token required. Calls the Python API directly instead of the CLI: the
+# huggingface-cli command was deprecated upstream and the replacement (`hf`)
+# has had churn — the snapshot_download API is stable. Isolated layer so
+# application-code changes don't invalidate the download cache; only re-runs
+# if this RUN line itself changes.
+RUN python3 -c "from huggingface_hub import snapshot_download; snapshot_download('Qwen/Qwen3-VL-2B-Instruct', local_dir='/app/models/Qwen3-VL-2B-Instruct', max_workers=4)"
 
 # Set working directory
 WORKDIR /app

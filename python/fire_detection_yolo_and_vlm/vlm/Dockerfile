@@ -1,6 +1,7 @@
 # Qwen3-VL Vision-Language Model Service
 # Optimized for Jetson Orin Nano with INT4 quantization using Jetson-compatible bitsandbytes
-# Model is baked into the image for fast startup (no downloads needed)
+# Model is downloaded during build and baked into the image — first build pulls
+# ~5 GB from Hugging Face; subsequent rebuilds reuse the cached layer.
 
 FROM ubuntu:22.04
 
@@ -16,10 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
-
-# Copy pre-downloaded Qwen3-VL-2B model EARLY for better layer caching
-# Download once with: huggingface-cli download Qwen/Qwen3-VL-2B-Instruct --local-dir ./models/Qwen3-VL-2B-Instruct
-COPY models/Qwen3-VL-2B-Instruct /app/models/Qwen3-VL-2B-Instruct
 
 # Upgrade pip
 RUN pip3 install --no-cache-dir --upgrade pip
@@ -55,6 +52,13 @@ RUN pip3 install --no-cache-dir \
     opentelemetry-api \
     opentelemetry-sdk \
     opentelemetry-exporter-otlp-proto-http
+
+# Download Qwen3-VL-2B-Instruct (~5 GB) into the image. Public model, no HF
+# token required. Isolated layer so application-code changes don't invalidate
+# the download cache. Only re-runs if this RUN line itself changes.
+RUN huggingface-cli download Qwen/Qwen3-VL-2B-Instruct \
+        --local-dir /app/models/Qwen3-VL-2B-Instruct \
+        --max-workers 4
 
 # Set working directory
 WORKDIR /app

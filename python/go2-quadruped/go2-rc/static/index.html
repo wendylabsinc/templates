@@ -565,6 +565,9 @@
       const current = { vx: 0, vy: 0, vyaw: 0 };
       let lastSentZero = false;
       let runBoost = false; // shift-to-run
+      const gamepadTarget = { vx: 0, vy: 0, vyaw: 0 };
+      let gamepadRunBoost = false;
+      const prevButtonsPressed = new Set();
 
       const speedEl = document.getElementById("speed");
       const feelEl = document.getElementById("feel");
@@ -578,9 +581,9 @@
       updateFeelVal();
 
       function speedScale() {
-        // Shift adds 25% headroom on top of the slider, capped at 100%.
+        // Shift or RT adds 25% headroom on top of the slider, capped at 100%.
         const base = parseInt(speedEl.value, 10) / 100;
-        return Math.min(1, base * (runBoost ? 1.25 : 1.0));
+        return Math.min(1, base * ((runBoost || gamepadRunBoost) ? 1.25 : 1.0));
       }
 
       function feelAlpha() {

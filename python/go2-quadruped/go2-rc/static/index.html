@@ -790,6 +790,8 @@
       window.addEventListener("blur", () => {
         keys.clear();
         runBoost = false;
+        gamepadRunBoost = false;
+        gamepadTarget.vx = gamepadTarget.vy = gamepadTarget.vyaw = 0;
         applyKeys();
       });
 
@@ -810,6 +812,7 @@
         // be instant regardless of the slider position.
         keys.clear();
         runBoost = false;
+        gamepadRunBoost = false;
         target.vx = target.vy = target.vyaw = 0;
         gamepadTarget.vx = gamepadTarget.vy = gamepadTarget.vyaw = 0;
         current.vx = current.vy = current.vyaw = 0;

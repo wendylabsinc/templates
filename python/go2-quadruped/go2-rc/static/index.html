@@ -449,6 +449,10 @@
         <span class="pill"
           ><span id="battery-label">battery: —</span></span
         >
+        <span class="pill"
+          ><span class="dot" id="dot-gp"></span
+          ><span id="gp-label">gamepad: —</span></span
+        >
       </div>
 
       <div class="actions">
@@ -836,6 +840,18 @@
       }
       pollStatus();
       setInterval(pollStatus, 2000);
+
+      // === Gamepad connection indicator ===================================
+      const gpDot   = document.getElementById("dot-gp");
+      const gpLabel = document.getElementById("gp-label");
+      window.addEventListener("gamepadconnected", () => {
+        gpDot.className = "dot ok";
+        gpLabel.textContent = "gamepad: ok";
+      });
+      window.addEventListener("gamepaddisconnected", () => {
+        gpDot.className = "dot";
+        gpLabel.textContent = "gamepad: —";
+      });
 
       // === Push-to-talk: browser mic → dog speaker ========================
       // Hold the talk button (or T key) → grab mic via getUserMedia,

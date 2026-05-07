@@ -8,7 +8,7 @@ REPO_ID = "unsloth/gemma-4-E4B-it-GGUF"
 MODEL_FILENAME = "gemma-4-E4B-it-Q3_K_M.gguf"
 MMPROJ_FILENAME = "mmproj-F16.gguf"
 MODELS_DIR = Path(
-    os.environ.get("ALBERT_MODELS_DIR", Path.home() / ".albert" / "models")
+    os.environ.get("MODELS_DIR", Path.home() / ".albert" / "models")
 )
 
 

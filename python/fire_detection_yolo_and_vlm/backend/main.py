@@ -50,8 +50,8 @@ import profiles
 
 FRONTEND_DIR = Path("/app/frontend/build/client")
 
-CHAT_ENABLED = os.environ.get("ALBERT_CHAT_ENABLED", "0").lower() in ("1", "true", "yes")
-DISCOVERY_ENABLED = os.environ.get("ALBERT_DISCOVERY_ENABLED", "1").lower() in ("1", "true", "yes")
+CHAT_ENABLED = os.environ.get("CHAT_ENABLED", "0").lower() in ("1", "true", "yes")
+DISCOVERY_ENABLED = os.environ.get("DISCOVERY_ENABLED", "1").lower() in ("1", "true", "yes")
 
 from cameras import discover_cameras, mjpeg_frames, _kill_active_stream
 from store import LoroStore
@@ -194,7 +194,7 @@ async def send_message(conversation_id: str, req: SendMessageRequest):
     if not CHAT_ENABLED:
         raise HTTPException(
             status_code=503,
-            detail="Chat is disabled. Set ALBERT_CHAT_ENABLED=1 to enable.",
+            detail="Chat is disabled. Set CHAT_ENABLED=1 to enable.",
         )
 
     # Agent processes the message (classifies intent, responds)

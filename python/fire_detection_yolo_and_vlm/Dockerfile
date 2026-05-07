@@ -22,10 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bluez libbluetooth-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Albert's Python deps on top of the ultralytics base.
+# Install Python deps on top of the ultralytics base.
 # torch, opencv-python, ultralytics are already installed in the base image.
 # Chat/LLM deps (llama-cpp-python, huggingface-hub) are NOT included —
-# enable with ALBERT_CHAT_ENABLED=1 and install them separately if needed.
+# enable with CHAT_ENABLED=1 and install them separately if needed.
 RUN pip install --no-cache-dir \
         "fastapi>=0.115.0" \
         "uvicorn[standard]>=0.30.0" \
@@ -49,8 +49,8 @@ ENV NVIDIA_DRIVER_CAPABILITIES=all
 ENV PYTHONUNBUFFERED=1
 
 # Chat/Agent (disabled by default — no Gemma 4 on Jetson)
-ENV ALBERT_CHAT_ENABLED=0
-ENV ALBERT_MODELS_DIR=/models
+ENV CHAT_ENABLED=0
+ENV MODELS_DIR=/models
 
 # YOLO detection config
 ENV YOLO_MODELS_DIR=/yolo-models

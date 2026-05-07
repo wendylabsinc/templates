@@ -606,7 +606,7 @@
       }
 
       function maxAbs(a, b) {
-        return Math.abs(a) >= Math.abs(b) ? a : b;
+        return Math.abs(a) >= Math.abs(b) ? a : b; // ties favour touch (>=)
       }
 
       async function tick() {
@@ -811,6 +811,7 @@
         keys.clear();
         runBoost = false;
         target.vx = target.vy = target.vyaw = 0;
+        gamepadTarget.vx = gamepadTarget.vy = gamepadTarget.vyaw = 0;
         current.vx = current.vy = current.vyaw = 0;
         joyEnd();
         yawEnd();

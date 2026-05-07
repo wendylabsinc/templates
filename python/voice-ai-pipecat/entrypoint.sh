@@ -1,17 +1,10 @@
 #!/bin/bash
-# Container entrypoint: start the Ollama daemon, ensure the configured
-# model is present locally, then hand off to the Pipecat app.
-#
-# Ollama runs as a background daemon for the lifetime of the container.
-# Pipecat (main.py) talks to it via http://localhost:11434/v1 only
-# when the user has selected the `ollama` provider in /api/settings —
-# until then Ollama is idle and the cloud LLMs work as before.
-#
-# Model handling: this is the "first-boot pull" variant. We pull the
-# model from Ollama's registry on container start if it's not already
-# cached. The model isn't baked into the image (smaller image, faster
-# rebuilds) but the first boot needs the device to have an internet
-# route so the pull succeeds.
+# Container entrypoint: set up ALSA / TLS / persist seed, then hand
+# off to the Pipecat app. This is the lightweight cloud-LLM build —
+# no Ollama daemon, no on-device LLM. Selecting the "ollama" provider
+# in /api/settings still works as a UI option but surfaces an error
+# banner ("Local LLM disabled in this build") via the
+# /tmp/voice-ai-local-llm-error.txt mechanism main.py polls.
 
 set -uo pipefail
 
@@ -62,9 +55,9 @@ fi
 
 # Seed /etc/hosts at runtime. The dustynv JetPack base image ships an
 # empty /etc/hosts, which causes Python httpx (used by the openai
-# client → local Ollama integration) to fail getaddrinfo for
+# client → cloud LLM integration) to fail getaddrinfo for
 # "localhost" with EAI_AGAIN. curl works (its own resolver shortcut),
-# but the openai client doesn't, so pipecat → Ollama is broken until
+# but the openai client doesn't, so pipecat's loopback paths are broken until
 # we pin loopback resolution. We can't do this in the Dockerfile
 # because BuildKit bind-mounts /etc/hosts read-only at build time.
 if ! grep -q '^127\.0\.0\.1[[:space:]]\+localhost' /etc/hosts 2>/dev/null; then
@@ -75,11 +68,11 @@ fi
 # Ensure model subdirs exist on the /models persist volume. The
 # Dockerfile creates these at build time, but wendy.json mounts a
 # fresh empty persist volume at /models on first run which hides the
-# image's content. Piper / faster-whisper / Ollama all expect their
-# subdirs to exist before they try to write into them; without this,
+# image's content. Piper / faster-whisper expect their subdirs to
+# exist before they try to write into them; without this,
 # PiperTTSService.__init__ crashes with FileNotFoundError before
 # uvicorn can finish startup.
-mkdir -p /models/piper /models/huggingface /models/cache /models/ollama /models/tls /models/state
+mkdir -p /models/piper /models/huggingface /models/cache /models/tls /models/state
 
 # Seed assets from the image layer onto the persist volume on first
 # boot. The Dockerfile downloads Piper voices, Whisper weights, and
@@ -163,111 +156,14 @@ if [ -s "$TLS_CERT" ] && [ -s "$TLS_KEY" ]; then
   export TLS_KEY_FILE="$TLS_KEY"
 fi
 
-OLLAMA_LOG=/tmp/ollama.log
-# URL Pipecat uses to reach the Ollama daemon. Loopback is correct for
-# host networking (same network namespace as the Pipecat process). The
-# bind address below is what Ollama listens on — keep them in sync if
-# you point Pipecat at a different host.
-OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
-# Bind address for the Ollama daemon. Default 127.0.0.1 so the model
-# server isn't reachable from the LAN — host networking would otherwise
-# expose port 11434 to anyone on the same network. Override with
-# OLLAMA_BIND=0.0.0.0:11434 if you actually want LAN access (e.g. a
-# separate sidecar in its own network namespace that needs to reach
-# Ollama through the bridge).
-OLLAMA_BIND=${OLLAMA_BIND:-127.0.0.1:11434}
-# main.py reads this on startup and surfaces it on /api/status as
-# `local_llm_load_error`, so a failed model pull shows in the UI as a
-# banner instead of silently breaking every LLM turn at runtime.
+# main.py polls this file at startup and surfaces it on /api/status
+# as `local_llm_load_error`. In this lightweight cloud-LLM build the
+# Ollama daemon is not bundled, so we write a clear message here that
+# the UI can show as a banner if the user picks the "ollama" provider.
 LOCAL_LLM_ERROR_FILE=${LOCAL_LLM_ERROR_FILE:-/tmp/voice-ai-local-llm-error.txt}
-rm -f "$LOCAL_LLM_ERROR_FILE"
+printf 'Local LLM disabled in this build — pick a cloud provider in settings.\n' \
+  > "$LOCAL_LLM_ERROR_FILE"
 
-# Decide whether to start the Ollama daemon. Set ENABLE_OLLAMA=0 to skip
-# the daemon entirely (e.g. cloud-only deployments where the local LLM
-# isn't needed and the daemon's GPU footprint / memory pressure hurts).
-# When LOCAL_LLM_MODEL is empty AND no override was given, default to
-# starting Ollama anyway — the user can pull a model later via the UI.
-ENABLE_OLLAMA=${ENABLE_OLLAMA:-1}
-if [ "$ENABLE_OLLAMA" != "1" ]; then
-  echo "[entrypoint] ENABLE_OLLAMA=$ENABLE_OLLAMA — skipping Ollama daemon"
-  echo "Local LLM disabled (ENABLE_OLLAMA=$ENABLE_OLLAMA); pick a cloud provider in settings." \
-    > "$LOCAL_LLM_ERROR_FILE"
-  echo "[entrypoint] starting pipecat app"
-  exec /app/venv/bin/python main.py
-fi
-
-echo "[entrypoint] starting ollama daemon on $OLLAMA_BIND (logs → $OLLAMA_LOG)"
-OLLAMA_HOST="$OLLAMA_BIND" ollama serve > "$OLLAMA_LOG" 2>&1 &
-OLLAMA_PID=$!
-
-# Wait for the daemon to start responding. 30 s upper bound — if it
-# isn't up by then something is wrong (no CUDA libs visible, port
-# already bound, etc.). We previously exited the container on this
-# failure, but that prevented cloud-only deployments from booting when
-# Ollama hit a transient problem. Record the failure for /api/status
-# and let the FastAPI app come up so the user can still use a cloud
-# provider.
-ollama_up=0
-echo "[entrypoint] waiting for ollama API to come up"
-for i in $(seq 1 30); do
-  if curl -sf "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then
-    echo "[entrypoint] ollama is up after ${i}s"
-    ollama_up=1
-    break
-  fi
-  if ! kill -0 "$OLLAMA_PID" 2>/dev/null; then
-    echo "[entrypoint] WARN: ollama daemon died during startup. Last log lines:"
-    tail -20 "$OLLAMA_LOG" || true
-    printf 'Ollama daemon died during startup. Cloud LLM providers still work; pick one in settings.\n' \
-      > "$LOCAL_LLM_ERROR_FILE"
-    break
-  fi
-  sleep 1
-done
-
-if [ "$ollama_up" = "0" ] && ! curl -sf "$OLLAMA_HOST/api/tags" >/dev/null 2>&1; then
-  echo "[entrypoint] WARN: ollama did not come up within 30 s. Last log lines:"
-  tail -20 "$OLLAMA_LOG" || true
-  printf 'Ollama daemon did not come up within 30s. Cloud LLM providers still work; pick one in settings.\n' \
-    > "$LOCAL_LLM_ERROR_FILE"
-fi
-
-# Pull the configured model if it isn't already in Ollama's local
-# registry. The container still starts on pull failure (the user can
-# still hit cloud LLMs via /api/settings) but the failure is recorded
-# so the UI can show a banner instead of pretending the local LLM is
-# fine. If Ollama itself never came up there's nothing to pull, so skip.
-if [ "$ollama_up" = "1" ] && [ -n "${LOCAL_LLM_MODEL:-}" ]; then
-  cached=0
-  if list_out=$(ollama list 2>&1); then
-    if printf '%s\n' "$list_out" | awk 'NR>1 {print $1}' | grep -qx "$LOCAL_LLM_MODEL"; then
-      cached=1
-    fi
-  else
-    echo "[entrypoint] WARN: 'ollama list' failed, treating model as not cached: $list_out"
-  fi
-  if [ "$cached" = "1" ]; then
-    echo "[entrypoint] $LOCAL_LLM_MODEL already cached, skipping pull"
-  else
-    echo "[entrypoint] pulling $LOCAL_LLM_MODEL — first boot, expect 1–3 min on WiFi"
-    if pull_out=$(ollama pull "$LOCAL_LLM_MODEL" 2>&1); then
-      echo "[entrypoint] $LOCAL_LLM_MODEL pulled successfully"
-    else
-      printf 'Local LLM model %s failed to download: %s\n' \
-        "$LOCAL_LLM_MODEL" "$(printf '%s' "$pull_out" | tail -1)" \
-        > "$LOCAL_LLM_ERROR_FILE"
-      echo "[entrypoint] ERROR: failed to pull $LOCAL_LLM_MODEL — see /api/status banner. Last log line:"
-      printf '%s\n' "$pull_out" | tail -1
-    fi
-  fi
-elif [ "$ollama_up" = "0" ]; then
-  echo "[entrypoint] ollama daemon never came up, skipping model pull"
-else
-  echo "[entrypoint] LOCAL_LLM_MODEL is empty, skipping model pull"
-fi
-
-# Hand off to Pipecat. Ollama keeps running as our orphaned-by-exec
-# child; when the container shuts down both processes go away
-# together, which is what we want.
+# Hand off to Pipecat.
 echo "[entrypoint] starting pipecat app"
 exec /app/venv/bin/python main.py

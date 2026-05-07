@@ -1066,6 +1066,7 @@
         if (!gp) {
           gamepadTarget.vx = gamepadTarget.vy = gamepadTarget.vyaw = 0;
           gamepadRunBoost = false;
+          prevButtonsPressed.clear();
           return;
         }
 

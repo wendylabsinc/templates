@@ -37,6 +37,7 @@ WORKDIR /app
 
 RUN python3 -m venv /app/venv
 ENV PATH="/app/venv/bin:$PATH"
+ENV PYTHONPATH=/app/venv/lib/python3.11/site-packages
 ENV HF_HOME=/models/huggingface
 ENV XDG_CACHE_HOME=/models/cache
 

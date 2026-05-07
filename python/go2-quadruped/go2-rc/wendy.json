@@ -10,7 +10,7 @@
     },
     "hooks": {
         "postStart": {
-            "cli": "open http://localhost:3500"
+            "cli": "open http://${WENDY_HOSTNAME}:3500"
         }
     }
 }

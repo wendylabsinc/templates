@@ -1074,13 +1074,23 @@
       // gamepadRunBoost is set BEFORE speedScale() is called so RT applies
       // the same 1.25× boost as the Shift key.
       function readGamepad() {
-        const gp = [...navigator.getGamepads()].find((g) => g);
+        // Use g.connected to skip stale slots that linger after reconnect.
+        // iOS Safari doesn't fire gamepadconnected reliably, so we detect
+        // and update the indicator here on every frame instead.
+        const gp = [...navigator.getGamepads()].find((g) => g?.connected);
         if (!gp) {
+          if (gpLabel.textContent === "gamepad: ok") {
+            gpDot.className = "dot";
+            gpLabel.textContent = "gamepad: —";
+          }
           gamepadTarget.vx = gamepadTarget.vy = gamepadTarget.vyaw = 0;
           gamepadRunBoost = false;
           prevButtonsPressed.clear();
           return;
         }
+        // Show connected + live axis values so we can diagnose iOS mapping.
+        gpDot.className = "dot ok";
+        gpLabel.textContent = "gp: [" + [...gp.axes].map((v) => v.toFixed(2)).join(", ") + "]";
 
         const DEAD = 0.12;
         function axis(i) {
@@ -1088,16 +1098,19 @@
           return Math.abs(v) < DEAD ? 0 : v;
         }
 
-        // Set RT boost flag before speedScale() reads it.
+        // Set RT / R2 boost flag before speedScale() reads it.
         gamepadRunBoost = gp.buttons[7]?.pressed ?? false;
         const s = speedScale();
 
-        // Standard mapping: axis 1 = left stick Y (up = negative = forward),
-        // axis 0 = left stick X (right = positive = strafe right = -vy),
-        // axis 2 = right stick X (right = positive = turn CW = -vyaw).
-        gamepadTarget.vx   = -axis(1) * MAX.vx   * s;
-        gamepadTarget.vy   = -axis(0) * MAX.vy   * s;
-        gamepadTarget.vyaw = -axis(2) * MAX.vyaw  * s;
+        // Standard mapping (Xbox / most controllers): axis 0 = left X,
+        // axis 1 = left Y, axis 2 = right X.
+        // DualShock 4/5 in raw (non-"standard") mode insert L2/R2 as
+        // analogue axes 2 and 3, shifting right stick X to axis 4.
+        // Detect by axis count: 6+ axes means triggers occupy 2 and 3.
+        const rxAxis = (gp.mapping === "standard" || gp.axes.length < 6) ? 2 : 4;
+        gamepadTarget.vx   = -axis(1)      * MAX.vx   * s;
+        gamepadTarget.vy   = -axis(0)      * MAX.vy   * s;
+        gamepadTarget.vyaw = -axis(rxAxis) * MAX.vyaw  * s;
 
         // Button actions — fire on rising edge only.
         const nowPressed = new Set(

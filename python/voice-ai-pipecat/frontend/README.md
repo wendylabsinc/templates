@@ -2,9 +2,9 @@
 
 Real-time audio visualizer for the `voice-ai-pipecat` Wendy template. Forked from the
 `voice-ai-frontend` scratchpad. This directory is the **source of truth** — the same
-tree is vendored into `python/voice-ai-pipecat/frontend/` and
-`swift/voice-ai-pipecat/frontend/` at template-ship time. If you edit code here,
-re-copy into those template directories (see the template READMEs).
+tree is vendored into `python/voice-ai-pipecat/frontend/` at template-ship time.
+If you edit code here, re-copy into that template directory (see the template
+README).
 
 The visualizer reads frequency data from two Web Audio `AnalyserNode`s:
 

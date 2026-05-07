@@ -18,6 +18,13 @@
             "validate": { "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$" }
         },
         {
+            "name": "NETWORK_INTERFACE",
+            "description": "Host NIC on the 192.168.123.0/24 subnet (eth0 on the Go2's onboard Jetson; differs on other devices)",
+            "type": "string",
+            "default": "eth0",
+            "prompt": "Host network interface"
+        },
+        {
             "name": "WATCHTOWER_PORT",
             "description": "Foxglove WebSocket port for Watchtower",
             "type": "integer",

@@ -5,9 +5,10 @@
     <Domain id="any">
         <General>
             <Interfaces>
-                <!-- eth0 must be the NIC that has the 192.168.123.0/24
-                     address on the deploy host. On the Go2's onboard Jetson this is eth0. -->
-                <NetworkInterface name="eth0" priority="default" multicast="default" />
+                <!-- This NIC must carry the 192.168.123.0/24 address on the deploy host.
+                     On the Go2's onboard Jetson it's eth0 (default); on other devices
+                     check `ip addr` and pass --var NETWORK_INTERFACE=<NIC> to wendy init. -->
+                <NetworkInterface name="{{.NETWORK_INTERFACE}}" priority="default" multicast="default" />
             </Interfaces>
             <AllowMulticast>true</AllowMulticast>
             <MaxMessageSize>65500B</MaxMessageSize>

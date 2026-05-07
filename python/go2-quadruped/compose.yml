@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       - PORT=3201
-      - GO2_NETWORK_INTERFACE=eth0
+      - GO2_NETWORK_INTERFACE={{.NETWORK_INTERFACE}}
 
   go2-camera:
     build: ./go2-camera

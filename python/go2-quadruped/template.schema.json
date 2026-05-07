@@ -10,6 +10,13 @@
                     "type": "input",
                     "required": true,
                     "default": "192.168.123.161"
+                },
+                {
+                    "id": "NETWORK_INTERFACE",
+                    "label": "Host NIC on the dog subnet (eth0 on the Jetson; check `ip addr` on other devices)",
+                    "type": "input",
+                    "required": true,
+                    "default": "eth0"
                 }
             ]
         },

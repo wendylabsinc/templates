@@ -57,7 +57,7 @@ RUN pip3 install --no-cache-dir --upgrade pip \
 COPY main.py go2_controller.py ./
 
 ENV PORT=3201
-ENV GO2_NETWORK_INTERFACE=eth0
+ENV GO2_NETWORK_INTERFACE={{.NETWORK_INTERFACE}}
 
 EXPOSE 3201
 

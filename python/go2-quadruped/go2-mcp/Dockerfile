@@ -10,7 +10,7 @@ WORKDIR /app
 
 # Install the package from source. pyproject.toml uses hatchling and the
 # entrypoint script `go2-mcp` is what we'll invoke from CMD.
-COPY pyproject.toml README.md ./
+COPY pyproject.toml ./
 COPY src/ ./src/
 RUN pip install --no-cache-dir .
 

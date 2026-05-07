@@ -53,9 +53,8 @@ Always-on voice AI assistant: local [faster-whisper](https://github.com/SYSTRAN/
 | Language | Framework | Default Port | Directory |
 |----------|-----------|-------------|-----------|
 | Python | Pipecat + FastAPI | 3005 | `python/voice-ai-pipecat/` |
-| Swift | PythonKit bridge -> Pipecat | 6005 | `swift/voice-ai-pipecat/` |
 
-The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into both language directories.
+The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into the Python template directory.
 
 ### common
 

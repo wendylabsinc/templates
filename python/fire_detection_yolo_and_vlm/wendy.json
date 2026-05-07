@@ -1,0 +1,21 @@
+{
+    "appId": "{{.APP_ID}}-detector",
+    "entitlements": [
+        { "type": "gpu" },
+        { "type": "network", "mode": "host" },
+        { "type": "bluetooth" },
+        { "type": "camera" },
+        { "type": "audio" },
+        { "type": "persist", "name": "{{.APP_ID}}-models", "path": "/models" },
+        { "type": "persist", "name": "{{.APP_ID}}-yolo-models", "path": "/yolo-models" },
+        { "type": "persist", "name": "{{.APP_ID}}-logs", "path": "/logs" }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": 5702, "timeoutSeconds": 180 }
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:5702"
+        }
+    }
+}

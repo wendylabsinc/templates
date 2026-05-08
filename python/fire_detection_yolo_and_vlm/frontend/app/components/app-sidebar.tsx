@@ -21,7 +21,7 @@ const data = {
   navSecondary: [
     {
       title: "Detection",
-      url: "/detection",
+      url: "/",
       icon: <ScanEyeIcon />,
     },
     {

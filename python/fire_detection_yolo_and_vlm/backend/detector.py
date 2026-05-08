@@ -231,9 +231,10 @@ def _build_csi_pipeline() -> str:
     )
 
 
-def _build_v4l2_pipeline() -> str:
+def _build_v4l2_pipeline(device_path: str) -> str:
+    """Default V4L2 pipeline: raw video at configured caps -> BGR appsink."""
     return (
-        f"v4l2src device=/dev/video{CAMERA_INDEX} ! "
+        f"v4l2src device={device_path} ! "
         f"video/x-raw, width=(int){CAMERA_WIDTH}, height=(int){CAMERA_HEIGHT}, "
         f"framerate=(fraction){CAMERA_FPS}/1 ! "
         "videoconvert ! video/x-raw, format=(string)BGR ! "
@@ -241,30 +242,119 @@ def _build_v4l2_pipeline() -> str:
     )
 
 
-def _open_capture():
-    if USE_GSTREAMER:
-        pipelines = []
-        if CAMERA_PIPELINE:
-            pipelines = [CAMERA_PIPELINE]
-        elif CAMERA_SOURCE == "csi":
-            pipelines = [_build_csi_pipeline()]
-        elif CAMERA_SOURCE == "v4l2":
-            pipelines = [_build_v4l2_pipeline()]
-        else:
-            pipelines = [_build_csi_pipeline(), _build_v4l2_pipeline()]
-        for pipeline in pipelines:
-            cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-            if cap.isOpened():
-                return cap, f"gstreamer:{pipeline}"
-            cap.release()
-    cap = cv2.VideoCapture(CAMERA_INDEX)
+def _v4l2_pipeline_matrix(device_path: str) -> list[str]:
+    """Pipelines to try per device, ordered MJPEG-first.
+
+    Most modern UVC webcams emit MJPEG at higher framerates than raw YUYV,
+    so jpegdec is faster and works on cameras that won't negotiate raw caps.
+    Raw variants are kept as later attempts for cameras that emit YUYV.
+    """
+    src = f"v4l2src device={device_path}"
+    return [
+        f"{src} ! image/jpeg ! jpegdec ! videoconvert ! "
+        f"video/x-raw, format=(string)BGR ! appsink drop=1 sync=0",
+        f"{src} ! image/jpeg, width=(int){CAMERA_WIDTH}, height=(int){CAMERA_HEIGHT}, "
+        f"framerate=(fraction){CAMERA_FPS}/1 ! jpegdec ! videoconvert ! "
+        f"video/x-raw, format=(string)BGR ! appsink drop=1 sync=0",
+        _build_v4l2_pipeline(device_path),
+        f"{src} ! videoconvert ! video/x-raw, format=(string)BGR ! "
+        f"appsink drop=1 sync=0",
+    ]
+
+
+def _try_gstreamer(pipeline: str):
+    cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+    if cap.isOpened():
+        return cap
+    cap.release()
+    return None
+
+
+def _try_opencv(device):
+    """device may be a /dev/videoN path string or an int index."""
+    cap = cv2.VideoCapture(device)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if cap.isOpened():
-        return cap, f"opencv:/dev/video{CAMERA_INDEX}"
+        return cap
     cap.release()
+    return None
+
+
+def _open_capture():
+    """Open the first camera that yields a working capture.
+
+    Order:
+      1. CAMERA_GSTREAMER_PIPELINE (explicit user override).
+      2. Configured CAMERA_SOURCE at CAMERA_INDEX (csi / v4l2 / both).
+      3. Discovered capture-capable V4L2 nodes — iterate the pipeline
+         matrix, then raw OpenCV. This is what survives a camera landing
+         on /dev/videoN where N != configured CAMERA_INDEX.
+      4. cv2.VideoCapture(CAMERA_INDEX) as a final hatch.
+    """
+    configured_path = f"/dev/video{CAMERA_INDEX}"
+
+    # 1. User-explicit literal pipeline.
+    if USE_GSTREAMER and CAMERA_PIPELINE:
+        cap = _try_gstreamer(CAMERA_PIPELINE)
+        if cap is not None:
+            return cap, f"gstreamer:{CAMERA_PIPELINE}"
+
+    # 2. Configured source at configured index.
+    if USE_GSTREAMER and not CAMERA_PIPELINE:
+        if CAMERA_SOURCE == "csi":
+            cap = _try_gstreamer(_build_csi_pipeline())
+            if cap is not None:
+                return cap, "gstreamer:csi"
+        elif CAMERA_SOURCE == "v4l2":
+            for p in _v4l2_pipeline_matrix(configured_path):
+                cap = _try_gstreamer(p)
+                if cap is not None:
+                    return cap, f"gstreamer:{p}"
+        else:
+            cap = _try_gstreamer(_build_csi_pipeline())
+            if cap is not None:
+                return cap, "gstreamer:csi"
+            for p in _v4l2_pipeline_matrix(configured_path):
+                cap = _try_gstreamer(p)
+                if cap is not None:
+                    return cap, f"gstreamer:{p}"
+
+    # 3. Discovery fallthrough.
+    try:
+        from cameras import discover_capture_nodes  # lazy: avoids module-load order issues
+        discovered = discover_capture_nodes()
+    except Exception as exc:
+        logger.warning(f"Camera discovery failed: {exc}")
+        discovered = []
+
+    if discovered:
+        logger.info(
+            "Discovered capture nodes: "
+            + ", ".join(f"{n['path']} ({n['name']})" for n in discovered)
+        )
+        for node in discovered:
+            path = node["path"]
+            if USE_GSTREAMER:
+                for p in _v4l2_pipeline_matrix(path):
+                    cap = _try_gstreamer(p)
+                    if cap is not None:
+                        logger.info(f"Camera opened via GStreamer on {path}")
+                        return cap, f"gstreamer:{p}"
+            cap = _try_opencv(path)
+            if cap is not None:
+                logger.info(f"Camera opened via OpenCV on {path}")
+                return cap, f"opencv:{path}"
+    else:
+        logger.warning("No capture-classified V4L2 nodes found via discovery")
+
+    # 4. Final hatch: integer-index OpenCV.
+    cap = _try_opencv(CAMERA_INDEX)
+    if cap is not None:
+        return cap, f"opencv:{configured_path}"
+
     return None, "none"
 
 

@@ -22,6 +22,11 @@ if os.environ.get("DISABLE_ONNXRUNTIME", "1").lower() in ("1", "true", "yes"):
 
 os.environ.setdefault("YOLO_VERBOSE", "False")
 os.environ.setdefault("CUDA_MODULE_LOADING", "LAZY")
+# Silence OpenCV's V4L2/OBSensor backend probe warnings. cv2.VideoCapture(path)
+# tries multiple backends internally and emits a WARN per failed probe even when
+# the call ultimately succeeds — confused users into thinking the camera failed.
+os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
+os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
 
 # Persistent logging — /logs on Jetson, local fallback for dev
 _LOG_DIR = Path(os.environ.get("LOG_DIR", "/logs"))
@@ -49,6 +54,9 @@ try:
     import cv2
     import torch
     from ultralytics import YOLO
+    # Belt-and-braces: env var alone is sometimes ignored when cv2 is loaded
+    # through ultralytics' transitive import. Reassert at runtime.
+    cv2.setLogLevel(2)  # 2 = LOG_LEVEL_ERROR
     DETECTION_AVAILABLE = True
 except ImportError as _e:
     logger.warning(f"Detection unavailable (missing deps: {_e}). YOLO disabled.")
@@ -378,7 +386,11 @@ def _copy_if_missing(src: Path, dst: Path) -> None:
 def _export_engine(m, engine_path: Path):
     logger.info("Exporting TensorRT engine (this can take a while)...")
     try:
-        result = m.export(format="engine", device=DEVICE, imgsz=IMG_SIZE, half=HALF, workspace=1)
+        # workspace=0.25 (was 1) — Orin Nano shares 8GB unified memory with VLM /
+        # base PyTorch / active YOLO; a 1GB workspace forces TRT to skip many
+        # tactics with "insufficient memory" warnings, producing a slower engine.
+        # 256MB fits the useful tactics for yolov8n-class models.
+        result = m.export(format="engine", device=DEVICE, imgsz=IMG_SIZE, half=HALF, workspace=0.25)
     except Exception as exc:
         logger.error(f"TensorRT export failed: {exc}")
         return None
@@ -439,8 +451,46 @@ def _list_available_models() -> list[str]:
     return found
 
 
+def _warmup_predict(m) -> None:
+    """One synchronous predict() on a black frame. Cheap (a few hundred ms),
+    forces CUDA kernel init + JIT compilation + autograd graph build, so the
+    first user-visible predict() after a hot-swap is fast instead of slow."""
+    try:
+        dummy = np.zeros((IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8)
+        with torch.inference_mode():
+            m.predict(source=dummy, device=DEVICE, imgsz=IMG_SIZE, half=HALF, conf=CONF, verbose=False)
+    except Exception as exc:
+        logger.warning(f"Warmup predict failed (continuing): {exc}")
+
+
+def _hot_swap_model(new_model, model_path: str, only_if_active: str | None = None) -> bool:
+    """Atomically replace the active model. The inference loop reads `model`
+    once per iteration and picks up the new reference on the next frame —
+    no thread restart, no camera re-open, no UI freeze.
+
+    Caller must have already loaded + warmed the new_model so first-frame
+    latency on the new model is comparable to steady-state.
+
+    If only_if_active is set, the swap is skipped when active_model_name has
+    drifted off it (e.g. a concurrent switch_to_model raced ahead). Used by
+    background TRT export so a late engine doesn't clobber a newer choice.
+    Returns True when the swap landed."""
+    global model, active_model_name
+    with model_switch_lock:
+        if only_if_active is not None and active_model_name != only_if_active:
+            return False
+        model = new_model
+        active_model_name = model_path
+    _init_class_stats()
+    logger.info(f"Hot-swapped active model -> {model_path}")
+    return True
+
+
 def _background_trt_export(model_path: str, engine_path: Path) -> None:
-    global model, trt_export_status
+    """Build a TRT engine for `model_path` in the background. If this model is
+    currently active when the export completes, hot-swap to the engine so
+    inference picks up the (much faster) engine without restarting."""
+    global trt_export_status
     trt_export_status[model_path] = "exporting"
     try:
         tmp = YOLO(model_path)
@@ -448,14 +498,14 @@ def _background_trt_export(model_path: str, engine_path: Path) -> None:
         if exported and exported.exists():
             trt_export_status[model_path] = "done"
             logger.info(f"Background TRT export done: {engine_path}")
-            with model_switch_lock:
-                if active_model_name == model_path:
-                    stop_event.set()
-                    if inference_thread and inference_thread.is_alive():
-                        inference_thread.join(timeout=10)
-                    stop_event.clear()
-                    model = YOLO(str(engine_path))
-                    _start_inference_thread()
+            if active_model_name == model_path:
+                engine_model = YOLO(str(engine_path))
+                try:
+                    engine_model.fuse()
+                except Exception:
+                    pass
+                _warmup_predict(engine_model)
+                _hot_swap_model(engine_model, model_path, only_if_active=model_path)
         else:
             trt_export_status[model_path] = "failed"
     except Exception as e:
@@ -463,32 +513,60 @@ def _background_trt_export(model_path: str, engine_path: Path) -> None:
         logger.error(f"Background TRT export failed: {e}")
 
 
+def _prewarm_engines() -> None:
+    """Pre-export TRT engines for every .pt under MODELS_DIR that doesn't
+    have one yet. Runs in a background thread at startup so the first
+    profile switch finds a cached engine instead of triggering a 30-60s
+    .pt-based slowdown + GPU-contention while a foreground export runs.
+
+    Sequential (one export at a time) to avoid GPU memory contention."""
+    if not EXPORT_TRT:
+        return
+    candidates: list[tuple[str, Path]] = []
+    for directory in [Path("/app"), MODELS_DIR]:
+        if not directory.exists():
+            continue
+        for pt in sorted(directory.glob("*.pt")):
+            engine = MODELS_DIR / f"{pt.stem}.engine"
+            if engine.exists():
+                continue
+            if str(pt) in trt_export_status:
+                continue
+            candidates.append((str(pt), engine))
+    if not candidates:
+        return
+    logger.info(f"Pre-exporting TRT engines for {len(candidates)} model(s): "
+                + ", ".join(p for p, _ in candidates))
+    for pt_path, engine_path in candidates:
+        _background_trt_export(pt_path, engine_path)
+
+
 def switch_to_model(model_path: str) -> dict:
-    global model, active_model_name
-    with model_switch_lock:
-        stop_event.set()
-        if inference_thread and inference_thread.is_alive():
-            inference_thread.join(timeout=10)
-        stop_event.clear()
-        stem = Path(model_path).stem
-        engine_path = MODELS_DIR / f"{stem}.engine"
-        if engine_path.exists():
-            new_model = YOLO(str(engine_path))
-            loaded_as = "engine"
-        else:
-            new_model = YOLO(model_path)
-            loaded_as = "pt"
-            if EXPORT_TRT and model_path not in trt_export_status:
-                threading.Thread(target=_background_trt_export, args=(model_path, engine_path), daemon=True).start()
-        try:
-            new_model.fuse()
-        except Exception:
-            pass
-        model = new_model
-        active_model_name = model_path
-        _init_class_stats()
-        _start_inference_thread()
-        return {"model": model_path, "loaded_as": loaded_as}
+    """Switch the active model with no inference-thread restart and no
+    camera re-open. The inference loop reads `model` per-iteration; we
+    load + warm up the new model first, then atomically swap the
+    reference. The old model is GC'd on next iteration."""
+    stem = Path(model_path).stem
+    engine_path = MODELS_DIR / f"{stem}.engine"
+    if engine_path.exists():
+        new_model = YOLO(str(engine_path))
+        loaded_as = "engine"
+    else:
+        new_model = YOLO(model_path)
+        loaded_as = "pt"
+        if EXPORT_TRT and model_path not in trt_export_status:
+            threading.Thread(
+                target=_background_trt_export,
+                args=(model_path, engine_path),
+                daemon=True,
+            ).start()
+    try:
+        new_model.fuse()
+    except Exception:
+        pass
+    _warmup_predict(new_model)
+    _hot_swap_model(new_model, model_path)
+    return {"model": model_path, "loaded_as": loaded_as}
 
 
 # ── Class stats ───────────────────────────────────────────────────────────────
@@ -1456,6 +1534,9 @@ def start() -> None:
         torch.backends.cudnn.benchmark = True
     _init_class_stats()
     _start_inference_thread()
+    # Pre-export engines for every other .pt now, in the background, so the
+    # first profile switch hits a cached engine instead of a 30-60s slow path.
+    threading.Thread(target=_prewarm_engines, daemon=True).start()
     if VLM_ENABLED:
         if VLM_QUESTION:
             with vlm_questions_lock:

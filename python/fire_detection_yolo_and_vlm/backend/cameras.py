@@ -4,13 +4,21 @@ Cross-platform:
 - macOS: avfvideosrc with device-index (resolved from name via gst-device-monitor)
 - Linux: v4l2src with /dev/videoN
 - Jetson/DeepStream: v4l2src with nvvidconv + nvjpegenc for HW acceleration
+
+On Linux the discovery prefers stable USB-camera identifiers under
+/dev/v4l/by-id, then falls back to capture-classified /dev/video* nodes
+sorted by sysfs index. Multi-stream USB cameras (RealSense, Orbbec) often
+register several /dev/videoN where only one is a Video Capture node;
+v4l2-ctl --all is consulted to filter the others out.
 """
 
+import glob
 import platform
 import re
 import subprocess
 import threading
 import time
+from pathlib import Path
 
 _cache: list[dict] | None = None
 _cache_time: float = 0
@@ -23,7 +31,161 @@ IS_DARWIN = platform.system() == "Darwin"
 _name_to_index: dict[str, int] = {}
 
 
-# -- Discovery --
+# -- Linux V4L2 helpers (sysfs + v4l2-ctl) --
+
+_V4L_SYMLINK_DIRS = (Path("/dev/v4l/by-id"), Path("/dev/v4l/by-path"))
+
+
+def _sysfs_video_node(path: str) -> Path:
+    return Path("/sys/class/video4linux") / Path(path).name
+
+
+def _v4l2_node_index(path: str) -> int:
+    """Sysfs-reported index for a /dev/videoN node — stable across reboots
+    for a given physical camera/sub-stream pairing. Returns 999 on failure
+    so unknown nodes sort last."""
+    try:
+        return int((_sysfs_video_node(path) / "index").read_text().strip())
+    except Exception:
+        return 999
+
+
+def _v4l2_card_name(path: str) -> str:
+    """Card type from `v4l2-ctl --info`, or basename if v4l2-ctl is missing."""
+    try:
+        out = subprocess.check_output(
+            ["v4l2-ctl", "--device", path, "--info"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode()
+        for line in out.splitlines():
+            if "Card type" in line:
+                return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return Path(path).name
+
+
+def _v4l2_is_capture(path: str) -> bool:
+    """True when this node advertises Video Capture in its Device Caps.
+    Filters out metadata/output-only sub-devices (e.g. RealSense IMU/IR
+    streams that share /dev/videoN nodes with the RGB capture).
+
+    If v4l2-ctl is unavailable we return True (permissive) so cv2 still
+    gets a chance — better than dropping every node."""
+    try:
+        out = subprocess.check_output(
+            ["v4l2-ctl", "--device", path, "--all"],
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        ).decode()
+    except FileNotFoundError:
+        return True
+    except Exception:
+        return False
+    in_caps = False
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Device Caps"):
+            in_caps = True
+            continue
+        if not in_caps:
+            continue
+        if not line.startswith((" ", "\t")):
+            break
+        if stripped in {"Video Capture", "Video Capture Multiplanar"}:
+            return True
+    return False
+
+
+def _usb_device_id(path: str) -> str | None:
+    """USB topology id for a video node (e.g. '1-2.3'), or None for
+    non-USB devices (CSI, virtual, etc.). Used to prefer USB-backed
+    nodes when symlinks aren't available."""
+    try:
+        device_path = (_sysfs_video_node(path) / "device").resolve()
+    except Exception:
+        return None
+    for current in [device_path] + list(device_path.parents):
+        if (current / "idVendor").exists() and (current / "idProduct").exists():
+            return current.name.split(":", 1)[0]
+    return None
+
+
+def _linux_symlink_video_nodes() -> list[str]:
+    """USB cameras exposed via stable symlinks. /dev/v4l/by-id survives
+    plug-order changes and is the right thing to target when present."""
+    nodes: list[str] = []
+
+    def add(p: str) -> None:
+        if p not in nodes:
+            nodes.append(p)
+
+    by_id = _V4L_SYMLINK_DIRS[0]
+    if by_id.is_dir():
+        for link in sorted(by_id.iterdir()):
+            if not link.name.startswith("usb-"):
+                continue
+            try:
+                target = link.resolve()
+            except Exception:
+                continue
+            if target.name.startswith("video"):
+                add(f"/dev/{target.name}")
+    if nodes:
+        return nodes
+
+    by_path = _V4L_SYMLINK_DIRS[1]
+    if by_path.is_dir():
+        for link in sorted(by_path.iterdir()):
+            if "-usb-" not in link.name and "-usbv" not in link.name:
+                continue
+            try:
+                target = link.resolve()
+            except Exception:
+                continue
+            if target.name.startswith("video"):
+                add(f"/dev/{target.name}")
+    return nodes
+
+
+def _linux_candidate_video_nodes() -> list[str]:
+    """Ordered list of plausible camera nodes:
+      1. USB symlinks under /dev/v4l/by-id (most stable)
+      2. /dev/video* sorted by sysfs index, USB-backed only (when any are USB)
+      3. /dev/video* sorted by sysfs index, all of them (fallback)
+    """
+    sym = _linux_symlink_video_nodes()
+    if sym:
+        return sym
+    nodes = sorted(glob.glob("/dev/video*"), key=lambda p: (_v4l2_node_index(p), p))
+    if not nodes:
+        return nodes
+    usb = [p for p in nodes if _usb_device_id(p)]
+    return usb if usb else nodes
+
+
+def discover_capture_nodes() -> list[dict]:
+    """Capture-capable Linux V4L2 nodes, ready to feed into a v4l2src
+    pipeline or cv2.VideoCapture. Empty list on macOS / no cameras.
+
+    Each entry: {"path", "v4l_index", "usb", "name"}."""
+    if IS_DARWIN:
+        return []
+    out: list[dict] = []
+    for path in _linux_candidate_video_nodes():
+        if not _v4l2_is_capture(path):
+            continue
+        out.append({
+            "path": path,
+            "v4l_index": _v4l2_node_index(path),
+            "usb": _usb_device_id(path),
+            "name": _v4l2_card_name(path),
+        })
+    return out
+
+
+# -- Discovery (public, cached, returns shape used by /cameras endpoint) --
 
 
 def _discover_macos() -> list[dict]:
@@ -72,28 +234,18 @@ def _discover_macos() -> list[dict]:
 
 
 def _discover_linux() -> list[dict]:
-    """Discover V4L2 devices on Linux."""
-    import glob
-    import os
+    """Discover capture-capable V4L2 devices on Linux.
 
+    Output shape preserved for backward compatibility with consumers of
+    the /cameras HTTP endpoint and mjpeg_frames(camera_id): `id` is the
+    string-form numeric basename ("0" for /dev/video0). Use
+    discover_capture_nodes() instead when a richer record is needed.
+    """
     cameras = []
-    for path in sorted(glob.glob("/dev/video*")):
-        idx = os.path.basename(path).replace("video", "")
-        try:
-            result = subprocess.run(
-                ["v4l2-ctl", "-d", path, "--info"],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            name = f"Camera {idx}"
-            for line in result.stdout.splitlines():
-                if "Card type" in line:
-                    name = line.split(":", 1)[1].strip()
-                    break
-            cameras.append({"id": idx, "name": name, "available": True})
-        except Exception:
-            cameras.append({"id": idx, "name": f"Camera {idx}", "available": True})
+    for node in discover_capture_nodes():
+        path = node["path"]
+        idx = Path(path).name.replace("video", "")
+        cameras.append({"id": idx, "name": node["name"], "available": True})
     return cameras
 
 

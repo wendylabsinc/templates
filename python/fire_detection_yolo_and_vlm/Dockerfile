@@ -17,9 +17,10 @@ ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# BlueZ for Bluetooth
+# BlueZ for Bluetooth; v4l-utils for v4l2-ctl (required by camera discovery
+# to filter out non-capture sub-devices on multi-stream USB cams).
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bluez libbluetooth-dev && \
+    bluez libbluetooth-dev v4l-utils && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python deps on top of the ultralytics base.

@@ -11,7 +11,8 @@
         { "type": "persist", "name": "{{.APP_ID}}-logs", "path": "/logs" }
     ],
     "readiness": {
-        "tcpSocket": { "port": 5702, "timeoutSeconds": 180 }
+        "tcpSocket": { "port": 5702 },
+        "timeoutSeconds": 180
     },
     "hooks": {
         "postStart": {

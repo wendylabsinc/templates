@@ -668,16 +668,59 @@ class STTUserTextCapture(FrameProcessor):
     list, so a logger placed past it never sees these frames. The
     captured text is exposed via ``last_user_text`` so a downstream
     BotResponseLogger can pair it with the bot's reply for persistence.
+
+    Also runs a watchdog: a finalized transcript that doesn't trigger
+    an LLM call within ``watchdog_secs`` usually means VAD never fired
+    UserStoppedSpeakingFrame (or the wake-word gate dropped it), so the
+    user-context aggregator is stuck waiting for end-of-turn. The
+    watchdog logs a warning naming the stuck transcript so we can tell
+    the difference between "transcript didn't reach LLM" and "LLM was
+    slow" — the symptoms look identical to the user.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, watchdog_secs: float = 3.0) -> None:
         super().__init__()
         self.last_user_text: Optional[str] = None
+        self._watchdog_secs = watchdog_secs
+        self._last_llm_started_at: float = 0.0
+        self._watchdog_task: Optional[asyncio.Task] = None
 
     def consume_user_text(self) -> Optional[str]:
         text = self.last_user_text
         self.last_user_text = None
         return text
+
+    def note_llm_start(self) -> None:
+        """Called by BotResponseLogger when LLMFullResponseStartFrame
+        fires. Lets the watchdog tell whether the most-recent transcript
+        actually triggered an LLM run.
+        """
+        self._last_llm_started_at = time.monotonic()
+
+    async def _watchdog(self, transcript_at: float, text: str) -> None:
+        try:
+            await asyncio.sleep(self._watchdog_secs)
+            if self._last_llm_started_at >= transcript_at:
+                return
+            if _LOG_TRANSCRIPTS:
+                _log.warning(
+                    "STT ▸ stalled: %ds elapsed since transcript but no LLM "
+                    "started — VAD likely never fired UserStoppedSpeaking, "
+                    "or the wake-word gate dropped it. Stuck transcript: %r",
+                    int(self._watchdog_secs),
+                    text,
+                )
+            else:
+                _log.warning(
+                    "STT ▸ stalled: %ds elapsed since transcript but no LLM "
+                    "started — VAD likely never fired UserStoppedSpeaking, "
+                    "or the wake-word gate dropped it. Stuck transcript: "
+                    "<%d chars>",
+                    int(self._watchdog_secs),
+                    len(text),
+                )
+        except asyncio.CancelledError:
+            raise
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -689,6 +732,13 @@ class STTUserTextCapture(FrameProcessor):
                     _log.info("STT ▸ %s", text)
                 else:
                     _log.info("STT ▸ (%d chars; LOG_TRANSCRIPTS=true to log content)", len(text))
+                # Cancel any still-pending watchdog from a previous
+                # transcript (it'd be redundant) and arm a fresh one.
+                if self._watchdog_task and not self._watchdog_task.done():
+                    self._watchdog_task.cancel()
+                self._watchdog_task = asyncio.create_task(
+                    self._watchdog(time.monotonic(), text)
+                )
         await self.push_frame(frame, direction)
 
 
@@ -751,6 +801,11 @@ class BotResponseLogger(FrameProcessor):
             self._buffered_text = []
             self._function_call_in_round = False
             self._collecting = True
+            # Tell STTUserTextCapture's watchdog that an LLM run actually
+            # kicked off, so it doesn't fire a "stalled transcript"
+            # warning for the transcript that triggered this run.
+            if self._user_capture is not None:
+                self._user_capture.note_llm_start()
             _log.info("LLM ▸ start")
             await self.push_frame(frame, direction)
             return
@@ -896,27 +951,34 @@ class TurnTelemetry(FrameProcessor):
         now = time.monotonic()
 
         if isinstance(frame, UserStoppedSpeakingFrame):
-            # If a prior turn produced a real transcript but never reached
-            # BotStoppedSpeaking, a new utterance is overtaking it. With
-            # allow_interruptions off the previous LLM/TTS isn't cancelled
-            # — both replies will play sequentially, which feels like
-            # "answer way later" or "two answers at once" to the user.
-            # Gate on _user_text (set by TranscriptionFrame), not just
-            # _user_stopped_at — wake-word fires that don't yield a
-            # transcript would otherwise produce false-positive overlaps.
-            if self._user_text and self._tts_first_at is None:
-                _log.warning(
-                    "TURN ▸ overlap: new user utterance started %dms after "
-                    "previous turn began, but previous turn's bot reply "
-                    "had not started yet (likely queued behind it)",
-                    int((now - (self._user_stopped_at or now)) * 1000),
-                )
-            self._reset()
-            self._user_stopped_at = now
+            # Don't reset on every UserStoppedSpeaking — VAD debounce and
+            # the wake-word gate's continuous-conversation logic can both
+            # emit duplicate UserStoppedSpeakingFrames inside a single
+            # logical turn. Only set the timestamp on the FIRST such
+            # frame after a reset; subsequent ones in the same turn are
+            # ignored. The reset happens at BotStoppedSpeakingFrame.
+            if self._user_stopped_at is None:
+                self._user_stopped_at = now
         elif isinstance(frame, TranscriptionFrame):
             text = (getattr(frame, "text", "") or "").strip()
-            if text and self._user_stopped_at is not None:
-                self._stt_done_at = now
+            if text:
+                # If a previous transcript was already pending and its
+                # bot reply hadn't started, this new transcript is
+                # overtaking it — with allow_interruptions off the LLM/
+                # TTS isn't cancelled and both replies play sequentially,
+                # which feels like "answer way later" / "two answers at
+                # once" to the user. TranscriptionFrame is one per real
+                # utterance, so this catches genuine overlaps without
+                # false-positive firings on duplicate UserStoppedSpeaking.
+                if self._user_text and self._tts_first_at is None:
+                    _log.warning(
+                        "TURN ▸ overlap: new transcript arrived while "
+                        "previous transcript's bot reply had not started "
+                        "yet (queued behind it; with interrupt=off both "
+                        "replies will play sequentially)",
+                    )
+                if self._user_stopped_at is not None:
+                    self._stt_done_at = now
                 self._user_text = text
         elif isinstance(frame, TextFrame):
             # First LLM text chunk — time-to-first-token.

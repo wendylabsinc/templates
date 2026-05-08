@@ -443,11 +443,28 @@ def _load_model():
     return m
 
 
+# Directories searched for .pt model files. Path(__file__).parent is /app/backend
+# at runtime (where the bundled .pt files actually live, per Dockerfile WORKDIR);
+# /app and MODELS_DIR are kept for backward compatibility with templates that
+# stage models elsewhere.
+_MODEL_SEARCH_DIRS: tuple[Path, ...] = (
+    Path(__file__).parent,
+    Path("/app"),
+    MODELS_DIR,
+)
+
+
 def _list_available_models() -> list[str]:
-    found = []
-    for directory in [Path("/app"), MODELS_DIR]:
-        if directory.exists():
-            found.extend(str(f) for f in sorted(directory.glob("*.pt")))
+    found: list[str] = []
+    seen: set[str] = set()
+    for directory in _MODEL_SEARCH_DIRS:
+        if not directory.exists():
+            continue
+        for f in sorted(directory.glob("*.pt")):
+            s = str(f)
+            if s not in seen:
+                seen.add(s)
+                found.append(s)
     return found
 
 
@@ -523,10 +540,14 @@ def _prewarm_engines() -> None:
     if not EXPORT_TRT:
         return
     candidates: list[tuple[str, Path]] = []
-    for directory in [Path("/app"), MODELS_DIR]:
+    seen_stems: set[str] = set()
+    for directory in _MODEL_SEARCH_DIRS:
         if not directory.exists():
             continue
         for pt in sorted(directory.glob("*.pt")):
+            if pt.stem in seen_stems:
+                continue
+            seen_stems.add(pt.stem)
             engine = MODELS_DIR / f"{pt.stem}.engine"
             if engine.exists():
                 continue

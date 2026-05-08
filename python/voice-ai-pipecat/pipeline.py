@@ -30,7 +30,10 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     Frame,
+    FunctionCallInProgressFrame,
     InputAudioRawFrame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
     OutputAudioRawFrame,
     StartFrame,
     TextFrame,
@@ -711,17 +714,121 @@ class BotResponseLogger(FrameProcessor):
         self._on_turn_complete = on_turn_complete
         self._chunks: list[str] = []
         self._collecting = False
+        # Phase-boundary timing + overlap detection. A "queued" LLM or
+        # TTS turn is the most common reason a reply feels delayed or
+        # arrives stacked on the previous one — surfacing it in the log
+        # with timestamps lets the user see exactly when it happens.
+        self._llm_start_at: Optional[float] = None
+        self._bot_speak_start_at: Optional[float] = None
+        self._llm_in_flight: int = 0
+        self._bot_in_flight: int = 0
+        # Buffer TextFrames between LLMFullResponseStart and End so we
+        # can drop the entire bunch if a function call also fires inside
+        # the same response cycle. Gemini AFC sometimes emits chitchat
+        # ("let me check", or hallucinations like "I'm sorry, I don't
+        # understand") in the same response that asks for a tool call;
+        # without this gate the chitchat reaches TTS and the user hears
+        # a wrong answer immediately followed by the real one once the
+        # post-tool LLM round arrives. Cost: TTS doesn't get text until
+        # End fires, so bot speech starts ~one LLM-ttft later. Worth it.
+        self._buffered_text: list[tuple[TextFrame, FrameDirection]] = []
+        self._function_call_in_round: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if isinstance(frame, BotStartedSpeakingFrame):
+        now = time.monotonic()
+
+        if isinstance(frame, LLMFullResponseStartFrame):
+            if self._llm_in_flight > 0:
+                _log.warning(
+                    "LLM ▸ overlap: new response started while %d previous "
+                    "LLM call(s) still in flight — replies will stack",
+                    self._llm_in_flight,
+                )
+            self._llm_in_flight += 1
+            self._llm_start_at = now
             self._chunks = []
+            self._buffered_text = []
+            self._function_call_in_round = False
             self._collecting = True
-        elif isinstance(frame, TextFrame) and self._collecting:
+            _log.info("LLM ▸ start")
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, TextFrame) and self._collecting:
             text = getattr(frame, "text", None)
             if text:
                 self._chunks.append(text)
-        elif isinstance(frame, BotStoppedSpeakingFrame):
+            # Hold the frame; release (or drop) on End.
+            self._buffered_text.append((frame, direction))
+            return
+
+        if isinstance(frame, FunctionCallInProgressFrame):
+            self._function_call_in_round = True
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, BotStartedSpeakingFrame):
+            if self._bot_in_flight > 0:
+                _log.warning(
+                    "BOT ▸ overlap: TTS started while previous reply still "
+                    "playing (in_flight=%d) — answers will overlap",
+                    self._bot_in_flight,
+                )
+            self._bot_in_flight += 1
+            self._bot_speak_start_at = now
+            _log.info("BOT ▸ speaking")
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_in_flight = max(0, self._bot_in_flight - 1)
+            if self._bot_speak_start_at is not None:
+                _log.info(
+                    "BOT ▸ done (%dms playback)",
+                    int((now - self._bot_speak_start_at) * 1000),
+                )
+                self._bot_speak_start_at = None
+            await self.push_frame(frame, direction)
+            return
+
+        if isinstance(frame, LLMFullResponseEndFrame):
+            self._llm_in_flight = max(0, self._llm_in_flight - 1)
+            self._collecting = False
+            if self._llm_start_at is not None:
+                _log.info(
+                    "LLM ▸ end (%dms, %d chunks, function_call=%s)",
+                    int((now - self._llm_start_at) * 1000),
+                    len(self._chunks),
+                    self._function_call_in_round,
+                )
+                self._llm_start_at = None
+
+            if self._function_call_in_round:
+                # Tool call in the same response — drop the buffered
+                # text. The post-tool LLM round will produce the real
+                # answer; only that one should reach TTS.
+                if self._chunks:
+                    preamble = "".join(self._chunks).strip()
+                    _log.info(
+                        "LLM ▸ preamble suppressed (%d chars; function "
+                        "call followed in same response)",
+                        len(preamble),
+                    )
+                    if _LOG_TRANSCRIPTS and preamble:
+                        _log.info("LLM ▸ (suppressed) %s", preamble)
+                self._buffered_text = []
+                self._chunks = []
+                await self.push_frame(frame, direction)
+                return
+
+            # No tool call — release the buffered text downstream so TTS
+            # can synthesize it, then proceed with the existing logging
+            # and on_turn_complete handling.
+            for buf_frame, buf_dir in self._buffered_text:
+                await self.push_frame(buf_frame, buf_dir)
+            self._buffered_text = []
+
             if self._chunks:
                 full = "".join(self._chunks).strip()
                 if full:
@@ -751,7 +858,9 @@ class BotResponseLogger(FrameProcessor):
                                 len(full),
                             )
             self._chunks = []
-            self._collecting = False
+            await self.push_frame(frame, direction)
+            return
+
         await self.push_frame(frame, direction)
 
 
@@ -787,6 +896,21 @@ class TurnTelemetry(FrameProcessor):
         now = time.monotonic()
 
         if isinstance(frame, UserStoppedSpeakingFrame):
+            # If a prior turn produced a real transcript but never reached
+            # BotStoppedSpeaking, a new utterance is overtaking it. With
+            # allow_interruptions off the previous LLM/TTS isn't cancelled
+            # — both replies will play sequentially, which feels like
+            # "answer way later" or "two answers at once" to the user.
+            # Gate on _user_text (set by TranscriptionFrame), not just
+            # _user_stopped_at — wake-word fires that don't yield a
+            # transcript would otherwise produce false-positive overlaps.
+            if self._user_text and self._tts_first_at is None:
+                _log.warning(
+                    "TURN ▸ overlap: new user utterance started %dms after "
+                    "previous turn began, but previous turn's bot reply "
+                    "had not started yet (likely queued behind it)",
+                    int((now - (self._user_stopped_at or now)) * 1000),
+                )
             self._reset()
             self._user_stopped_at = now
         elif isinstance(frame, TranscriptionFrame):
@@ -1301,6 +1425,11 @@ SYSTEM_PROMPT = (
     "news, scores, prices, business hours, or anything date-dependent. "
     "Don't say you can't access real-time information — search first "
     "and answer from the result.\n"
+    "- When you decide to call a tool, output NOTHING in that same "
+    "response — no preamble, no 'let me check', no apology, no 'I "
+    "don't understand'. Stay silent, run the tool, then answer in "
+    "ONE short sentence using the tool's result. Saying anything "
+    "alongside the tool call produces a duplicate spoken reply.\n"
     "\n"
     "Examples (this is the level of brevity required):\n"
     "Q: What's the weather in San Francisco?\n"
@@ -1327,6 +1456,9 @@ _TOOL_BLOCK = (
     "scores, prices, business hours, or anything date-dependent. Don't "
     "say you can't access real-time information — search first and "
     "answer from the result.\n"
+    "- When you decide to call a tool, output NOTHING in that same "
+    "response (no preamble, no apology). Stay silent, run the tool, "
+    "then answer using the tool's result.\n"
 )
 
 PROMPT_PRESETS: dict[str, str] = {

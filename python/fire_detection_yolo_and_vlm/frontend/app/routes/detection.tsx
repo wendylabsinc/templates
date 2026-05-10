@@ -464,6 +464,11 @@ export default function DetectionPage() {
   // the backend still serves them and they remain switchable via /api/profiles/switch.
   const HIDDEN_PROFILE_IDS = new Set(["water", "gauge"])
   const visibleProfiles = (ps: Profile[]) => ps.filter(p => !HIDDEN_PROFILE_IDS.has(p.id))
+  // Hide the raw "Model:" picker — the demo is profile-driven, and switching
+  // a profile already swaps the model server-side. The state is still kept
+  // in sync (activeModel is used as the detections heading label), but the
+  // selector + download UI is not rendered.
+  const SHOW_MODEL_SELECTOR = false
 
   // Fetch profiles
   useEffect(() => {
@@ -564,7 +569,7 @@ export default function DetectionPage() {
           </div>
         )}
 
-        {availableModels.length > 0 && (
+        {SHOW_MODEL_SELECTOR && availableModels.length > 0 && (
           <div className="rounded-md bg-black/70 px-3 py-2 text-white/80 shadow">
             <div className="flex items-center gap-2">
               <span className="text-white/60">Model:</span>

@@ -27,6 +27,10 @@ os.environ.setdefault("CUDA_MODULE_LOADING", "LAZY")
 # the call ultimately succeeds — confused users into thinking the camera failed.
 os.environ.setdefault("OPENCV_LOG_LEVEL", "ERROR")
 os.environ.setdefault("OPENCV_VIDEOIO_DEBUG", "0")
+# OpenCV's OBSensor (Orbbec) backend probes camera indices on every VideoCapture
+# open and logs at ERROR severity per miss — not silenced by OPENCV_LOG_LEVEL=ERROR.
+# We don't use Orbbec cameras here; deprioritise the backend so it never probes.
+os.environ.setdefault("OPENCV_VIDEOIO_PRIORITY_OBSENSOR", "0")
 
 # Persistent logging — /logs on Jetson, local fallback for dev
 _LOG_DIR = Path(os.environ.get("LOG_DIR", "/logs"))
@@ -280,7 +284,14 @@ def _try_gstreamer(pipeline: str):
 
 def _try_opencv(device):
     """device may be a /dev/videoN path string or an int index."""
-    cap = cv2.VideoCapture(device)
+    # Pin V4L2 on Linux to skip OpenCV's multi-backend auto-probe (which logs
+    # `obsensor_uvc_stream_channel.cpp:158 ... Camera index out of range` at
+    # ERROR for every miss). On macOS dev, fall back to auto so AVFoundation
+    # still works.
+    if sys.platform.startswith("linux") and hasattr(cv2, "CAP_V4L2"):
+        cap = cv2.VideoCapture(device, cv2.CAP_V4L2)
+    else:
+        cap = cv2.VideoCapture(device)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)

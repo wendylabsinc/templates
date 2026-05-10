@@ -460,9 +460,14 @@ export default function DetectionPage() {
     es.onerror = () => { setDownloadStatus("connection error"); es.close() }
   }
 
+  // Profiles intentionally hidden from the UI for the current demo build —
+  // the backend still serves them and they remain switchable via /api/profiles/switch.
+  const HIDDEN_PROFILE_IDS = new Set(["water", "gauge"])
+  const visibleProfiles = (ps: Profile[]) => ps.filter(p => !HIDDEN_PROFILE_IDS.has(p.id))
+
   // Fetch profiles
   useEffect(() => {
-    fetch("/api/profiles").then(r => r.json()).then(setProfiles).catch(() => {})
+    fetch("/api/profiles").then(r => r.json()).then((ps: Profile[]) => setProfiles(visibleProfiles(ps))).catch(() => {})
   }, [])
 
   const handleProfileSwitch = async (id: string) => {
@@ -482,7 +487,7 @@ export default function DetectionPage() {
           fetch("/api/models"),
           fetch("/api/vlm/config"),
         ])
-        if (profilesRes.ok) setProfiles(await profilesRes.json())
+        if (profilesRes.ok) setProfiles(visibleProfiles(await profilesRes.json()))
         if (modelsRes.ok) {
           const data = await modelsRes.json()
           setAvailableModels(data.models || [])

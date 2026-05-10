@@ -17,10 +17,30 @@ ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# BlueZ for Bluetooth; v4l-utils for v4l2-ctl (required by camera discovery
-# to filter out non-capture sub-devices on multi-stream USB cams).
+# Runtime apt deps:
+# - bluez/libbluetooth-dev: Bluetooth stack
+# - v4l-utils: v4l2-ctl, used by cameras.py / detector.py for capture-capability
+#   filtering and the startup --list-formats-ext caps log
+# - python3-gi + gir1.2-*: PyGObject bindings for any direct GStreamer use
+# - gstreamer1.0-plugins-{base,good,bad,ugly,libav}: actual GStreamer element
+#   implementations. The ultralytics Jetson base ships OpenCV compiled with
+#   GStreamer support, but the v4l2src/jpegdec/videoconvert/appsink elements
+#   themselves come from these apt packages. Without them, every
+#   cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER) silently fails to construct.
+#   Mirrors camera-feed-yolo, which works on hardware where this template
+#   has been failing.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    bluez libbluetooth-dev v4l-utils && \
+    bluez libbluetooth-dev v4l-utils \
+    python3-gi \
+    gir1.2-gst-plugins-base-1.0 \
+    gir1.2-gst-plugins-bad-1.0 \
+    gir1.2-gstreamer-1.0 \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav && \
     rm -rf /var/lib/apt/lists/*
 
 # Install Python deps on top of the ultralytics base.
@@ -68,10 +88,17 @@ ENV JPEG_QUALITY=80
 ENV USE_GSTREAMER=1
 ENV CAMERA_SOURCE=v4l2
 ENV CAMERA_INDEX=0
-ENV CAMERA_WIDTH=1280
-ENV CAMERA_HEIGHT=720
+ENV CAMERA_WIDTH=640
+ENV CAMERA_HEIGHT=480
 ENV CAMERA_FPS=30
-ENV CAMERA_GSTREAMER_PIPELINE="v4l2src device=/dev/video0 ! image/jpeg, width=1280, height=720, framerate=30/1 ! jpegdec ! videoconvert ! video/x-raw, format=BGR ! appsink drop=1 sync=0"
+# Empty default — let _v4l2_pipeline_matrix() do the negotiation. Set this
+# only if a specific camera needs an exact pipeline form. Mirrors what
+# camera-feed-yolo does (which is known to work on Greg's hardware).
+ENV CAMERA_GSTREAMER_PIPELINE=""
+# Make GStreamer's pipeline-construction and negotiation errors visible.
+# Level 2 = ERROR only; cv2.VideoCapture(..., CAP_GSTREAMER) otherwise swallows
+# them silently, leaving us blind when a pipeline fails to open.
+ENV GST_DEBUG=2
 
 # VLM config (Qwen3-VL service)
 ENV VLM_ENABLED=1

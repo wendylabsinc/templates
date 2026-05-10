@@ -244,41 +244,82 @@ def _build_csi_pipeline() -> str:
 
 
 def _build_v4l2_pipeline(device_path: str) -> str:
-    """Default V4L2 pipeline: raw video at configured caps -> BGR appsink."""
+    """Default V4L2 pipeline: raw video at configured size -> BGR appsink.
+
+    Framerate is intentionally not pinned: many UVC cams refuse to negotiate
+    a specific fps even when they'd happily deliver it under "any". camera-feed-yolo
+    omits the fps cap and works across a wide range of hardware.
+    """
     return (
         f"v4l2src device={device_path} ! "
-        f"video/x-raw, width=(int){CAMERA_WIDTH}, height=(int){CAMERA_HEIGHT}, "
-        f"framerate=(fraction){CAMERA_FPS}/1 ! "
+        f"video/x-raw, width=(int){CAMERA_WIDTH}, height=(int){CAMERA_HEIGHT} ! "
         "videoconvert ! video/x-raw, format=(string)BGR ! "
         "appsink drop=1 sync=0"
     )
 
 
 def _v4l2_pipeline_matrix(device_path: str) -> list[str]:
-    """Pipelines to try per device, ordered MJPEG-first.
+    """Pipelines to try per device, ordered most-permissive-first.
 
-    Most modern UVC webcams emit MJPEG at higher framerates than raw YUYV,
-    so jpegdec is faster and works on cameras that won't negotiate raw caps.
-    Raw variants are kept as later attempts for cameras that emit YUYV.
+    The first form pins no caps — UVC cams pick whatever they can deliver,
+    which is the highest-success path. Subsequent forms add hints for cams
+    that won't negotiate "any". Framerate is never pinned (cams refuse fps
+    constraints surprisingly often).
     """
     src = f"v4l2src device={device_path}"
     return [
+        # 1. MJPEG, any caps — works on most modern UVC webcams.
         f"{src} ! image/jpeg ! jpegdec ! videoconvert ! "
         f"video/x-raw, format=(string)BGR ! appsink drop=1 sync=0",
-        f"{src} ! image/jpeg, width=(int){CAMERA_WIDTH}, height=(int){CAMERA_HEIGHT}, "
-        f"framerate=(fraction){CAMERA_FPS}/1 ! jpegdec ! videoconvert ! "
+        # 2. MJPEG with size hint — for cams that need an explicit shape.
+        f"{src} ! image/jpeg, width=(int){CAMERA_WIDTH}, height=(int){CAMERA_HEIGHT} ! "
+        f"jpegdec ! videoconvert ! "
         f"video/x-raw, format=(string)BGR ! appsink drop=1 sync=0",
+        # 3. Raw at configured size — for cams that don't emit MJPEG (rare).
         _build_v4l2_pipeline(device_path),
+        # 4. Raw, any caps — last-ditch.
         f"{src} ! videoconvert ! video/x-raw, format=(string)BGR ! "
         f"appsink drop=1 sync=0",
     ]
 
 
+def _short_pipeline(p: str, n: int = 80) -> str:
+    """Compact a pipeline string for log readability."""
+    p = " ".join(p.split())  # collapse whitespace
+    return p if len(p) <= n else p[: n - 1] + "…"
+
+
+def _log_v4l_caps(path: str) -> None:
+    """Log v4l2-ctl --list-formats-ext output for a device.
+
+    One subprocess per device at startup. The output reveals exactly which
+    pixel formats and resolutions the camera supports — invaluable when
+    every pipeline fails and we need to know what to try next.
+    """
+    try:
+        import subprocess
+        out = subprocess.run(
+            ["v4l2-ctl", "--device", path, "--list-formats-ext"],
+            capture_output=True, text=True, timeout=3,
+        )
+        body = (out.stdout or out.stderr or "").strip()
+        if body:
+            # Indent each line so the multi-line output is greppable as a unit.
+            indented = "\n  ".join(body.splitlines())
+            logger.info(f"v4l2 caps for {path}:\n  {indented}")
+    except FileNotFoundError:
+        logger.debug("v4l2-ctl not installed; skipping caps log")
+    except Exception as exc:
+        logger.debug(f"v4l2 caps probe failed for {path}: {exc}")
+
+
 def _try_gstreamer(pipeline: str):
     cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
     if cap.isOpened():
+        logger.info(f"GStreamer opened: {_short_pipeline(pipeline)}")
         return cap
     cap.release()
+    logger.info(f"GStreamer failed: {_short_pipeline(pipeline)}")
     return None
 
 
@@ -297,8 +338,10 @@ def _try_opencv(device):
     cap.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if cap.isOpened():
+        logger.info(f"OpenCV opened: {device}")
         return cap
     cap.release()
+    logger.info(f"OpenCV failed: {device}")
     return None
 
 
@@ -355,6 +398,8 @@ def _open_capture():
             + ", ".join(f"{n['path']} ({n['name']})" for n in discovered)
         )
         for node in discovered:
+            _log_v4l_caps(node["path"])
+        for node in discovered:
             path = node["path"]
             if USE_GSTREAMER:
                 for p in _v4l2_pipeline_matrix(path):
@@ -374,6 +419,16 @@ def _open_capture():
     if cap is not None:
         return cap, f"opencv:{configured_path}"
 
+    # All paths exhausted — this is the loud failure surface. The inference
+    # loop will retry, but each retry now leaves a clear trace.
+    logger.error(
+        "Camera open FAILED across all paths: "
+        f"env-pipeline={'set' if CAMERA_PIPELINE else 'unset'}, "
+        f"source={CAMERA_SOURCE}, configured_index={CAMERA_INDEX}, "
+        f"discovered_nodes={[n['path'] for n in discovered] or 'none'}. "
+        "Check the v4l2 caps and pipeline-attempt log lines above to see what "
+        "the camera advertises and which negotiations were rejected."
+    )
     return None, "none"
 
 

@@ -113,6 +113,41 @@ def _parse_int_env(name: str, default: int) -> int:
 _LLM_END_GRACE_MS = _parse_int_env("LLM_END_GRACE_MS", 200)
 
 
+# Opt-in feature flag for the Gemini grounding-metadata suppression
+# path. When true, BotResponseLogger treats GroundingDetectedFrame the
+# same as FunctionCallInProgressFrame and drops the preamble. The
+# producer (a wrapper around GoogleLLMService that inspects each
+# response's grounding_metadata and pushes the sentinel) is not yet
+# wired in this commit — see the comment at the native-search return
+# in _build_llm_service. Default off so behavior is unchanged.
+_GOOGLE_GROUNDING_GATE_ENABLED = os.environ.get(
+    "GOOGLE_GROUNDING_GATE", ""
+).strip().lower() in ("1", "true", "yes", "on")
+
+
+class GroundingDetectedFrame(Frame):
+    """Sentinel pushed by a future GoogleLLMService wrapper when a
+    response part carries grounding_metadata. BotResponseLogger drops
+    the buffered LLM preamble when it sees this, matching the
+    behavior for tool-call signal frames.
+
+    Defined here so the gate in BotResponseLogger can reference it
+    today even though no producer pushes it yet — wiring the producer
+    is a follow-up. Behind GOOGLE_GROUNDING_GATE=true so a buggy
+    producer (or false positives from a Pipecat upgrade) can be
+    disabled at runtime without redeploying.
+    """
+
+    pass
+
+
+if _GOOGLE_GROUNDING_GATE_ENABLED:
+    _FUNCTION_CALL_SIGNAL_FRAMES = (
+        *_FUNCTION_CALL_SIGNAL_FRAMES,
+        GroundingDetectedFrame,
+    )
+
+
 # Lazy imports for optional providers — pipecat-ai's [deepgram], [openai],
 # [anthropic], and [groq] extras pull in real SDKs we want to import only
 # when used. Catch ImportError narrowly: a SyntaxError or AttributeError
@@ -561,6 +596,17 @@ def _build_llm_service(
             kwargs["tools"] = [
                 genai_types.Tool(google_search=genai_types.GoogleSearch())
             ]
+            # KNOWN GAP: native google_search grounding does not surface
+            # as a Pipecat FunctionCallInProgressFrame (no registered
+            # function handler), so BotResponseLogger's tool-preamble
+            # suppression is prompt-only on this path. PR #30 hardened
+            # the system prompt to discourage preamble, but if Gemini
+            # still emits "let me search…" text inside part.text it
+            # reaches TTS. The opt-in path is GOOGLE_GROUNDING_GATE=true
+            # plus a future wrapper around GoogleLLMService that pushes
+            # ``GroundingDetectedFrame`` when response.grounding_metadata
+            # is set — at which point the existing buffer gate fires.
+            # Tracked as a follow-up; see BUFFERING_INVESTIGATION.md F1.
             return GoogleLLMService(**kwargs), None, None
         # Search disabled — register built-in function tools so the model
         # still has time/date/math. Gemini doesn't allow mixing

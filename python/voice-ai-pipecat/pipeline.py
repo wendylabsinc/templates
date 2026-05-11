@@ -741,6 +741,23 @@ class STTUserTextCapture(FrameProcessor):
                 )
         await self.push_frame(frame, direction)
 
+    async def cleanup(self) -> None:
+        """Cancel a pending watchdog if the pipeline tears down before it
+        fires. Without this the leaked task can wake into a torn-down
+        transport and raise "Task was destroyed but it is pending"."""
+        await super().cleanup()
+        if self._watchdog_task is not None and not self._watchdog_task.done():
+            self._watchdog_task.cancel()
+            try:
+                await self._watchdog_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                _log.exception(
+                    "STTUserTextCapture: watchdog errored during cleanup"
+                )
+        self._watchdog_task = None
+
 
 class BotResponseLogger(FrameProcessor):
     """Accumulates LLM-emitted text per turn, logs it, and optionally

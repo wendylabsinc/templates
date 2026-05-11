@@ -921,6 +921,11 @@ class BotResponseLogger(FrameProcessor):
         # for that race. Decision happens in _finalize_round_after_grace.
         self._llm_end_grace_secs: float = _LLM_END_GRACE_MS / 1000.0
         self._grace_task: Optional[asyncio.Task] = None
+        # cleanup() sets this before cancelling the grace task. The
+        # finalizer checks it to distinguish a cleanup cancel (quiet
+        # exit, don't push more frames) from a new-round cancel (flush
+        # the old round downstream before the new one starts).
+        self._shutting_down: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -1122,6 +1127,12 @@ class BotResponseLogger(FrameProcessor):
             await asyncio.sleep(self._llm_end_grace_secs)
         except asyncio.CancelledError:
             cancelled = True
+        # Teardown: cleanup() cancelled us. Don't push buffered text or
+        # the end frame — the downstream graph is being dismantled and
+        # leaking old TTS into it can surface as stale speech during
+        # shutdown / settings changes / browser handoff.
+        if cancelled and self._shutting_down:
+            raise asyncio.CancelledError
         # Decision: the function-call flag may have been flipped by a
         # signal frame that arrived during the sleep (either via the
         # normal queue or out-of-band from a runner task).
@@ -1150,6 +1161,9 @@ class BotResponseLogger(FrameProcessor):
         """Cancel a pending grace task on teardown so its asyncio.sleep
         doesn't wake into a destroyed pipeline."""
         await super().cleanup()
+        # Set BEFORE cancelling so the finalizer's CancelledError handler
+        # can tell this apart from a new-round cancel and skip its flush.
+        self._shutting_down = True
         if self._grace_task is not None and not self._grace_task.done():
             self._grace_task.cancel()
             try:
@@ -1677,6 +1691,11 @@ class StartupAudioGate(FrameProcessor):
         self._ceiling_open_at: Optional[float] = None
         self._greeting_done: bool = not expects_greeting
         self._open: bool = False
+        # True if we dropped a UserStartedSpeakingFrame while closed.
+        # Keeps the tail of that same utterance suppressed even after
+        # the gate opens, so downstream never sees a stop-without-start
+        # pair that becomes a partial stale transcript.
+        self._suppressed_speech_in_flight: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -1699,8 +1718,22 @@ class StartupAudioGate(FrameProcessor):
         if not self._open:
             self._maybe_open(now)
 
-        if not self._open and self._should_suppress(frame):
-            return
+        if not self._open:
+            # While closed, track whether a speech segment started so the
+            # tail can stay suppressed if the gate opens mid-utterance.
+            if isinstance(frame, UserStartedSpeakingFrame):
+                self._suppressed_speech_in_flight = True
+            if self._should_suppress(frame):
+                return
+        elif self._suppressed_speech_in_flight:
+            # Gate opened while a speech segment was being suppressed.
+            # Keep dropping that utterance's frames until its closing
+            # UserStoppedSpeakingFrame arrives.
+            if isinstance(frame, UserStoppedSpeakingFrame):
+                self._suppressed_speech_in_flight = False
+                return
+            if self._should_suppress(frame):
+                return
 
         await self.push_frame(frame, direction)
 

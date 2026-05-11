@@ -770,7 +770,14 @@ def _call_vlm(image_bytes: bytes, question: str) -> str:
             resp = _requests.post(
                 f"{VLM_URL}/question",
                 json={"image": image_b64, "question": question},
-                timeout=min(VLM_TIMEOUT, 30),  # cap at 30s — if VLM can't respond, skip
+                # Honour VLM_TIMEOUT (Dockerfile default 120s). The old min(...,30)
+                # hard cap made env overrides meaningless and timed out longer
+                # questions (e.g. "how many X do you see") on memory-constrained
+                # Jetsons where Qwen3-VL needs 30-60s to reason+generate.
+                # Auto-VLM backpressure is already provided by _vlm_call_lock
+                # (one call at a time) and the _VLM_MAX_CONSECUTIVE_FAILURES
+                # auto-disable, so the extra hard cap is over-cautious.
+                timeout=VLM_TIMEOUT,
             )
             vlm_elapsed = time.monotonic() - vlm_start
             logger.info(f"VLM response in {vlm_elapsed:.1f}s, status={resp.status_code}")

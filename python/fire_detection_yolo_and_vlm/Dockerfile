@@ -88,12 +88,16 @@ ENV JPEG_QUALITY=80
 ENV USE_GSTREAMER=1
 ENV CAMERA_SOURCE=v4l2
 ENV CAMERA_INDEX=0
-ENV CAMERA_WIDTH=640
-ENV CAMERA_HEIGHT=480
+ENV CAMERA_WIDTH=1280
+ENV CAMERA_HEIGHT=720
 ENV CAMERA_FPS=30
-# Empty default — let _v4l2_pipeline_matrix() do the negotiation. Set this
-# only if a specific camera needs an exact pipeline form. Mirrors what
-# camera-feed-yolo does (which is known to work on Greg's hardware).
+# These only act as *size hints* for the matrix's size-hinted pipeline (#2)
+# and as cap.set() values for the OpenCV fallback. The matrix tries an
+# unconstrained pipeline first, so cameras pick their native best mode
+# (usually 1080p or 720p MJPEG on modern UVC). The hint exists for cameras
+# that won't negotiate "any caps" — those drop to 720p, still sharp at
+# typical viewport sizes. 640x480 was tried briefly but looked blurry when
+# the browser stretched it to fill the page.
 ENV CAMERA_GSTREAMER_PIPELINE=""
 # Make GStreamer's pipeline-construction and negotiation errors visible.
 # Level 2 = ERROR only; cv2.VideoCapture(..., CAP_GSTREAMER) otherwise swallows

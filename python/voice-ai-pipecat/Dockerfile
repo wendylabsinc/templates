@@ -127,6 +127,13 @@ ENV PYTHONUNBUFFERED=1
 # `<string>:4:` ones generated from exec'd code.
 ENV PYTHONWARNINGS=ignore::DeprecationWarning
 
+# Log per-turn STT transcripts and TTS responses to stdout. Default
+# false in template.json for privacy — don't capture user speech in
+# production logs. Flip to true at scaffold time with
+# `wendy run --var LOG_TRANSCRIPTS=true` for debugging. Latency
+# telemetry (timing, char counts) is logged regardless.
+ENV LOG_TRANSCRIPTS={{.LOG_TRANSCRIPTS}}
+
 # PyAudio device indexes for the local audio path. "default" means PyAudio's
 # system default. After first deploy, look at the "PyAudio devices:" log line
 # main.py prints on startup and override these via `wendy run --var ...`.

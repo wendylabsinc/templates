@@ -58,6 +58,13 @@
             "type": "string",
             "default": "8.0",
             "prompt": "Listen window (seconds)"
+        },
+        {
+            "name": "LOG_TRANSCRIPTS",
+            "description": "Log per-turn STT transcripts and TTS responses to stdout. Default false to keep private speech out of production logs (latency/character-count telemetry stays on regardless). Set true for local debugging — useful for verifying what the bot heard vs what it said.",
+            "type": "string",
+            "default": "false",
+            "prompt": "Log STT/TTS content (true/false)"
         }
     ]
 }

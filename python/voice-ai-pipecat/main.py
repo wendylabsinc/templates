@@ -545,8 +545,14 @@ CONVERSATION_PATH = Path(
 # turns into RAM at boot is silly.
 CONVERSATION_MAX_TURNS = 40
 
-# Voices we pre-download in the Dockerfile. Keep in sync with the
-# `for triple` loop there. The frontend's voice picker uses this list.
+# Voices the frontend's settings drawer offers in its picker. Only the
+# first entry (en_US-lessac-medium) is pre-downloaded by the Dockerfile
+# to keep the image small; the others are fetched on first selection
+# by PiperTTSService, which downloads missing voices at load time. To
+# add a voice: append it here so the picker exposes it. Optionally
+# also append it to the Dockerfile's `for triple` loop if you want
+# zero first-use latency for that voice instead of a one-time download
+# stall when the user picks it.
 AVAILABLE_TTS_VOICES = [
     "en_US-lessac-medium",
     "en_US-ryan-high",

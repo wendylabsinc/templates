@@ -726,9 +726,6 @@ export default function DetectionPage() {
           )}
         </div>
 
-        <a href="/" className="rounded-md bg-black/70 px-3 py-2 text-white/50 hover:text-white/80 shadow text-center">
-          ← Conversations
-        </a>
       </div>}
 
       {/* Full-screen video feed */}

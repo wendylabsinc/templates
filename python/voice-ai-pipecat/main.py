@@ -69,6 +69,15 @@ PORT = int(os.environ.get("PORT", "3005"))
 PIPELINE_CANCEL_TIMEOUT_SECS = float(
     os.environ.get("PIPELINE_CANCEL_TIMEOUT_SECS", "5.0")
 )
+# Wall-clock ceiling on how long `_processing` may stay true without
+# a BotStartedSpeakingFrame clearing it. If nothing clears the flag
+# (empty STT, LLM that emits no TTS, tool failure with no follow-up,
+# wake gate that drops the user-stopped frame), the frontend would
+# otherwise show "Thinking..." indefinitely. After this timeout the
+# session forces the flag back to false and logs a warning.
+PROCESSING_TIMEOUT_SECS = float(
+    os.environ.get("PROCESSING_TIMEOUT_SECS", "20.0")
+)
 
 
 async def _await_task_bounded(
@@ -1294,6 +1303,12 @@ class SessionManager:
         # frontend status pill, latency display, and wake-fired flash.
         self._processing: bool = False
         self._processing_started_mono: Optional[float] = None
+        # Wall-clock watchdog that clears `_processing` if no
+        # BotStartedSpeakingFrame arrives within
+        # PROCESSING_TIMEOUT_SECS. Without it an empty transcript,
+        # LLM round that emits no TTS, or dropped tool-call result
+        # leaves the frontend stuck on "Thinking..." forever.
+        self._processing_watchdog_task: Optional[asyncio.Task] = None
         self._last_response_time_ms: Optional[int] = None
         self._last_wake_at: Optional[float] = None  # epoch seconds
         self._wake_pulse: int = 0  # increments each time wake fires
@@ -1350,6 +1365,7 @@ class SessionManager:
     def on_user_stopped(self) -> None:
         self._processing = True
         self._processing_started_mono = time.monotonic()
+        self._arm_processing_watchdog()
 
     def on_bot_started(self) -> None:
         if self._processing_started_mono is not None:
@@ -1358,6 +1374,7 @@ class SessionManager:
             )
         self._processing = False
         self._processing_started_mono = None
+        self._cancel_processing_watchdog()
         self._bot_speaking_at = time.monotonic()
         # Without this clear, on turns 2+ _bot_quiet_at still holds the
         # previous turn's timestamp (in the past), so
@@ -1370,6 +1387,79 @@ class SessionManager:
         # 500 ms grace after bot stops so any in-flight audio has time
         # to leave the speaker before the wake detector re-arms.
         self._bot_quiet_at = time.monotonic() + 0.5
+
+    def on_stt_stalled(self) -> None:
+        """Called by STTUserTextCapture's watchdog when a finalized
+        transcript didn't trigger an LLM run within the watchdog
+        window. Clears `_processing` so the frontend "Thinking..."
+        state recovers without waiting for the wall-clock timeout.
+        """
+        if self._processing:
+            logger.warning(
+                "SessionManager: STT stall — clearing processing flag "
+                "(transcript reached STT but no LLM start observed)"
+            )
+        self._processing = False
+        self._processing_started_mono = None
+        self._cancel_processing_watchdog()
+
+    def on_empty_llm_round(self) -> None:
+        """Called by BotResponseLogger when an LLM round ends with no
+        TTS-bound text and no tool call. Without this hook
+        `on_bot_started` never fires (because TTS doesn't run), so
+        `_processing` would otherwise stay true until the wall-clock
+        watchdog fires.
+        """
+        if self._processing:
+            logger.info(
+                "SessionManager: empty LLM round — clearing processing flag"
+            )
+        self._processing = False
+        self._processing_started_mono = None
+        self._cancel_processing_watchdog()
+
+    def _arm_processing_watchdog(self) -> None:
+        # Cancel any previous watchdog before scheduling a new one so
+        # we never have multiple in flight (each user turn supersedes
+        # the last).
+        self._cancel_processing_watchdog()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # Called outside an event loop — nothing to schedule, the
+            # watchdog only matters when the pipeline is live.
+            return
+        started_at = self._processing_started_mono
+        self._processing_watchdog_task = loop.create_task(
+            self._processing_watchdog(started_at)
+        )
+
+    def _cancel_processing_watchdog(self) -> None:
+        task = self._processing_watchdog_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._processing_watchdog_task = None
+
+    async def _processing_watchdog(self, started_at: Optional[float]) -> None:
+        try:
+            await asyncio.sleep(PROCESSING_TIMEOUT_SECS)
+        except asyncio.CancelledError:
+            return
+        # If the flag has already been cleared (or a new turn started
+        # and re-armed the watchdog with a different start time), this
+        # task is stale — bail out.
+        if not self._processing:
+            return
+        if self._processing_started_mono != started_at:
+            return
+        logger.warning(
+            "SessionManager: processing flag stuck for %.1fs without "
+            "BotStartedSpeakingFrame — forcing clear so the frontend "
+            "stops showing Thinking...",
+            PROCESSING_TIMEOUT_SECS,
+        )
+        self._processing = False
+        self._processing_started_mono = None
 
     def is_bot_currently_speaking(self) -> bool:
         # WakeWordGate uses this to skip wake-word inference while the
@@ -1599,6 +1689,8 @@ class SessionManager:
                 on_user_stopped=self.on_user_stopped,
                 on_bot_started=self.on_bot_started,
                 on_bot_stopped=self.on_bot_stopped,
+                on_stt_stalled=self.on_stt_stalled,
+                on_empty_llm_round=self.on_empty_llm_round,
                 on_wake_fired=self.on_wake_fired,
                 on_wake_predict_error=self.on_wake_predict_error,
                 is_bot_speaking=self.is_bot_currently_speaking,
@@ -1634,6 +1726,7 @@ class SessionManager:
                 self._mode = "idle"
                 self._processing = False
                 self._processing_started_mono = None
+                self._cancel_processing_watchdog()
 
 
 session = SessionManager()

@@ -716,12 +716,21 @@ class STTUserTextCapture(FrameProcessor):
     slow" — the symptoms look identical to the user.
     """
 
-    def __init__(self, watchdog_secs: float = 3.0) -> None:
+    def __init__(
+        self,
+        watchdog_secs: float = 3.0,
+        on_stalled: Optional[callable] = None,  # type: ignore[type-arg]
+    ) -> None:
         super().__init__()
         self.last_user_text: Optional[str] = None
         self._watchdog_secs = watchdog_secs
         self._last_llm_started_at: float = 0.0
         self._watchdog_task: Optional[asyncio.Task] = None
+        # Invoked by _watchdog when a finalized transcript doesn't
+        # trigger an LLM run in time. Used by SessionManager to clear
+        # the "Thinking..." flag so the UI recovers without waiting
+        # for the wall-clock processing-timeout.
+        self._on_stalled = on_stalled
 
     def consume_user_text(self) -> Optional[str]:
         text = self.last_user_text
@@ -757,6 +766,11 @@ class STTUserTextCapture(FrameProcessor):
                     int(self._watchdog_secs),
                     len(text),
                 )
+            if self._on_stalled is not None:
+                try:
+                    self._on_stalled()
+                except Exception:
+                    _log.exception("STTUserTextCapture: on_stalled callback failed")
         except asyncio.CancelledError:
             raise
 
@@ -813,10 +827,16 @@ class BotResponseLogger(FrameProcessor):
         self,
         user_capture: Optional["STTUserTextCapture"] = None,
         on_turn_complete: Optional[callable] = None,  # type: ignore[type-arg]
+        on_empty_llm_round: Optional[callable] = None,  # type: ignore[type-arg]
     ) -> None:
         super().__init__()
         self._user_capture = user_capture
         self._on_turn_complete = on_turn_complete
+        # Fired when an LLM round ends with no TTS-bound text and no
+        # tool call (so no BotStartedSpeakingFrame will follow). Lets
+        # SessionManager clear `_processing` instead of waiting for
+        # the wall-clock timeout to fire.
+        self._on_empty_llm_round = on_empty_llm_round
         self._chunks: list[str] = []
         self._collecting = False
         # Phase-boundary timing + overlap detection. A "queued" LLM or
@@ -975,6 +995,14 @@ class BotResponseLogger(FrameProcessor):
 
         await self.push_frame(frame, direction)
 
+    def _fire_empty_round(self) -> None:
+        if self._on_empty_llm_round is None:
+            return
+        try:
+            self._on_empty_llm_round()
+        except Exception:
+            _log.exception("BotResponseLogger: on_empty_llm_round callback failed")
+
     def _log_suppressed_preamble(self, chunks: list[str]) -> None:
         if not chunks:
             return
@@ -995,9 +1023,11 @@ class BotResponseLogger(FrameProcessor):
         for buf_frame, buf_dir in buffered:
             await self.push_frame(buf_frame, buf_dir)
         if not chunks:
+            self._fire_empty_round()
             return
         full = "".join(chunks).strip()
         if not full:
+            self._fire_empty_round()
             return
         if _LOG_TRANSCRIPTS:
             _log.info("TTS ▸ %s", full)
@@ -1721,6 +1751,8 @@ def build_pipeline_task(
     on_user_stopped: Optional[callable] = None,  # type: ignore[type-arg]
     on_bot_started: Optional[callable] = None,  # type: ignore[type-arg]
     on_bot_stopped: Optional[callable] = None,  # type: ignore[type-arg]
+    on_stt_stalled: Optional[callable] = None,  # type: ignore[type-arg]
+    on_empty_llm_round: Optional[callable] = None,  # type: ignore[type-arg]
     on_wake_fired: Optional[callable] = None,  # type: ignore[type-arg]
     on_wake_predict_error: Optional[callable] = None,  # type: ignore[type-arg]
     on_turn_complete: Optional[callable] = None,  # type: ignore[type-arg]
@@ -1993,7 +2025,7 @@ def build_pipeline_task(
                 on_bot_stopped=on_bot_stopped,
             )
         )
-    user_capture = STTUserTextCapture()
+    user_capture = STTUserTextCapture(on_stalled=on_stt_stalled)
     processors.extend(
         [
             stt,
@@ -2010,6 +2042,7 @@ def build_pipeline_task(
             BotResponseLogger(
                 user_capture=user_capture,
                 on_turn_complete=on_turn_complete,
+                on_empty_llm_round=on_empty_llm_round,
             ),
             tts,
             transport.output(),

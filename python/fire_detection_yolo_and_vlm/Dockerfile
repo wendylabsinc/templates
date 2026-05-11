@@ -80,7 +80,15 @@ ENV YOLO_DEVICE=0
 ENV YOLO_IMGSZ=640
 ENV YOLO_HALF=1
 ENV YOLO_CONF=0.5
-ENV YOLO_EXPORT_TRT=1
+# Synchronous TRT export at _init_model() time blocks uvicorn startup for
+# 3+ minutes on memory-constrained Jetsons (e.g. Orin Nano under load) —
+# TRT's autotuner skips most tactics when free GPU memory is in single-digit
+# MB, settles on a slow engine, and the readiness probe times out. The
+# background prewarm daemon (b7217a0) + hot-swap (also b7217a0) cover the
+# .pt -> .engine conversion off the critical path: first inference uses
+# .pt (slower, ~50ms), the engine hot-swaps in once it's built.
+# Flip to 1 only when you've confirmed the device has plenty of free GPU.
+ENV YOLO_EXPORT_TRT=0
 ENV YOLO_ENGINE=yolov8n.engine
 ENV DRAW_OVERLAY=1
 ENV TARGET_FPS=15

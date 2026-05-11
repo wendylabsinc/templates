@@ -42,6 +42,24 @@ from pipecat.frames.frames import (
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
 )
+
+# Pipecat broadcasts ``FunctionCallsStartedFrame`` BEFORE scheduling
+# function-runner tasks, while ``FunctionCallInProgressFrame`` is pushed
+# from inside the runner task and can race ahead of/behind
+# ``LLMFullResponseEndFrame``. Gating on both closes that race for
+# pipecat versions that expose the started-frame. Import is optional —
+# pipecat-ai < 1.0 versions vary on which frames they export.
+_FUNCTION_CALL_SIGNAL_FRAMES: tuple[type, ...] = (FunctionCallInProgressFrame,)
+try:
+    from pipecat.frames.frames import FunctionCallsStartedFrame  # type: ignore
+
+    _FUNCTION_CALL_SIGNAL_FRAMES = (
+        FunctionCallInProgressFrame,
+        FunctionCallsStartedFrame,
+    )
+except ImportError:
+    pass
+
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
@@ -63,6 +81,26 @@ _LOG_TRANSCRIPTS = os.environ.get("LOG_TRANSCRIPTS", "").strip().lower() in (
     "yes",
     "on",
 )
+
+
+def _parse_int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        _log.warning("ignoring non-integer %s=%r; using default %d", name, raw, default)
+        return default
+
+
+# Grace window after LLMFullResponseEndFrame before buffered LLM text
+# is released to TTS. Pipecat can broadcast FunctionCallInProgressFrame
+# from a background task that races the end frame; waiting a short
+# window lets that signal arrive so the tool-preamble suppression in
+# BotResponseLogger actually fires for the racing case. Set to 0 to
+# restore the inline-release behavior of PR #30.
+_LLM_END_GRACE_MS = _parse_int_env("LLM_END_GRACE_MS", 200)
 
 
 # Lazy imports for optional providers — pipecat-ai's [deepgram], [openai],
@@ -800,12 +838,35 @@ class BotResponseLogger(FrameProcessor):
         # End fires, so bot speech starts ~one LLM-ttft later. Worth it.
         self._buffered_text: list[tuple[TextFrame, FrameDirection]] = []
         self._function_call_in_round: bool = False
+        # Grace window after end-frame before releasing buffered text.
+        # FunctionCallInProgressFrame can be pushed from a background
+        # runner task that races LLMFullResponseEndFrame, so waiting a
+        # beat after end-frame lets the signal arrive and the gate fire
+        # for that race. Decision happens in _finalize_round_after_grace.
+        self._llm_end_grace_secs: float = _LLM_END_GRACE_MS / 1000.0
+        self._grace_task: Optional[asyncio.Task] = None
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
         now = time.monotonic()
 
         if isinstance(frame, LLMFullResponseStartFrame):
+            # A new LLM round is starting. If a grace task from the
+            # previous round is still pending, cancel it so it can
+            # finalize on the OLD state before we reset. The cancel
+            # handler in _finalize_round_after_grace will flush the
+            # buffered text downstream before this new start frame.
+            if self._grace_task is not None and not self._grace_task.done():
+                self._grace_task.cancel()
+                try:
+                    await self._grace_task
+                except asyncio.CancelledError:
+                    pass
+                except Exception:
+                    _log.exception(
+                        "BotResponseLogger: grace task errored during cancel"
+                    )
+            self._grace_task = None
             if self._llm_in_flight > 0:
                 _log.warning(
                     "LLM ▸ overlap: new response started while %d previous "
@@ -835,7 +896,7 @@ class BotResponseLogger(FrameProcessor):
             self._buffered_text.append((frame, direction))
             return
 
-        if isinstance(frame, FunctionCallInProgressFrame):
+        if isinstance(frame, _FUNCTION_CALL_SIGNAL_FRAMES):
             self._function_call_in_round = True
             await self.push_frame(frame, direction)
             return
@@ -876,64 +937,144 @@ class BotResponseLogger(FrameProcessor):
                 )
                 self._llm_start_at = None
 
+            # Snapshot the per-round buffer so a late-arriving
+            # FunctionCallInProgressFrame (after end-frame, while we're
+            # in grace) can still flip self._function_call_in_round
+            # without us overwriting the buffered text in the meantime.
+            buffered = self._buffered_text
+            chunks = self._chunks
+            self._buffered_text = []
+            self._chunks = []
+
+            # Fast drop: tool call already observed in this round, no
+            # grace needed.
             if self._function_call_in_round:
-                # Tool call in the same response — drop the buffered
-                # text. The post-tool LLM round will produce the real
-                # answer; only that one should reach TTS.
-                if self._chunks:
-                    preamble = "".join(self._chunks).strip()
-                    _log.info(
-                        "LLM ▸ preamble suppressed (%d chars; function "
-                        "call followed in same response)",
-                        len(preamble),
-                    )
-                    if _LOG_TRANSCRIPTS and preamble:
-                        _log.info("LLM ▸ (suppressed) %s", preamble)
-                self._buffered_text = []
-                self._chunks = []
+                self._log_suppressed_preamble(chunks)
                 await self.push_frame(frame, direction)
                 return
 
-            # No tool call — release the buffered text downstream so TTS
-            # can synthesize it, then proceed with the existing logging
-            # and on_turn_complete handling.
-            for buf_frame, buf_dir in self._buffered_text:
-                await self.push_frame(buf_frame, buf_dir)
-            self._buffered_text = []
+            # No grace configured — release inline. This preserves the
+            # original PR #30 behavior for anyone who sets
+            # LLM_END_GRACE_MS=0.
+            if self._llm_end_grace_secs <= 0:
+                await self._release_buffered(buffered, chunks)
+                await self.push_frame(frame, direction)
+                return
 
-            if self._chunks:
-                full = "".join(self._chunks).strip()
-                if full:
-                    if _LOG_TRANSCRIPTS:
-                        _log.info("TTS ▸ %s", full)
-                    else:
-                        _log.info(
-                            "TTS ▸ (%d chars; LOG_TRANSCRIPTS=true to log content)",
-                            len(full),
-                        )
-                    if self._on_turn_complete and self._user_capture is not None:
-                        user_text = self._user_capture.consume_user_text()
-                        if user_text:
-                            try:
-                                self._on_turn_complete(user_text, full)
-                            except Exception:
-                                _log.exception("BotResponseLogger: on_turn_complete failed")
-                        else:
-                            # Bot reply with no paired user text — the
-                            # greeting, a tool-only response, or a
-                            # dropped STT transcript. Without this log
-                            # the turn is silently absent from the
-                            # persisted history with no signal.
-                            _log.warning(
-                                "BotResponseLogger: bot reply (%d chars) "
-                                "without paired user text — turn not persisted",
-                                len(full),
-                            )
-            self._chunks = []
-            await self.push_frame(frame, direction)
+            # Defer release through a grace task. Function-call signal
+            # frames that arrive in the grace window will flip
+            # self._function_call_in_round and the task will drop on
+            # wake-up. The next LLMFullResponseStartFrame will cancel
+            # the task, which falls through to a release in its cancel
+            # handler so we never leak buffered text past a round
+            # boundary.
+            self._grace_task = asyncio.create_task(
+                self._finalize_round_after_grace(buffered, chunks, frame, direction)
+            )
             return
 
         await self.push_frame(frame, direction)
+
+    def _log_suppressed_preamble(self, chunks: list[str]) -> None:
+        if not chunks:
+            return
+        preamble = "".join(chunks).strip()
+        _log.info(
+            "LLM ▸ preamble suppressed (%d chars; function call followed "
+            "in same response)",
+            len(preamble),
+        )
+        if _LOG_TRANSCRIPTS and preamble:
+            _log.info("LLM ▸ (suppressed) %s", preamble)
+
+    async def _release_buffered(
+        self,
+        buffered: list[tuple[TextFrame, FrameDirection]],
+        chunks: list[str],
+    ) -> None:
+        for buf_frame, buf_dir in buffered:
+            await self.push_frame(buf_frame, buf_dir)
+        if not chunks:
+            return
+        full = "".join(chunks).strip()
+        if not full:
+            return
+        if _LOG_TRANSCRIPTS:
+            _log.info("TTS ▸ %s", full)
+        else:
+            _log.info(
+                "TTS ▸ (%d chars; LOG_TRANSCRIPTS=true to log content)",
+                len(full),
+            )
+        if self._on_turn_complete and self._user_capture is not None:
+            user_text = self._user_capture.consume_user_text()
+            if user_text:
+                try:
+                    self._on_turn_complete(user_text, full)
+                except Exception:
+                    _log.exception("BotResponseLogger: on_turn_complete failed")
+            else:
+                # Bot reply with no paired user text — the greeting, a
+                # tool-only response, or a dropped STT transcript.
+                # Without this log the turn is silently absent from
+                # the persisted history with no signal.
+                _log.warning(
+                    "BotResponseLogger: bot reply (%d chars) without "
+                    "paired user text — turn not persisted",
+                    len(full),
+                )
+
+    async def _finalize_round_after_grace(
+        self,
+        buffered: list[tuple[TextFrame, FrameDirection]],
+        chunks: list[str],
+        end_frame: LLMFullResponseEndFrame,
+        direction: FrameDirection,
+    ) -> None:
+        cancelled = False
+        try:
+            await asyncio.sleep(self._llm_end_grace_secs)
+        except asyncio.CancelledError:
+            cancelled = True
+        # Decision: the function-call flag may have been flipped by a
+        # signal frame that arrived during the sleep (either via the
+        # normal queue or out-of-band from a runner task).
+        if self._function_call_in_round:
+            self._log_suppressed_preamble(chunks)
+        else:
+            try:
+                await self._release_buffered(buffered, chunks)
+            except Exception:
+                _log.exception(
+                    "BotResponseLogger: release-buffered failed in grace task"
+                )
+        try:
+            await self.push_frame(end_frame, direction)
+        except Exception:
+            _log.exception(
+                "BotResponseLogger: end-frame push failed in grace task"
+            )
+        if cancelled:
+            # Honor the cancellation — the new start frame is waiting
+            # on us in the producer task. Propagate so the caller's
+            # awaiter sees CancelledError exactly once.
+            raise asyncio.CancelledError
+
+    async def cleanup(self) -> None:
+        """Cancel a pending grace task on teardown so its asyncio.sleep
+        doesn't wake into a destroyed pipeline."""
+        await super().cleanup()
+        if self._grace_task is not None and not self._grace_task.done():
+            self._grace_task.cancel()
+            try:
+                await self._grace_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                _log.exception(
+                    "BotResponseLogger: grace task errored during cleanup"
+                )
+        self._grace_task = None
 
 
 class TurnTelemetry(FrameProcessor):

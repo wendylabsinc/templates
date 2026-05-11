@@ -1407,6 +1407,14 @@ def remove_vlm_question(qid: str) -> bool:
 
 
 def get_vlm_config() -> dict:
+    # Probe the VLM if needed before returning status. Without this, vlm_connected
+    # stays False at startup (its initial value) until something actually calls
+    # _call_vlm() — either an auto-VLM-on-detection event or a manual "Ask now"
+    # click — which means the UI badge shows "offline" on first load even when
+    # the VLM has been healthy the whole time. _is_vlm_available() is rate-limited
+    # (10s when disconnected) and cheap when connected (just returns the global),
+    # so calling it on every /api/vlm/config GET is safe.
+    _is_vlm_available()
     with vlm_interval_lock:
         interval = vlm_interval
     with vlm_conf_lock:

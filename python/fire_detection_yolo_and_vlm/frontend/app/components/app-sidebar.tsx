@@ -56,7 +56,10 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <NavConversations />
+        {/* NavConversations hidden for the current demo build — the
+            /conversations/:id route still exists and the backend still
+            serves them; the chat sidebar is just not surfaced. Restore
+            by uncommenting the <NavConversations /> line. */}
         <NavCameras />
         <NavSecondary items={data.navSecondary} className="mt-auto" />
       </SidebarContent>

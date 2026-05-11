@@ -60,6 +60,16 @@ try:
 except ImportError:
     pass
 
+# Interruption signal can also race the startup gate (the wake-word
+# gate or user can synthesize one while the greeting is still
+# speaking). Import defensively — older pipecat doesn't export it.
+try:
+    from pipecat.frames.frames import InterruptionFrame  # type: ignore
+
+    _INTERRUPTION_FRAME_TYPES: tuple[type, ...] = (InterruptionFrame,)
+except ImportError:
+    _INTERRUPTION_FRAME_TYPES = ()
+
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
@@ -1582,33 +1592,100 @@ class WakeWordGate(FrameProcessor):
 
 
 class StartupAudioGate(FrameProcessor):
-    """Drop audio frames for `warmup_secs` after pipeline start.
+    """Drop user-turn frames during pipeline warmup and greeting.
 
     PyAudio begins capturing the moment the input stream opens, but the
     pipeline takes a few seconds to fully initialize (Whisper, Piper,
-    LLM). Anything the user said during that gap would otherwise queue
-    up in Pipecat's frame queue and get processed in a burst as soon as
-    the pipeline goes live — the bot tries to answer the last three
-    stale questions in sequence. Eat the audio for an initial window so
-    every session starts clean.
+    LLM). On top of that, the greeting message has to finish speaking
+    before we want the user to be heard — otherwise an answer queued
+    during the greeting fires the moment the greeting ends.
 
-    Non-audio frames (StartFrame, EndFrame, CancelFrame, etc.) pass
-    through untouched.
+    State machine:
+      * Gate stays closed until **both** the warmup floor has elapsed
+        AND the first BotStoppedSpeakingFrame has been observed (which
+        on the first turn is the greeting finishing).
+      * If no greeting is expected, the gate opens as soon as the
+        warmup floor elapses.
+      * A ceiling deadline opens the gate unconditionally (defense
+        against a greeting that never finishes — TTS error, audio
+        device wedged, etc.) so input is never permanently muted.
+
+    While closed, all user-turn frames are dropped:
+    ``InputAudioRawFrame`` (raw mic audio), ``UserStartedSpeakingFrame``
+    / ``UserStoppedSpeakingFrame`` (VAD), and ``InterruptionFrame``
+    (if the installed pipecat exports it). Everything else passes
+    through.
     """
 
-    def __init__(self, warmup_secs: float = 2.0) -> None:
+    def __init__(
+        self,
+        floor_secs: float = 2.0,
+        ceiling_secs: float = 10.0,
+        expects_greeting: bool = True,
+    ) -> None:
         super().__init__()
-        self._warmup_secs = warmup_secs
-        self._gate_open_at: Optional[float] = None
+        self._floor_secs = floor_secs
+        self._ceiling_secs = ceiling_secs
+        self._expects_greeting = expects_greeting
+        self._floor_open_at: Optional[float] = None
+        self._ceiling_open_at: Optional[float] = None
+        self._greeting_done: bool = not expects_greeting
+        self._open: bool = False
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
-        if isinstance(frame, StartFrame) and self._gate_open_at is None:
-            self._gate_open_at = time.monotonic() + self._warmup_secs
-        if isinstance(frame, InputAudioRawFrame) and self._gate_open_at is not None:
-            if time.monotonic() < self._gate_open_at:
-                return
+        now = time.monotonic()
+
+        if isinstance(frame, StartFrame) and self._floor_open_at is None:
+            self._floor_open_at = now + self._floor_secs
+            self._ceiling_open_at = now + self._ceiling_secs
+
+        # Greeting completion latches when the first BotStoppedSpeakingFrame
+        # arrives. With a greeting configured this is the greeting TTS
+        # finishing; without one the flag is already true at __init__.
+        if (
+            self._expects_greeting
+            and not self._greeting_done
+            and isinstance(frame, BotStoppedSpeakingFrame)
+        ):
+            self._greeting_done = True
+
+        if not self._open:
+            self._maybe_open(now)
+
+        if not self._open and self._should_suppress(frame):
+            return
+
         await self.push_frame(frame, direction)
+
+    def _should_suppress(self, frame: Frame) -> bool:
+        if isinstance(frame, InputAudioRawFrame):
+            return True
+        if isinstance(frame, (UserStartedSpeakingFrame, UserStoppedSpeakingFrame)):
+            return True
+        if _INTERRUPTION_FRAME_TYPES and isinstance(frame, _INTERRUPTION_FRAME_TYPES):
+            return True
+        return False
+
+    def _maybe_open(self, now: float) -> None:
+        if self._floor_open_at is None:
+            return
+        floor_elapsed = now >= self._floor_open_at
+        ceiling_elapsed = (
+            self._ceiling_open_at is not None and now >= self._ceiling_open_at
+        )
+        if floor_elapsed and self._greeting_done:
+            self._open_gate("greeting-done")
+            return
+        if ceiling_elapsed:
+            # Greeting never reported done — either no TTS fired or
+            # the BotStoppedSpeakingFrame got dropped upstream. Open
+            # so the user isn't permanently muted.
+            self._open_gate("ceiling-fallback")
+
+    def _open_gate(self, reason: str) -> None:
+        self._open = True
+        _log.info("startup gate ▸ open (%s)", reason)
 
 
 class MuteGate(FrameProcessor):
@@ -1994,7 +2071,11 @@ def build_pipeline_task(
 
     processors: list[FrameProcessor] = [
         transport.input(),
-        StartupAudioGate(warmup_secs=2.0),
+        StartupAudioGate(
+            floor_secs=2.0,
+            ceiling_secs=10.0,
+            expects_greeting=bool(greeting_message),
+        ),
         # Mute gate sits before the wake-word gate so a muted mic
         # doesn't even feed openWakeWord — that stops false-fires from
         # ambient noise while muted, and saves the inference cost.

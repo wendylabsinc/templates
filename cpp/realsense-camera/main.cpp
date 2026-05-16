@@ -180,10 +180,14 @@ class RealSensePump
 
     bool configure(int width, int height, int fps, const std::string &preset)
     {
+        std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
+        reapStoppedWorkerLocked();
+
         bool restart = false;
         {
             std::lock_guard<std::mutex> lock(stateMutex_);
-            restart = worker_.joinable() && (width != width_ || height != height_ || fps != fps_);
+            restart = running_ && worker_.joinable() &&
+                      (width != width_ || height != height_ || fps != fps_);
             width_ = width;
             height_ = height;
             fps_ = fps;
@@ -193,7 +197,6 @@ class RealSensePump
 
         if (restart)
         {
-            std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
             stopWorkerLocked(false, true);
             startWorkerLocked();
         }

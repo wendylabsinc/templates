@@ -40,7 +40,18 @@ Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage
 
 ### camera-feed
 
-Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), video, gpu.
+Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
+
+### realsense-camera
+
+Live Intel RealSense D415 multi-stream viewer: color, left IR, right IR, and colorized depth as MJPEG streams.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + pyrealsense2 | 8000 | `python/realsense-camera/` |
+| C++ | Drogon + librealsense | 7007 | `cpp/realsense-camera/` |
+
+The shared viewer frontend source lives at `common/realsense-camera-frontend/` and is vendored into both language template directories.
 
 ### audio
 
@@ -63,6 +74,7 @@ Shared building blocks (not selectable as templates):
 - `shadcn-vite-frontend/` — Vite + React + shadcn/ui dashboard
 - `camera-feed-html/` — Webcam viewer HTML page
 - `audio-feed-html/` — Audio waveform visualizer HTML page
+- `realsense-camera-frontend/` — React + Vite viewer for the `realsense-camera` template (color + IR + depth streams)
 - `voice-ai-pipecat-frontend/` — React + Three.js visualizer for the `voice-ai-pipecat` template (blue mic lines + emerald bot lines)
 
 ---

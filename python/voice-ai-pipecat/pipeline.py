@@ -1721,8 +1721,15 @@ class StartupAudioGate(FrameProcessor):
         if not self._open:
             # While closed, track whether a speech segment started so the
             # tail can stay suppressed if the gate opens mid-utterance.
+            # Clear the flag on the matching UserStoppedSpeakingFrame so
+            # a fully-completed utterance during the closed phase doesn't
+            # leak in-flight state into the next real utterance after
+            # the gate opens (which would silently eat the user's first
+            # post-greeting question).
             if isinstance(frame, UserStartedSpeakingFrame):
                 self._suppressed_speech_in_flight = True
+            elif isinstance(frame, UserStoppedSpeakingFrame):
+                self._suppressed_speech_in_flight = False
             if self._should_suppress(frame):
                 return
         elif self._suppressed_speech_in_flight:

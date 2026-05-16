@@ -100,6 +100,36 @@ encodeVideoFrame(tjhandle encoder, const rs2::video_frame &frame, int pixelForma
                       frame.get_height(), pixelFormat, subsampling);
 }
 
+std::string jsonEscape(const std::string &value)
+{
+    std::ostringstream out;
+    for (char ch : value)
+    {
+        switch (ch)
+        {
+        case '"':
+            out << "\\\"";
+            break;
+        case '\\':
+            out << "\\\\";
+            break;
+        case '\n':
+            out << "\\n";
+            break;
+        case '\r':
+            out << "\\r";
+            break;
+        case '\t':
+            out << "\\t";
+            break;
+        default:
+            out << ch;
+            break;
+        }
+    }
+    return out.str();
+}
+
 struct EncodedFrame
 {
     std::vector<uint8_t> jpeg;
@@ -241,7 +271,16 @@ class RealSenseBridge
             const auto &streamId = kStreamIds[i];
             out << "\"" << streamId << "\":" << fpsLatest_.at(streamId);
         }
-        out << "}}";
+        out << "},\"error\":";
+        if (lastError_)
+        {
+            out << "\"" << jsonEscape(*lastError_) << "\"";
+        }
+        else
+        {
+            out << "null";
+        }
+        out << "}";
         return out.str();
     }
 
@@ -271,6 +310,7 @@ class RealSenseBridge
         }
         stopRequested_.store(false);
         pendingPreset_ = preset_;
+        lastError_.reset();
         running_ = true;
         fpsWindowStart_ = std::chrono::steady_clock::now();
         for (const auto &streamId : kStreamIds)
@@ -300,6 +340,7 @@ class RealSenseBridge
             if (!keepRunning)
             {
                 running_ = false;
+                lastError_.reset();
                 cond_.notify_all();
             }
             oldThread = std::move(worker_);
@@ -323,10 +364,11 @@ class RealSenseBridge
         }
     }
 
-    void markStopped()
+    void markStopped(std::optional<std::string> error = std::nullopt)
     {
         std::lock_guard<std::mutex> lock(stateMutex_);
         running_ = false;
+        lastError_ = std::move(error);
         for (const auto &streamId : kStreamIds)
         {
             fpsCounts_[streamId] = 0;
@@ -420,7 +462,27 @@ class RealSenseBridge
         config.enable_stream(RS2_STREAM_INFRARED, 1, width, height, RS2_FORMAT_Y8, fps);
         config.enable_stream(RS2_STREAM_INFRARED, 2, width, height, RS2_FORMAT_Y8, fps);
 
+        try
+        {
+            rs2::context context;
+            if (context.query_devices().size() == 0)
+            {
+                std::string message = "No RealSense device connected or available";
+                std::fprintf(stderr, "%s\n", message.c_str());
+                markStopped(message);
+                return;
+            }
+        }
+        catch (const rs2::error &e)
+        {
+            std::string message = std::string("Failed to query RealSense devices: ") + e.what();
+            std::fprintf(stderr, "%s\n", message.c_str());
+            markStopped(message);
+            return;
+        }
+
         std::optional<rs2::pipeline_profile> profile;
+        std::string startError;
         for (int attempt = 1; attempt <= 3 && !stopRequested_.load(); ++attempt)
         {
             try
@@ -430,6 +492,7 @@ class RealSenseBridge
             }
             catch (const rs2::error &e)
             {
+                startError = e.what();
                 std::fprintf(stderr,
                              "pipeline.start attempt %d/3 failed at %dx%d @%dfps: %s\n", attempt,
                              width, height, fps, e.what());
@@ -439,8 +502,16 @@ class RealSenseBridge
 
         if (!profile)
         {
-            std::fprintf(stderr, "Failed to start RealSense pipeline\n");
-            markStopped();
+            if (stopRequested_.load())
+            {
+                markStopped();
+                return;
+            }
+            std::string message = startError.empty()
+                                      ? "Failed to start RealSense pipeline"
+                                      : "Failed to start RealSense pipeline: " + startError;
+            std::fprintf(stderr, "%s\n", message.c_str());
+            markStopped(message);
             return;
         }
 
@@ -464,7 +535,8 @@ class RealSenseBridge
         tjhandle encoder = tjInitCompress();
         if (!encoder)
         {
-            std::fprintf(stderr, "Failed to initialize TurboJPEG encoder\n");
+            std::string message = "Failed to initialize TurboJPEG encoder";
+            std::fprintf(stderr, "%s\n", message.c_str());
             try
             {
                 pipeline.stop();
@@ -472,7 +544,7 @@ class RealSenseBridge
             catch (const rs2::error &)
             {
             }
-            markStopped();
+            markStopped(message);
             return;
         }
 
@@ -540,8 +612,9 @@ class RealSenseBridge
         }
         catch (const rs2::error &e)
         {
-            std::fprintf(stderr, "RealSense worker error: %s\n", e.what());
-            markStopped();
+            std::string message = std::string("RealSense worker error: ") + e.what();
+            std::fprintf(stderr, "%s\n", message.c_str());
+            markStopped(message);
         }
 
         tjDestroy(encoder);
@@ -572,6 +645,7 @@ class RealSenseBridge
     int fps_ = 30;
     std::string preset_ = "default";
     std::optional<std::string> pendingPreset_;
+    std::optional<std::string> lastError_;
 
     std::unordered_map<std::string, EncodedFrame> latest_;
     std::unordered_map<std::string, int> fpsCounts_;
@@ -645,7 +719,7 @@ extern "C" char *RealSenseBridgeHealthJSON(RealSenseBridgeRef bridge)
 {
     if (!bridge)
     {
-        return copyString("{\"streams\":[\"color\",\"ir-left\",\"ir-right\",\"depth\"],\"running\":false,\"fps\":{\"color\":0,\"ir-left\":0,\"ir-right\":0,\"depth\":0}}");
+        return copyString("{\"streams\":[\"color\",\"ir-left\",\"ir-right\",\"depth\"],\"running\":false,\"fps\":{\"color\":0,\"ir-left\":0,\"ir-right\":0,\"depth\":0},\"error\":null}");
     }
     return copyString(asBridge(bridge)->healthJson());
 }

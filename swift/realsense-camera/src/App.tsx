@@ -35,6 +35,13 @@ type StreamDef = {
   placeholder: string
 }
 
+type HealthResponse = {
+  streams: StreamId[]
+  running: boolean
+  fps: Partial<Record<StreamId, number>>
+  error?: string | null
+}
+
 const STREAMS: StreamDef[] = [
   { id: "color", label: "Color Stream", placeholder: "#3b82f6" },
   { id: "ir-left", label: "Left IR Stream", placeholder: "#a855f7" },
@@ -84,6 +91,7 @@ function App() {
   const [fpsOpen, setFpsOpen] = useState(false)
   const [streaming, setStreaming] = useState(false)
   const [transitioning, setTransitioning] = useState(false)
+  const [streamError, setStreamError] = useState<string | null>(null)
   const [streamLoaded, setStreamLoaded] = useState<Record<StreamId, boolean>>({
     color: false,
     "ir-left": false,
@@ -110,22 +118,50 @@ function App() {
   // Poll /health for per-stream FPS while streaming. Counting at the browser
   // via <img onLoad> is unreliable for `multipart/x-mixed-replace` (Chrome
   // versions vary, Safari is hit-or-miss, Firefox doesn't support it at all),
-  // so the pump tallies frames as it publishes them and we just read the
-  // 1-second rolling snapshot from /health here.
+  // so the backend tallies frames as it publishes them and we use the health
+  // snapshot to reveal tiles and surface start failures.
   useEffect(() => {
     if (!streaming) return
+    let cancelled = false
     const tick = async () => {
       try {
         const res = await fetch("/health")
-        const data = await res.json()
+        const data = (await res.json()) as HealthResponse
+        if (cancelled) return
         console.log("[realsense] fps", data.fps)
+        if (data.error) {
+          setStreamError(data.error)
+          setStreaming(false)
+          setTransitioning(false)
+          return
+        }
+        if (!data.running) {
+          setStreamError("RealSense pipeline stopped before frames were received.")
+          setStreaming(false)
+          setTransitioning(false)
+          return
+        }
+        setStreamLoaded((prev) => {
+          let changed = false
+          const next = { ...prev }
+          for (const stream of STREAMS) {
+            if ((data.fps[stream.id] ?? 0) > 0 && !next[stream.id]) {
+              next[stream.id] = true
+              changed = true
+            }
+          }
+          return changed ? next : prev
+        })
       } catch {
         // ignore — next tick will retry
       }
     }
     tick()
     const id = window.setInterval(tick, 1000)
-    return () => window.clearInterval(id)
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
   }, [streaming])
 
   // If the user switches to a resolution whose supported FPS set doesn't
@@ -322,6 +358,7 @@ function App() {
               if (streaming) {
                 console.log("[realsense] stop")
                 setStreaming(false)
+                setStreamError(null)
                 try {
                   await fetch("/stop", { method: "POST" })
                 } catch {
@@ -329,13 +366,31 @@ function App() {
                 }
               } else {
                 console.log("[realsense] start")
+                setStreamError(null)
                 setStreamSession((n) => n + 1)
                 try {
-                  await fetch("/start", { method: "POST" })
-                } catch {
-                  // ignore — the <img> will surface the error
+                  const res = await fetch("/start", { method: "POST" })
+                  const data = (await res.json().catch(() => null)) as
+                    | { running?: boolean; error?: string }
+                    | null
+                  if (!res.ok) {
+                    throw new Error(data?.error ?? `Start failed (${res.status})`)
+                  }
+                  if (data?.error) {
+                    throw new Error(data.error)
+                  }
+                  if (data?.running === false) {
+                    throw new Error("RealSense pipeline did not start.")
+                  }
+                  setStreaming(true)
+                } catch (error) {
+                  setStreaming(false)
+                  setStreamError(
+                    error instanceof Error
+                      ? error.message
+                      : "Failed to start RealSense pipeline."
+                  )
                 }
-                setStreaming(true)
               }
               setTransitioning(false)
             }}
@@ -352,6 +407,12 @@ function App() {
           </Button>
         </div>
       </div>
+
+      {streamError && (
+        <div className="border-b border-red-500/30 bg-red-950/40 px-6 py-2 text-sm font-medium text-red-100">
+          {streamError}
+        </div>
+      )}
 
       <main className="flex-1 overflow-hidden p-4">
         {active.length === 0 ? (
@@ -382,6 +443,9 @@ function App() {
                             ...prev,
                             [s.id]: true,
                           }))
+                        }
+                        onError={() =>
+                          setStreamError(`${s.label} stream disconnected.`)
                         }
                         className={cn(
                           "h-full w-full object-contain bg-black transition-opacity",

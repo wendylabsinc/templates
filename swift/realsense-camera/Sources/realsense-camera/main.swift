@@ -63,7 +63,7 @@ private final class RealSenseCamera: @unchecked Sendable {
 
     func healthJSON() -> String {
         guard let raw = RealSenseBridgeHealthJSON(bridge) else {
-            return #"{"streams":["color","ir-left","ir-right","depth"],"running":false,"fps":{"color":0,"ir-left":0,"ir-right":0,"depth":0}}"#
+            return #"{"streams":["color","ir-left","ir-right","depth"],"running":false,"fps":{"color":0,"ir-left":0,"ir-right":0,"depth":0},"error":null}"#
         }
         defer { RealSenseBridgeFreeString(raw) }
         return String(cString: raw)

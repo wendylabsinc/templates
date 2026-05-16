@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/media/demo.gif" alt="Wendy templates on NVIDIA Jetson" width="360">
+</p>
+
 # Wendy Templates
 
 Project templates for the [Wendy CLI](https://github.com/wendylabsinc/wendy-agent). Used by `wendy init --template` to scaffold new projects.

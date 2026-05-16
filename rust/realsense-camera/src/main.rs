@@ -747,11 +747,19 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
 }
 
 async fn stream_endpoint(Path(stream_id): Path<String>, State(state): State<AppState>) -> Response {
-    let Ok(stream_id) = StreamId::from_str(&stream_id) else {
+    let requested_stream_id = stream_id;
+    let Ok(stream_id) = StreamId::from_str(&requested_stream_id) else {
+        let allowed_streams = STREAM_IDS
+            .iter()
+            .map(|id| id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         return (
             StatusCode::NOT_FOUND,
             Json(ErrorResponse {
-                error: "Unknown stream".to_string(),
+                error: format!(
+                    "Unknown stream: {requested_stream_id}. Allowed streams: {allowed_streams}"
+                ),
             }),
         )
             .into_response();

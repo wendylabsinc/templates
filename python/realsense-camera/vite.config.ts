@@ -3,6 +3,9 @@ import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig } from "vite"
 
+const backendPort = Number("{{.PORT}}") || 8000
+const backendTarget = `http://localhost:${backendPort}`
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -13,13 +16,13 @@ export default defineConfig({
   server: {
     proxy: {
       "/stream": {
-        target: "http://localhost:8000",
+        target: backendTarget,
         changeOrigin: true,
       },
-      "/config": "http://localhost:8000",
-      "/health": "http://localhost:8000",
-      "/start": "http://localhost:8000",
-      "/stop": "http://localhost:8000",
+      "/config": backendTarget,
+      "/health": backendTarget,
+      "/start": backendTarget,
+      "/stop": backendTarget,
     },
   },
 })

@@ -46,7 +46,7 @@
         {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
-            "languages": ["python", "cpp"]
+            "languages": ["python", "rust", "cpp"]
         }
     ],
     "languages": [

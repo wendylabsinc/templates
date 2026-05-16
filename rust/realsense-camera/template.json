@@ -1,0 +1,28 @@
+{
+    "name": "realsense-camera",
+    "description": "Live multi-stream viewer for Intel RealSense D415: Rust Axum + librealsense color + 2x IR + depth as MJPEG",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port (serves the SPA and the MJPEG endpoints)",
+            "type": "integer",
+            "default": 8007,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "RUST_VERSION",
+            "description": "Rust Docker image version",
+            "type": "string",
+            "default": "1.94",
+            "prompt": "Rust version"
+        }
+    ]
+}

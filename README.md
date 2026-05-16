@@ -40,7 +40,16 @@ Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage
 
 ### camera-feed
 
-Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), video, gpu.
+Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
+
+### realsense-camera
+
+Live Intel RealSense D415 multi-stream viewer: color, left IR, right IR, and colorized depth as MJPEG streams.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + pyrealsense2 | 8000 | `python/realsense-camera/` |
+| C++ | Drogon + librealsense | 7007 | `cpp/realsense-camera/` |
 
 ### audio
 

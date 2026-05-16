@@ -219,7 +219,7 @@ class RealSenseBridge
         if (restart)
         {
             std::lock_guard<std::mutex> lifecycle(lifecycleMutex_);
-            stopWorkerLocked(false, true);
+            stopWorkerLocked(true, true);
             return startWorkerLocked(error);
         }
         return true;
@@ -616,6 +616,18 @@ class RealSenseBridge
             std::fprintf(stderr, "%s\n", message.c_str());
             markStopped(message);
         }
+        catch (const std::exception &e)
+        {
+            std::string message = std::string("RealSense worker error: ") + e.what();
+            std::fprintf(stderr, "%s\n", message.c_str());
+            markStopped(message);
+        }
+        catch (...)
+        {
+            std::string message = "RealSense worker error: unknown exception";
+            std::fprintf(stderr, "%s\n", message.c_str());
+            markStopped(message);
+        }
 
         tjDestroy(encoder);
         try
@@ -623,6 +635,9 @@ class RealSenseBridge
             pipeline.stop();
         }
         catch (const rs2::error &)
+        {
+        }
+        catch (...)
         {
         }
 

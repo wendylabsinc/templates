@@ -175,7 +175,11 @@ private func staticResponse(for requestPath: String) throws -> Response {
         .filter { $0 != ".." && !$0.isEmpty }
         .joined(separator: "/")
     let candidate = "\(staticRoot)/\(safePath)"
-    let filePath = FileManager.default.fileExists(atPath: candidate) ? candidate : "\(staticRoot)/index.html"
+    let fallbackPath = "\(staticRoot)/index.html"
+    let filePath = FileManager.default.fileExists(atPath: candidate) ? candidate : fallbackPath
+    guard FileManager.default.fileExists(atPath: filePath) else {
+        return try jsonError("Static frontend assets are missing. Build the Vite frontend before running the server.", status: .internalServerError)
+    }
 
     let data = try Data(contentsOf: URL(fileURLWithPath: filePath))
     var buffer = ByteBuffer()
@@ -197,10 +201,31 @@ private func makeMjpegPart(frame: Frame) -> ByteBuffer {
     return buffer
 }
 
+private func frameStream(camera: RealSenseCamera, streamID: String) -> AsyncStream<Frame> {
+    AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+        let task = Task.detached(priority: .userInitiated) {
+            var lastSequence: UInt64 = 0
+            while !Task.isCancelled {
+                if let frame = camera.waitFrame(streamID: streamID, lastSequence: lastSequence, timeoutMilliseconds: 5000) {
+                    lastSequence = frame.sequence
+                    continuation.yield(frame)
+                } else {
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            continuation.finish()
+        }
+        continuation.onTermination = { @Sendable _ in
+            task.cancel()
+        }
+    }
+}
+
 @main
 struct RealSenseCameraApp {
     static func main() async throws {
-        let hostname = ProcessInfo.processInfo.environment["WENDY_HOSTNAME"] ?? "0.0.0.0"
+        let bindHostname = "0.0.0.0"
+        let displayHostname = ProcessInfo.processInfo.environment["WENDY_HOSTNAME"] ?? bindHostname
         let camera = try RealSenseCamera()
         let router = Router()
 
@@ -241,19 +266,8 @@ struct RealSenseCameraApp {
             }
 
             let body = ResponseBody { writer in
-                var lastSequence: UInt64 = 0
-                while !Task.isCancelled {
-                    let requestedSequence = lastSequence
-                    let frame = await Task.detached(priority: .userInitiated) {
-                        camera.waitFrame(streamID: streamID, lastSequence: requestedSequence, timeoutMilliseconds: 5000)
-                    }.value
-
-                    if let frame {
-                        lastSequence = frame.sequence
-                        try await writer.write(makeMjpegPart(frame: frame))
-                    } else {
-                        try? await Task.sleep(for: .milliseconds(100))
-                    }
+                for await frame in frameStream(camera: camera, streamID: streamID) {
+                    try await writer.write(makeMjpegPart(frame: frame))
                 }
                 try await writer.finish(nil)
             }
@@ -278,10 +292,10 @@ struct RealSenseCameraApp {
 
         let app = Application(
             router: router,
-            configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
+            configuration: .init(address: .hostname(bindHostname, port: {{.PORT}}))
         )
 
-        print("RealSense Swift server running on http://\(hostname):{{.PORT}}")
+        print("RealSense Swift server listening on \(bindHostname):{{.PORT}} (open http://\(displayHostname):{{.PORT}})")
         try await app.runService()
         camera.stop()
     }

@@ -1,12 +1,14 @@
-import Foundation
 import Hummingbird
+import Logging
+import OTel
+import ServiceLifecycle
 
 struct Item: Decodable {
     let name: String
     let price: Double
 }
 
-struct ItemResponse: ResponseEncodable {
+struct ItemResponse: ResponseCodable {
     let id: Int
     let name: String
     let price: Double
@@ -15,21 +17,24 @@ struct ItemResponse: ResponseEncodable {
 @main
 struct SimpleAPI {
     static func main() async throws {
-        let hostname = ProcessInfo.processInfo.environment["WENDY_HOSTNAME"] ?? "0.0.0.0"
+        let observability = try OTel.bootstrap()
+
+        let logger = Logger(label: "{{.APP_ID}}")
 
         let router = Router()
+        router.middlewares.add(TracingMiddleware())
+        router.middlewares.add(MetricsMiddleware())
+        router.middlewares.add(LogRequestsMiddleware(.info, includeHeaders: false))
 
         router.get("/") { _, _ in
-            print("Received request: GET /")
-            return ["message": "hello-world"]
+            ["message": "hello-world"]
         }
 
-        router.get("/health") { _, _ in
-            return ["status": "ok"]
+        router.get("/health") { _, _ -> HTTPResponse.Status in
+            .ok
         }
 
         router.post("/items") { request, context -> ItemResponse in
-            print("Received request: POST /items")
             let item = try await request.decode(as: Item.self, context: context)
             return ItemResponse(id: 1, name: item.name, price: item.price)
         }
@@ -39,7 +44,12 @@ struct SimpleAPI {
             configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
         )
 
-        print("Server running on http://\(hostname):{{.PORT}}")
-        try await app.runService()
+        let serviceGroup = ServiceGroup(
+            services: [observability, app],
+            gracefulShutdownSignals: [.sigterm, .sigint],
+            logger: logger
+        )
+
+        try await serviceGroup.run()
     }
 }

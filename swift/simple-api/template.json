@@ -1,6 +1,6 @@
 {
     "name": "simple-api",
-    "description": "Minimal HTTP API with Hummingbird 2.21.1",
+    "description": "Minimal HTTP API with Hummingbird and Swift OTel",
     "variables": [
         {
             "name": "APP_ID",

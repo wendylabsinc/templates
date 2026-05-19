@@ -10,6 +10,8 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.21.1", traits: []),
         .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
+        .package(url: "https://github.com/swift-otel/swift-otel.git", from: "1.0.0", traits: ["OTLPHTTP"]),
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
         .package(url: "https://github.com/wendylabsinc/gstreamer-swift.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-container-plugin.git", from: "1.0.0"),
     ],
@@ -19,6 +21,8 @@ let package = Package(
             dependencies: [
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
+                .product(name: "OTel", package: "swift-otel"),
+                .product(name: "GRDB", package: "GRDB.swift"),
             ]
         ),
     ]

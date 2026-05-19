@@ -1,3 +1,8 @@
+#if canImport(FoundationEssentials)
+internal import FoundationEssentials
+#else
+internal import Foundation
+#endif
 import Hummingbird
 import HummingbirdWebSocket
 import Logging

@@ -53,11 +53,12 @@ RUN git clone --depth 1 --branch "${LLAMA_CPP_REF}" https://github.com/ggml-org/
         -DCMAKE_BUILD_TYPE=Release \
         -DGGML_NATIVE=OFF \
         -DGGML_CUDA=ON \
-        -DGGML_CUDA_FA_ALL_QUANTS=ON \
         -DLLAMA_CURL=ON \
         -DLLAMA_BUILD_TESTS=OFF \
     && cmake --build /opt/llama.cpp/build -j"$(nproc)" --target llama-server \
-    && cmake --install /opt/llama.cpp/build --prefix /usr/local \
+    && install -m 0755 /opt/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server \
+    && cp -a /opt/llama.cpp/build/bin/lib*.so* /usr/local/lib/ \
+    && ldconfig \
     && llama-server --help >/dev/null \
     && rm -rf /opt/llama.cpp
 

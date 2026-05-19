@@ -1,8 +1,4 @@
-#if canImport(FoundationEssentials)
-internal import FoundationEssentials
-#else
 internal import Foundation
-#endif
 import Hummingbird
 import NIOCore
 
@@ -38,7 +34,7 @@ func contentType(for path: String) -> String {
 
 func spaHandler<C: RequestContext>(staticDir: String) -> @Sendable (Request, C) async throws -> Response {
     { request, _ in
-        let reqPath = request.uri.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let reqPath = String(request.uri.path.drop(while: { $0 == "/" }))
         let fileURL = URL(filePath: staticDir).appending(path: reqPath)
 
         if (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,

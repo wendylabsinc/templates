@@ -21,6 +21,9 @@ let package = Package(
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
                 .product(name: "OTel", package: "swift-otel"),
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
             ]
         ),
     ]

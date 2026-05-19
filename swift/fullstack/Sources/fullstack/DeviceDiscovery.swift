@@ -1,8 +1,4 @@
-#if canImport(FoundationEssentials)
-internal import FoundationEssentials
-#else
 internal import Foundation
-#endif
 
 struct DeviceInfo: Codable, Sendable {
     let id: String

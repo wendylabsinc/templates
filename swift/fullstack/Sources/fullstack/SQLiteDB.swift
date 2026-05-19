@@ -1,8 +1,4 @@
-#if canImport(FoundationEssentials)
-internal import FoundationEssentials
-#else
 internal import Foundation
-#endif
 
 #if canImport(SQLite3)
 import SQLite3
@@ -57,8 +53,11 @@ let SQLITE_DONE: Int32     = 101
 let SQLITE_INTEGER: Int32  = 1
 let SQLITE_TEXT: Int32     = 3
 let SQLITE_NULL: Int32     = 5
-nonisolated(unsafe) let SQLITE_TRANSIENT = unsafeBitCast(-1, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
 #endif
+
+// SQLITE_TRANSIENT is a C function-pointer macro that Swift does not import automatically,
+// so we define it unconditionally regardless of which SQLite module is available.
+nonisolated(unsafe) let SQLITE_TRANSIENT = unsafeBitCast(-1, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
 
 final class SQLiteDB: @unchecked Sendable {
     private let db: OpaquePointer?

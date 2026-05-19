@@ -1,8 +1,4 @@
-#if canImport(FoundationEssentials)
-internal import FoundationEssentials
-#else
 internal import Foundation
-#endif
 
 struct SystemInfo: Codable, Sendable {
     let hostname: String

@@ -93,6 +93,12 @@ ENV PATH="/app/venv/bin:${PATH}" \
 COPY requirements.txt .
 RUN pip install --no-cache-dir --index-url https://pypi.org/simple -r requirements.txt
 
+ARG PRELOAD_NANO_MODEL=true
+RUN if [ "$PRELOAD_NANO_MODEL" = "true" ]; then \
+        mkdir -p /opt/wendy/models; \
+        python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='ggml-org/gemma-4-E2B-it-GGUF', filename='gemma-4-E2B-it-Q8_0.gguf', local_dir='/opt/wendy/models')"; \
+    fi
+
 COPY server/ ./server/
 COPY --from=frontend /frontend/dist ./static
 
@@ -116,7 +122,9 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
     LLAMA_CONTEXT_SIZE={{.LLAMA_CONTEXT_SIZE}} \
     LLAMA_GPU_LAYERS={{.LLAMA_GPU_LAYERS}} \
     LLAMA_THREADS={{.LLAMA_THREADS}} \
+    LLAMA_REASONING={{.LLAMA_REASONING}} \
     LLAMA_CACHE=/models/llama.cpp \
+    PRELOADED_GEMMA_MODEL_PATH=/opt/wendy/models/gemma-4-E2B-it-Q8_0.gguf \
     HF_HOME=/models/huggingface \
     HF_HUB_CACHE=/models/huggingface/hub \
     PYTHONUNBUFFERED=1

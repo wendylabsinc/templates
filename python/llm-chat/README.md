@@ -25,7 +25,12 @@ wendy init \
   --git-init no
 ```
 
-Override at runtime by setting `GEMMA_MODEL` to any llama.cpp `-hf` spec, for
-example `ggml-org/gemma-4-E4B-it-GGUF:Q4_K_M`.
+Override at runtime by setting `GEMMA_MODEL` to any Hugging Face GGUF repo
+selector, for example `ggml-org/gemma-4-E4B-it-GGUF:Q4_K_M`, or set
+`LLAMA_MODEL_PATH` to a local `.gguf` file.
 
 Model downloads are cached under the `/models` persist volume.
+The Docker image preloads the Nano GGUF by default so USB-C/link-local device
+deploys do not depend on outbound Hugging Face access from the device.
+`LLAMA_REASONING=off` is the default so Gemma 4 returns chat text instead of
+spending the response budget in `reasoning_content`.

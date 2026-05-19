@@ -19,7 +19,7 @@
         },
         {
             "name": "GEMMA_MODEL",
-            "description": "Gemma 4 model preset or llama.cpp -hf spec. Use auto, nano, orin, agx-orin, thor, or a full HF GGUF spec.",
+            "description": "Gemma 4 model preset or Hugging Face GGUF selector. Use auto, nano, orin, agx-orin, thor, or repo:quant.",
             "type": "string",
             "default": "auto",
             "prompt": "Gemma model"
@@ -47,6 +47,13 @@
             "default": 6,
             "prompt": "CPU threads",
             "validate": { "min": 1, "max": 256 }
+        },
+        {
+            "name": "LLAMA_REASONING",
+            "description": "llama.cpp reasoning mode. Use off for chat UI responses or on to expose Gemma 4 thinking.",
+            "type": "string",
+            "default": "off",
+            "prompt": "Reasoning mode"
         }
     ]
 }

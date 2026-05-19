@@ -103,7 +103,8 @@ struct App {
 
         wsRouter.ws("api/camera/stream") { inbound, outbound, _ in
             final class ConnectionID: Sendable {}
-            let id = ObjectIdentifier(ConnectionID())
+            let connID = ConnectionID()
+            let id = ObjectIdentifier(connID)
 
             await camera.subscribe(id: id) { frame in
                 var buffer = ByteBuffer()
@@ -121,11 +122,13 @@ struct App {
             }
 
             await camera.unsubscribe(id: id)
+            _ = connID
         }
 
         wsRouter.ws("api/audio/stream") { inbound, outbound, _ in
             final class ConnectionID: Sendable {}
-            let id = ObjectIdentifier(ConnectionID())
+            let connID = ConnectionID()
+            let id = ObjectIdentifier(connID)
 
             await audio.subscribe(id: id) { chunk in
                 var buffer = ByteBufferAllocator().buffer(capacity: chunk.count)
@@ -143,6 +146,7 @@ struct App {
             }
 
             await audio.unsubscribe(id: id)
+            _ = connID
         }
 
         // MARK: - Start

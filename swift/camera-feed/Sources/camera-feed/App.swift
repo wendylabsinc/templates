@@ -58,6 +58,7 @@ struct App {
             }
 
             await camera.unsubscribe(id: id)
+            _ = connID
         }
 
         router.get("/", use: spaHandler(staticDir: "."))

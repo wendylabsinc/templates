@@ -33,9 +33,14 @@ func contentType(for path: String) -> String {
 }
 
 func spaHandler<C: RequestContext>(staticDir: String) -> @Sendable (Request, C) async throws -> Response {
-    { request, _ in
+    let resolvedRoot = URL(filePath: staticDir).standardized.path()
+    return { request, _ in
         let reqPath = String(request.uri.path.drop(while: { $0 == "/" }))
-        let fileURL = URL(filePath: staticDir).appending(path: reqPath)
+        let fileURL = URL(filePath: staticDir).appending(path: reqPath).standardized
+
+        guard fileURL.path().hasPrefix(resolvedRoot) else {
+            return Response(status: .notFound, body: .init(byteBuffer: .init(string: "Not Found")))
+        }
 
         if (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true,
            let data = try? Data(contentsOf: fileURL)

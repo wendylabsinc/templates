@@ -32,7 +32,6 @@ RUN git clone --depth 1 --branch "${LLAMA_CPP_REF}" https://github.com/ggml-org/
         -DLLAMA_BUILD_TESTS=OFF \
     && cmake --build /opt/llama.cpp/build -j"$(nproc)" --target llama-server \
     && cmake --install /opt/llama.cpp/build --prefix /usr/local \
-    && llama-server --help >/dev/null \
     && rm -rf /opt/llama.cpp
 
 # Stage 2b - Jetson CUDA llama.cpp runtime.
@@ -59,7 +58,6 @@ RUN git clone --depth 1 --branch "${LLAMA_CPP_REF}" https://github.com/ggml-org/
     && install -m 0755 /opt/llama.cpp/build/bin/llama-server /usr/local/bin/llama-server \
     && cp -a /opt/llama.cpp/build/bin/lib*.so* /usr/local/lib/ \
     && ldconfig \
-    && llama-server --help >/dev/null \
     && rm -rf /opt/llama.cpp
 
 # Stage 3 - Wendy app runtime.

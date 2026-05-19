@@ -15,7 +15,16 @@ RUN npm run build
 # Stage 2a - CPU llama.cpp runtime for generic Linux hosts.
 FROM python:3.11-slim-bookworm AS base-generic
 ARG LLAMA_CPP_REF
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    apt_update() { apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o APT::Update::Error-Mode=any; }; \
+    apt_update || { \
+        sed -i \
+            -e 's|http://ports.ubuntu.com/ubuntu-ports|https://mirror.csclub.uwaterloo.ca/ubuntu-ports|g' \
+            -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirror.csclub.uwaterloo.ca/ubuntu-ports|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+        apt_update; \
+    }; \
+    apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         cmake \
@@ -37,7 +46,16 @@ RUN git clone --depth 1 --branch "${LLAMA_CPP_REF}" https://github.com/ggml-org/
 # Stage 2b - Jetson CUDA llama.cpp runtime.
 FROM dustynv/pytorch:2.7-r36.4.0-cu128-24.04 AS base-nvidia-jetson
 ARG LLAMA_CPP_REF
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    apt_update() { apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=20 -o APT::Update::Error-Mode=any; }; \
+    apt_update || { \
+        sed -i \
+            -e 's|http://ports.ubuntu.com/ubuntu-ports|https://mirror.csclub.uwaterloo.ca/ubuntu-ports|g' \
+            -e 's|https://ports.ubuntu.com/ubuntu-ports|https://mirror.csclub.uwaterloo.ca/ubuntu-ports|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true; \
+        apt_update; \
+    }; \
+    apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         cmake \

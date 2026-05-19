@@ -71,6 +71,18 @@ Always-on voice AI assistant: local [faster-whisper](https://github.com/SYSTRAN/
 
 The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into the Python template directory.
 
+### llm-chat
+
+Local chat UI backed by llama.cpp and Gemma 4 GGUF models. The backend launches
+`llama-server`, exposes `/api/chat` and `/api/status`, and caches model downloads
+under the `/models` persist volume. `GEMMA_MODEL=auto` selects Gemma 4 E2B for
+Orin Nano class memory, Gemma 4 E4B for mid-memory Orin devices, and Gemma 4
+26B A4B for AGX Orin 64GB or Thor class devices.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + llama.cpp + React | 3010 | `python/llm-chat/` |
+
 ### common
 
 Shared building blocks (not selectable as templates):
@@ -80,6 +92,7 @@ Shared building blocks (not selectable as templates):
 - `audio-feed-html/` — Audio waveform visualizer HTML page
 - `realsense-camera-frontend/` — React + Vite viewer for the `realsense-camera` template (color + IR + depth streams)
 - `voice-ai-pipecat-frontend/` — React + Three.js visualizer for the `voice-ai-pipecat` template (blue mic lines + emerald bot lines)
+- `llm-chat/` — React + Vite chat UI used by the `llm-chat` template
 
 ---
 

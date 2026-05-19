@@ -40,6 +40,11 @@
             "languages": ["python"]
         },
         {
+            "name": "llm-chat",
+            "description": "Local Gemma 4 chat UI backed by llama.cpp",
+            "languages": ["python"]
+        },
+        {
             "name": "camera-feed-yolo",
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },

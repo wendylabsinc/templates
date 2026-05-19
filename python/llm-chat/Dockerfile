@@ -69,10 +69,11 @@ FROM base-nvidia-jetson AS final
 WORKDIR /app
 
 RUN python3 -m venv --system-site-packages /app/venv
-ENV PATH="/app/venv/bin:${PATH}"
+ENV PATH="/app/venv/bin:${PATH}" \
+    PIP_CONFIG_FILE=/dev/null
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --index-url https://pypi.org/simple -r requirements.txt
 
 COPY server/ ./server/
 COPY --from=frontend /frontend/dist ./static
@@ -102,7 +103,7 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
     HF_HUB_CACHE=/models/huggingface/hub \
     PYTHONUNBUFFERED=1
 
-RUN if [ "$WENDY_DEBUG" = "true" ]; then pip install --no-cache-dir debugpy; fi
+RUN if [ "$WENDY_DEBUG" = "true" ]; then pip install --no-cache-dir --index-url https://pypi.org/simple debugpy; fi
 
 EXPOSE {{.PORT}}
 

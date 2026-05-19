@@ -8,13 +8,7 @@
         },
         {
             "name": "hello-world",
-            "description": "Make an HTTPS request from a Wendy Lite device",
-            "targets": ["wendy-lite"],
-            "languages": ["swift"]
-        },
-        {
-            "name": "mini",
-            "description": "Minimal Wendy Lite application",
+            "description": "Say 'Hello, World'",
             "targets": ["wendy-lite"],
             "languages": ["swift"]
         },

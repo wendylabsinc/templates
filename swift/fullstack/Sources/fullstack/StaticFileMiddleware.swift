@@ -36,7 +36,7 @@ func contentType(for path: String) -> String {
     }
 }
 
-func spaHandler(staticDir: String) -> @Sendable (Request, Context) async throws -> Response {
+func spaHandler<C: RequestContext>(staticDir: String) -> @Sendable (Request, C) async throws -> Response {
     { request, _ in
         let reqPath = request.uri.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         let fileURL = URL(filePath: staticDir).appending(path: reqPath)

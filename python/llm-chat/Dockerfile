@@ -6,7 +6,9 @@ ARG LLAMA_CPP_REF=b8746
 FROM node:22-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
-RUN npm ci
+# Use npm install instead of npm ci because the checked-in lockfile can be
+# missing platform-specific optional packages required by Linux arm64 builds.
+RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 
@@ -60,7 +62,11 @@ RUN git clone --depth 1 --branch "${LLAMA_CPP_REF}" https://github.com/ggml-org/
     && rm -rf /opt/llama.cpp
 
 # Stage 3 - Wendy app runtime.
-FROM base-${WENDY_PLATFORM} AS final
+#
+# Wendy currently reports this Jetson Orin Nano as WENDY_PLATFORM=generic while
+# still passing the Jetson device type and NVIDIA GPU metadata. Select the
+# Jetson CUDA base directly so the template remains GPU-capable on Orin/Thor.
+FROM base-nvidia-jetson AS final
 WORKDIR /app
 
 RUN python3 -m venv --system-site-packages /app/venv

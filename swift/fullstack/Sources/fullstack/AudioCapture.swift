@@ -2,17 +2,17 @@ internal import Foundation
 import Logging
 
 actor AudioCapture {
-    private var subscribers: [ObjectIdentifier: @Sendable (Data) async -> Void] = [:]
+    private var subscribers: [UUID: @Sendable (Data) async -> Void] = [:]
     private var pipelineTask: Task<Void, any Error>?
     private var currentDevice: String?
     private let logger = Logger(label: "AudioCapture")
 
-    func subscribe(id: ObjectIdentifier, handler: @escaping @Sendable (Data) async -> Void) {
+    func subscribe(id: UUID, handler: @escaping @Sendable (Data) async -> Void) {
         subscribers[id] = handler
         if subscribers.count == 1 { startPipeline() }
     }
 
-    func unsubscribe(id: ObjectIdentifier) {
+    func unsubscribe(id: UUID) {
         subscribers.removeValue(forKey: id)
         if subscribers.isEmpty { stopPipeline() }
     }
@@ -73,16 +73,19 @@ actor AudioCapture {
         try process.run()
 
         let handle = pipe.fileHandleForReading
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        handle.readabilityHandler = { fh in
+            let data = fh.availableData
+            if data.isEmpty { continuation.finish() } else { continuation.yield(data) }
+        }
+        defer { handle.readabilityHandler = nil }
 
         await withTaskCancellationHandler {
-            while !Task.isCancelled {
-                let chunk = handle.availableData
-                if chunk.isEmpty { break }
-                await self.broadcast(chunk)
-            }
+            for await chunk in stream { await self.broadcast(chunk) }
             process.terminate()
         } onCancel: {
             process.terminate()
+            continuation.finish()
         }
     }
 }

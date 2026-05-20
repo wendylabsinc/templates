@@ -38,13 +38,10 @@ struct App {
 
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)
         wsRouter.ws("/stream") { inbound, outbound, _ in
-            final class ConnectionID: Sendable {}
-            let connID = ConnectionID()
-            let id = ObjectIdentifier(connID)
+            let id = UUID()
 
             await camera.subscribe(id: id) { frame in
-                var buffer = ByteBufferAllocator().buffer(capacity: frame.count)
-                buffer.writeBytes(frame)
+                var buffer = ByteBuffer(bytes: frame)
                 try? await outbound.write(.binary(buffer))
             }
 
@@ -58,7 +55,6 @@ struct App {
             }
 
             await camera.unsubscribe(id: id)
-            _ = connID
         }
 
         router.get("/", use: spaHandler(staticDir: "."))

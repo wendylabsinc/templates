@@ -4,16 +4,13 @@ struct JPEGFrameParser: Sendable {
     private var buffer = Data()
 
     mutating func append(_ data: Data) -> [Data] {
+        if buffer.count + data.count > 10_000_000 { buffer.removeAll() }
         buffer.append(data)
         var frames: [Data] = []
 
         while let range = findFrame() {
             frames.append(Data(buffer[range]))
             buffer.removeSubrange(buffer.startIndex...range.upperBound)
-        }
-
-        if buffer.count > 10_000_000 {
-            buffer.removeAll()
         }
 
         return frames

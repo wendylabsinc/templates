@@ -1,43 +1,28 @@
-import Foundation
+internal import Foundation
 import GStreamer
 import Hummingbird
 import HummingbirdWebSocket
 
-struct AudioDevice: Codable {
+struct AudioDevice: ResponseCodable {
     let id: String
     let name: String
 }
 
-struct SoundFile: Codable {
+struct SoundFile: ResponseCodable {
     let name: String
     let file: String
 }
 
-struct StatusResponse: Codable {
+struct StatusResponse: ResponseCodable {
     let status: String
     let speaker: String?
     let file: String?
 }
 
-struct ErrorResponse: Codable {
-    let error: String
-}
-
-final class SpeakerSelection: @unchecked Sendable {
-    private let lock = NSLock()
+actor SpeakerSelection {
     private var deviceID: String?
-
-    func set(_ deviceID: String) {
-        lock.lock()
-        self.deviceID = deviceID
-        lock.unlock()
-    }
-
-    func get() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return deviceID
-    }
+    func set(_ deviceID: String) { self.deviceID = deviceID }
+    func get() -> String? { deviceID }
 }
 
 // MARK: - AudioCapture Actor
@@ -45,7 +30,7 @@ final class SpeakerSelection: @unchecked Sendable {
 actor AudioCapture {
     private var source: AudioSource?
     private var captureTask: Task<Void, Never>?
-    private var clients: [UUID: @Sendable (ByteBuffer) -> Void] = [:]
+    private var clients: [UUID: @Sendable (ByteBuffer) async -> Void] = [:]
     private var currentDevice: String?
 
     func start() {
@@ -66,14 +51,14 @@ actor AudioCapture {
                 .build()
             self.source = source
 
-            captureTask = Task { [weak self] in
+            captureTask = Task {
                 for await buffer in source.buffers() {
                     var chunk = ByteBuffer()
                     _ = buffer.bytes.withUnsafeBytes { raw in
                         chunk.writeBytes(raw)
                     }
                     guard chunk.readableBytes > 0 else { continue }
-                    await self?.broadcast(chunk)
+                    await self.broadcast(chunk)
                 }
             }
 
@@ -84,22 +69,22 @@ actor AudioCapture {
         }
     }
 
-    func stop() {
+    func stop() async {
         captureTask?.cancel()
         captureTask = nil
         if let source {
-            Task.detached { await source.stop() }
+            await source.stop()
         }
         source = nil
     }
 
-    func switchMicrophone(to deviceID: String) {
+    func switchMicrophone(to deviceID: String) async {
         currentDevice = deviceID
-        stop()
+        await stop()
         start()
     }
 
-    func addClient(id: UUID, send: @escaping @Sendable (ByteBuffer) -> Void) {
+    func addClient(id: UUID, send: @escaping @Sendable (ByteBuffer) async -> Void) {
         clients[id] = send
     }
 
@@ -107,50 +92,35 @@ actor AudioCapture {
         clients.removeValue(forKey: id)
     }
 
-    private func broadcast(_ buffer: ByteBuffer) {
-        for (_, send) in clients {
-            send(buffer)
+    private func broadcast(_ buffer: ByteBuffer) async {
+        await withTaskGroup(of: Void.self) { group in
+            for (_, send) in clients {
+                group.addTask { await send(buffer) }
+            }
         }
     }
 }
 
-// MARK: - Helpers
+// MARK: - Playback
 
-func contentType(for path: String) -> String {
-    if path.hasSuffix(".html") { return "text/html; charset=utf-8" }
-    if path.hasSuffix(".css") { return "text/css; charset=utf-8" }
-    if path.hasSuffix(".js") { return "application/javascript; charset=utf-8" }
-    if path.hasSuffix(".json") { return "application/json" }
-    if path.hasSuffix(".png") { return "image/png" }
-    if path.hasSuffix(".jpg") || path.hasSuffix(".jpeg") { return "image/jpeg" }
-    if path.hasSuffix(".svg") { return "image/svg+xml" }
-    if path.hasSuffix(".wav") { return "audio/wav" }
-    if path.hasSuffix(".mp3") { return "audio/mpeg" }
-    if path.hasSuffix(".ogg") { return "audio/ogg" }
-    if path.hasSuffix(".ico") { return "image/x-icon" }
-    return "application/octet-stream"
-}
+actor PlaybackManager {
+    private var task: Task<Void, Never>?
 
-func jsonResponse<T: Encodable>(_ value: T) -> Response {
-    let data = try! JSONEncoder().encode(value)
-    var buffer = ByteBuffer()
-    buffer.writeBytes(data)
-    return Response(
-        status: .ok,
-        headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: buffer)
-    )
-}
+    func play(pipeline: Pipeline) {
+        task?.cancel()
+        task = Task {
+            for await message in pipeline.bus.messages(filter: [.eos, .error]) {
+                if case .eos = message { break }
+                if case .error = message { break }
+            }
+            pipeline.stop()
+        }
+    }
 
-func jsonError(_ message: String, status: HTTPResponse.Status) -> Response {
-    let data = try! JSONEncoder().encode(ErrorResponse(error: message))
-    var buffer = ByteBuffer()
-    buffer.writeBytes(data)
-    return Response(
-        status: status,
-        headers: [.contentType: "application/json"],
-        body: .init(byteBuffer: buffer)
-    )
+    func stop() {
+        task?.cancel()
+        task = nil
+    }
 }
 
 func displayName(for file: String) -> String {
@@ -188,7 +158,7 @@ func listSounds() -> [SoundFile] {
 
 func parseAudioDevices(_ executable: String) -> [AudioDevice] {
     let proc = Process()
-    proc.executableURL = URL(fileURLWithPath: "/usr/bin/\(executable)")
+    proc.executableURL = URL(filePath: "/usr/bin/\(executable)")
     proc.arguments = ["-l"]
     proc.standardError = FileHandle.nullDevice
 
@@ -267,134 +237,77 @@ func resolveSoundPath(_ filename: String) -> String? {
     return FileManager.default.fileExists(atPath: path) ? path : nil
 }
 
-func playSound(filename: String, speaker: String?) -> Bool {
-    guard let path = resolveSoundPath(filename) else {
-        return false
-    }
-
+func playSound(filename: String, speaker: String?, playback: PlaybackManager) async -> Bool {
+    guard let path = resolveSoundPath(filename) else { return false }
     let sink = speaker.map { "alsasink device=\($0)" } ?? "autoaudiosink"
     let description =
-        "filesrc location=\(path) ! wavparse ! audioconvert ! audioresample ! \(sink)"
-
+        "filesrc location=\"\(path)\" ! wavparse ! audioconvert ! audioresample ! \(sink)"
     do {
         let pipeline = try Pipeline(description)
         try pipeline.play()
-        Task.detached {
-            for await message in pipeline.bus.messages(filter: [.eos, .error]) {
-                if case .eos = message { break }
-                if case .error = message { break }
-            }
-            pipeline.stop()
-        }
+        await playback.play(pipeline: pipeline)
         return true
     } catch {
         return false
     }
 }
 
+private struct SwitchMicrophoneMessage: Decodable {
+    let switch_microphone: String
+}
+
 func handleWebSocketText(_ text: String, audioCapture: AudioCapture) async {
     guard let data = text.data(using: .utf8),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let deviceID = json["switch_microphone"] as? String else {
-        return
-    }
-
-    await audioCapture.switchMicrophone(to: deviceID)
+          let msg = try? JSONDecoder().decode(SwitchMicrophoneMessage.self, from: data)
+    else { return }
+    await audioCapture.switchMicrophone(to: msg.switch_microphone)
 }
 
 // MARK: - Main
 
 let audioCapture = AudioCapture()
 let speakerSelection = SpeakerSelection()
+let playbackManager = PlaybackManager()
 await audioCapture.start()
 
 let router = Router()
 
-// GET / - serve index.html
-router.get("/") { _, _ -> Response in
-    let path = "./index.html"
-    guard let data = FileManager.default.contents(atPath: path) else {
-        return Response(status: .notFound, body: .init(byteBuffer: ByteBuffer(string: "Not found")))
-    }
-    var buffer = ByteBuffer()
-    buffer.writeBytes(data)
-    return Response(
-        status: .ok,
-        headers: [.contentType: "text/html; charset=utf-8"],
-        body: .init(byteBuffer: buffer)
-    )
-}
+router.get("/sounds") { _, _ in listSounds() }
+router.get("/microphones") { _, _ in parseAudioDevices("arecord") }
+router.get("/speakers") { _, _ in parseAudioDevices("aplay") }
 
-// GET /sounds - list .wav files in ./assets
-router.get("/sounds") { _, _ -> Response in
-    jsonResponse(listSounds())
-}
-
-// GET /microphones - list ALSA capture devices
-router.get("/microphones") { _, _ -> Response in
-    jsonResponse(parseAudioDevices("arecord"))
-}
-
-// GET /speakers - list ALSA playback devices
-router.get("/speakers") { _, _ -> Response in
-    jsonResponse(parseAudioDevices("aplay"))
-}
-
-// POST /speaker/{deviceID} - set active playback device
-router.post("/speaker/{deviceID}") { _, context -> Response in
+router.post("/speaker/{deviceID}") { _, context -> StatusResponse in
     guard let deviceID = context.parameters.get("deviceID") else {
-        return jsonError("missing speaker", status: .badRequest)
+        throw HTTPError(.badRequest, message: "missing speaker")
     }
-    speakerSelection.set(deviceID)
-    return jsonResponse(StatusResponse(status: "ok", speaker: deviceID, file: nil))
+    await speakerSelection.set(deviceID)
+    return StatusResponse(status: "ok", speaker: deviceID, file: nil)
 }
 
-// POST /play/{filename} - play a bundled .wav file
-router.post("/play/{filename}") { _, context -> Response in
+router.post("/play/{filename}") { _, context -> StatusResponse in
     guard let filename = context.parameters.get("filename") else {
-        return jsonError("not found", status: .notFound)
+        throw HTTPError(.notFound, message: "not found")
     }
-
-    guard playSound(filename: filename, speaker: speakerSelection.get()) else {
-        return jsonError("not found", status: .notFound)
+    guard await playSound(filename: filename, speaker: speakerSelection.get(), playback: playbackManager) else {
+        throw HTTPError(.notFound, message: "not found")
     }
-
-    return jsonResponse(StatusResponse(status: "playing", speaker: nil, file: filename))
+    return StatusResponse(status: "playing", speaker: nil, file: filename)
 }
 
-// GET /assets/* - serve static files
-router.get("/assets/{filepath}") { _, context -> Response in
-    let filepath = context.parameters.get("filepath") ?? ""
-    let fullPath = "./assets/\(filepath)"
-    guard let data = FileManager.default.contents(atPath: fullPath) else {
-        return Response(status: .notFound, body: .init(byteBuffer: ByteBuffer(string: "Not found")))
-    }
-    var buffer = ByteBuffer()
-    buffer.writeBytes(data)
-    let ct = contentType(for: filepath)
-    return Response(
-        status: .ok,
-        headers: [.contentType: ct],
-        body: .init(byteBuffer: buffer)
-    )
-}
+router.get("/", use: spaHandler(staticDir: "."))
+router.get("{path+}", use: spaHandler(staticDir: "."))
 
-// WebSocket /stream - send binary PCM data to clients
 let wsRouter = Router(context: BasicWebSocketRequestContext.self)
 wsRouter.ws("/stream") { inbound, outbound, _ in
     let clientId = UUID()
     print("[WebSocket] Client connected: \(clientId)")
 
     await audioCapture.addClient(id: clientId) { buffer in
-        Task {
-            try? await outbound.write(.binary(buffer))
-        }
+        try? await outbound.write(.binary(buffer))
     }
 
     for try await input in inbound.messages(maxSize: 1_000_000) {
-        guard case .text(let text) = input else {
-            continue
-        }
+        guard case .text(let text) = input else { continue }
         await handleWebSocketText(text, audioCapture: audioCapture)
     }
 
@@ -405,11 +318,14 @@ wsRouter.ws("/stream") { inbound, outbound, _ in
 let app = Application(
     router: router,
     server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
-    configuration: .init(
-        address: .hostname("0.0.0.0", port: {{.PORT}})
-    )
+    configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
 )
 
 print("[Audio] Server starting on port {{.PORT}}")
-try await app.run()
+do {
+    try await app.run()
+} catch {
+    await audioCapture.stop()
+    throw error
+}
 await audioCapture.stop()

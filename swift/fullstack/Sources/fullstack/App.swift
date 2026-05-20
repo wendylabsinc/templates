@@ -90,8 +90,8 @@ struct App {
         // MARK: Device Endpoints
 
         router.get("api/cameras") { _, _ in try jsonResponse(listCameras(), status: .ok) }
-        router.get("api/microphones") { _, _ in try jsonResponse(listAlsaDevices(command: "arecord -l"), status: .ok) }
-        router.get("api/speakers") { _, _ in try jsonResponse(listAlsaDevices(command: "aplay -l"), status: .ok) }
+        router.get("api/microphones") { _, _ in try jsonResponse(listAlsaDevices(args: ["arecord", "-l"]), status: .ok) }
+        router.get("api/speakers") { _, _ in try jsonResponse(listAlsaDevices(args: ["aplay", "-l"]), status: .ok) }
         router.get("api/gpu") { _, _ in try jsonResponse(gpuInfo(), status: .ok) }
         router.get("api/system") { _, _ in try jsonResponse(systemInfo(), status: .ok) }
 
@@ -102,13 +102,10 @@ struct App {
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)
 
         wsRouter.ws("api/camera/stream") { inbound, outbound, _ in
-            final class ConnectionID: Sendable {}
-            let connID = ConnectionID()
-            let id = ObjectIdentifier(connID)
+            let id = UUID()
 
             await camera.subscribe(id: id) { frame in
-                var buffer = ByteBuffer()
-                buffer.writeBytes(frame)
+                let buffer = ByteBuffer(bytes: frame)
                 try? await outbound.write(.binary(buffer))
             }
 
@@ -122,17 +119,13 @@ struct App {
             }
 
             await camera.unsubscribe(id: id)
-            _ = connID
         }
 
         wsRouter.ws("api/audio/stream") { inbound, outbound, _ in
-            final class ConnectionID: Sendable {}
-            let connID = ConnectionID()
-            let id = ObjectIdentifier(connID)
+            let id = UUID()
 
             await audio.subscribe(id: id) { chunk in
-                var buffer = ByteBufferAllocator().buffer(capacity: chunk.count)
-                buffer.writeBytes(chunk)
+                let buffer = ByteBuffer(bytes: chunk)
                 try? await outbound.write(.binary(buffer))
             }
 
@@ -146,7 +139,6 @@ struct App {
             }
 
             await audio.unsubscribe(id: id)
-            _ = connID
         }
 
         // MARK: - Start

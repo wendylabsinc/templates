@@ -7,6 +7,9 @@ struct DeviceInfo: Codable, Sendable {
 
 func shell(_ args: [String]) -> String? {
     let process = Process()
+    // /usr/bin/env resolves the binary via PATH, which is sufficient for the
+    // target embedded Linux environments (Raspberry Pi, Jetson) where these
+    // tools (v4l2-ctl, arecord, aplay) are installed in standard PATH locations.
     process.executableURL = URL(filePath: "/usr/bin/env")
     process.arguments = args
     let pipe = Pipe()
@@ -47,16 +50,46 @@ func listCameras() -> [DeviceInfo] {
     return cameras
 }
 
-func listAlsaDevices(command: String) -> [DeviceInfo] {
-    guard let output = shell(command.components(separatedBy: " ")) else { return [] }
+func listAlsaDevices(args: [String]) -> [DeviceInfo] {
+    guard let output = shell(args) else { return [] }
+    var seen = Set<String>()
     var devices: [DeviceInfo] = []
     for line in output.components(separatedBy: "\n") {
         guard line.hasPrefix("card ") else { continue }
-        let parts = line.components(separatedBy: ":")
-        guard parts.count >= 2 else { continue }
-        let cardNum = line.components(separatedBy: " ")[1].replacingOccurrences(of: ":", with: "")
-        let name = parts[1].components(separatedBy: "[")[0].trimmingCharacters(in: .whitespaces)
-        devices.append(DeviceInfo(id: "hw:\(cardNum),0", name: name))
+        guard let deviceRange = line.range(of: ", device ") else { continue }
+        let cardPortion = line[..<deviceRange.lowerBound]
+        let devicePortion = line[deviceRange.upperBound...]
+
+        let cardSplit = cardPortion.split(separator: ":", maxSplits: 1)
+        guard cardSplit.count == 2 else { continue }
+        let cardWords = cardSplit[0].split(separator: " ")
+        guard cardWords.count >= 2 else { continue }
+        let cardNum = String(cardWords[1])
+
+        let deviceSplit = devicePortion.split(separator: ":", maxSplits: 1)
+        guard deviceSplit.count == 2 else { continue }
+        let deviceNum = deviceSplit[0].trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let id = "hw:\(cardNum),\(deviceNum)"
+        guard seen.insert(id).inserted else { continue }
+
+        let cardName = cardSplit[1]
+            .split(separator: "[", maxSplits: 1)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+        let deviceName = deviceSplit[1]
+            .split(separator: "[", maxSplits: 1)
+            .first
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+
+        let displayName: String
+        if !cardName.isEmpty && !deviceName.isEmpty {
+            displayName = "\(cardName) - \(deviceName)"
+        } else {
+            displayName = cardName.isEmpty ? deviceName : cardName
+        }
+
+        devices.append(DeviceInfo(id: id, name: displayName.isEmpty ? id : displayName))
     }
     return devices
 }

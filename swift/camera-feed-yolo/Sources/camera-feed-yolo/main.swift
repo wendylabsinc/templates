@@ -23,6 +23,7 @@ private let kCocoNames: [String] = [
     "clock","vase","scissors","teddy bear","hair drier","toothbrush",
 ]
 
+
 private func envTruthy(_ name: String) -> Bool {
     let v = (ProcessInfo.processInfo.environment[name] ?? "").lowercased()
     return v == "true" || v == "1" || v == "yes"
@@ -54,13 +55,22 @@ struct Box: Codable, Sendable {
 
 struct Meta: Codable, Sendable {
     var detections: Int
-    var inference_ms: Double
+    var inferenceMs: Double
     var classes: [String: Int]
     var boxes: [Box]
-    var frame_w: Int
-    var frame_h: Int
+    var frameW: Int
+    var frameH: Int
 
-    static let empty = Meta(detections: 0, inference_ms: 0, classes: [:], boxes: [], frame_w: 0, frame_h: 0)
+    enum CodingKeys: String, CodingKey {
+        case detections
+        case inferenceMs = "inference_ms"
+        case classes
+        case boxes
+        case frameW = "frame_w"
+        case frameH = "frame_h"
+    }
+
+    static let empty = Meta(detections: 0, inferenceMs: 0, classes: [:], boxes: [], frameW: 0, frameH: 0)
 }
 
 private func iou(_ a: Box, _ b: Box) -> Float {
@@ -443,12 +453,10 @@ actor MJPEGCamera {
     private func startPipeline() {
         let device = currentDevice
         let passthrough = usePassthrough
-        pipelineTask = Task { [weak self] in
-            guard let self else { return }
+        pipelineTask = Task {
             var delayMs: UInt64 = 1000
             while !Task.isCancelled {
-                let stillNeeded = await self.hasSubscribers()
-                if !stillNeeded { return }
+                guard await self.hasSubscribers() else { return }
                 do {
                     try await self.runGStreamerPipeline(device: device, passthrough: passthrough)
                 } catch is CancellationError {
@@ -457,11 +465,10 @@ actor MJPEGCamera {
                     print("[gst] pipeline error: \(error)")
                 }
                 if Task.isCancelled { return }
-                let nowNeeded = await self.hasSubscribers()
-                if !nowNeeded { return }
+                guard await self.hasSubscribers() else { return }
                 print("[gst] retrying pipeline in \(delayMs)ms")
                 do {
-                    try await Task.sleep(nanoseconds: delayMs * 1_000_000)
+                    try await Task.sleep(for: .milliseconds(delayMs))
                 } catch {
                     return
                 }
@@ -502,20 +509,25 @@ actor MJPEGCamera {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
         try process.run()
+
         let handle = pipe.fileHandleForReading
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        handle.readabilityHandler = { fh in
+            let data = fh.availableData
+            if data.isEmpty { continuation.finish() } else { continuation.yield(data) }
+        }
+        defer { handle.readabilityHandler = nil }
+
         var parser = JPEGFrameParser()
         await withTaskCancellationHandler {
-            while !Task.isCancelled {
-                let chunk = handle.availableData
-                if chunk.isEmpty { break }
+            for await chunk in stream {
                 let frames = parser.append(chunk)
-                for frame in frames {
-                    await self.broadcast(frame)
-                }
+                for frame in frames { await self.broadcast(frame) }
             }
             process.terminate()
         } onCancel: {
             process.terminate()
+            continuation.finish()
         }
     }
 }
@@ -566,97 +578,12 @@ struct CameraFeedYoloApp {
         await camera.setInferenceCallback { frame in
             cont.yield(frame)
         }
-        Task.detached {
-            var lastRun = Date.distantPast
-            for await frame in pendingFrames.stream {
-                let now = Date()
-                let elapsedMs = UInt64(max(0, now.timeIntervalSince(lastRun) * 1000))
-                if elapsedMs < minIntervalMs {
-                    try? await Task.sleep(nanoseconds: (minIntervalMs - elapsedMs) * 1_000_000)
-                }
-                let conf = await confidence.get()
-                let t0 = Date()
-                let result = engine.infer(jpeg: frame, confThreshold: conf)
-                let inferenceMs = Date().timeIntervalSince(t0) * 1000
-                lastRun = Date()
-                guard let (boxes, w, h) = result else { continue }
-                var classes: [String: Int] = [:]
-                for b in boxes { classes[b.name, default: 0] += 1 }
-                let meta = Meta(
-                    detections: boxes.count,
-                    inference_ms: (inferenceMs * 10).rounded() / 10,
-                    classes: classes,
-                    boxes: boxes,
-                    frame_w: w,
-                    frame_h: h)
-                do {
-                    let json = try JSONEncoder().encode(meta)
-                    if let s = String(data: json, encoding: .utf8) {
-                        await camera.updateMeta(s)
-                    }
-                } catch {
-                    print("[yolo] meta encode failed: \(error)")
-                }
-            }
-        }
 
         // ── HTTP routes ──
         let router = Router()
-        router.get("/") { _, _ -> Response in
-            let path = "index.html"
-            guard FileManager.default.fileExists(atPath: path) else {
-                return Response(status: .notFound)
-            }
-            let data = try Data(contentsOf: URL(fileURLWithPath: path))
-            var buffer = ByteBuffer()
-            buffer.writeBytes(data)
-            return Response(
-                status: .ok,
-                headers: [.contentType: "text/html; charset=utf-8"],
-                body: .init(byteBuffer: buffer))
-        }
-        router.get("/assets/*") { request, _ -> Response in
-            let requestPath = request.uri.path
-            let prefix = "/assets/"
-            guard requestPath.hasPrefix(prefix) else { return Response(status: .badRequest) }
-
-            let relativePath = String(requestPath.dropFirst(prefix.count))
-            guard !relativePath.isEmpty, !relativePath.hasPrefix("/") else {
-                return Response(status: .badRequest)
-            }
-
-            let pathComponents = (relativePath as NSString).pathComponents
-            guard !pathComponents.contains("..") else {
-                return Response(status: .badRequest)
-            }
-
-            let assetsBaseURL = URL(fileURLWithPath: "./assets", isDirectory: true).standardizedFileURL
-            let fileURL = assetsBaseURL.appendingPathComponent(relativePath).standardizedFileURL
-            let assetsBasePath = assetsBaseURL.path.hasSuffix("/") ? assetsBaseURL.path : assetsBaseURL.path + "/"
-            guard fileURL.path.hasPrefix(assetsBasePath) else {
-                return Response(status: .badRequest)
-            }
-
-            let filePath = fileURL.path
-            guard FileManager.default.fileExists(atPath: filePath) else { return Response(status: .notFound) }
-            let data = try Data(contentsOf: fileURL)
-            let ct: String = filePath.hasSuffix(".svg") ? "image/svg+xml"
-                : filePath.hasSuffix(".png") ? "image/png"
-                : filePath.hasSuffix(".jpg") || filePath.hasSuffix(".jpeg") ? "image/jpeg"
-                : filePath.hasSuffix(".css") ? "text/css"
-                : filePath.hasSuffix(".js") ? "application/javascript"
-                : "application/octet-stream"
-            var buffer = ByteBuffer()
-            buffer.writeBytes(data)
-            return Response(status: .ok, headers: [.contentType: ct], body: .init(byteBuffer: buffer))
-        }
-        router.get("/cameras") { _, _ -> Response in
-            let cameras = listCameras()
-            let data = try JSONEncoder().encode(cameras)
-            var buffer = ByteBuffer()
-            buffer.writeBytes(data)
-            return Response(status: .ok, headers: [.contentType: "application/json"], body: .init(byteBuffer: buffer))
-        }
+        router.get("/cameras") { _, _ in listCameras() }
+        router.get("/", use: spaHandler(staticDir: "."))
+        router.get("{path+}", use: spaHandler(staticDir: "."))
 
         // ── WebSocket /stream ──
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)
@@ -668,9 +595,7 @@ struct CameraFeedYoloApp {
             await camera.subscribe(id: id) { frame, metaJson in
                 do {
                     try await outbound.write(.text(metaJson))
-                    var buffer = ByteBufferAllocator().buffer(capacity: frame.count)
-                    buffer.writeBytes(frame)
-                    try await outbound.write(.binary(buffer))
+                    try await outbound.write(.binary(ByteBuffer(bytes: frame)))
                 } catch {
                     print("[ws] write failed: \(error)")
                 }
@@ -708,6 +633,38 @@ struct CameraFeedYoloApp {
         )
 
         print("Camera feed (YOLO) running on http://0.0.0.0:{{.PORT}}")
-        try await app.runService()
+
+        try await withThrowingDiscardingTaskGroup { group in
+            group.addTask {
+                let clock = ContinuousClock()
+                var lastRun = clock.now - .milliseconds(Int(minIntervalMs) + 1)
+                for await frame in pendingFrames.stream {
+                    let now = clock.now
+                    let elapsed = now - lastRun
+                    let remaining = Duration.milliseconds(Int(minIntervalMs)) - elapsed
+                    if remaining > .zero { try? await Task.sleep(for: remaining) }
+                    let conf = await confidence.get()
+                    let t0 = clock.now
+                    guard let (boxes, w, h) = engine.infer(jpeg: frame, confThreshold: conf) else { continue }
+                    let elapsed2 = clock.now - t0
+                    let inferenceMs = Double(elapsed2.components.seconds) * 1000.0
+                        + Double(elapsed2.components.attoseconds) / 1_000_000_000_000_000.0
+                    lastRun = clock.now
+                    var classes: [String: Int] = [:]
+                    for b in boxes { classes[b.name, default: 0] += 1 }
+                    let meta = Meta(
+                        detections: boxes.count,
+                        inferenceMs: (inferenceMs * 10).rounded() / 10,
+                        classes: classes, boxes: boxes, frameW: w, frameH: h)
+                    if let s = try? String(data: JSONEncoder().encode(meta), encoding: .utf8) {
+                        await camera.updateMeta(s)
+                    }
+                }
+            }
+            group.addTask {
+                defer { cont.finish() }
+                try await app.runService()
+            }
+        }
     }
 }

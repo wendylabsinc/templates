@@ -7,7 +7,7 @@ COPY frontend/ .
 RUN npm run build
 
 # Stage 2: Build the Swift backend
-FROM swift:{{.SWIFT_VERSION}}-bookworm AS builder
+FROM swift:6.3-bookworm AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \

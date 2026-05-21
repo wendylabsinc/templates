@@ -24,7 +24,7 @@ struct SimpleAPI {
         let router = Router()
         router.middlewares.add(TracingMiddleware())
         router.middlewares.add(MetricsMiddleware())
-        router.middlewares.add(LogRequestsMiddleware(.info, includeHeaders: false))
+        router.middlewares.add(LogRequestsMiddleware(.info))
 
         router.get("/") { _, _ in
             ["message": "hello-world"]

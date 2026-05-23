@@ -68,6 +68,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.turns.user_mute.always_user_mute_strategy import AlwaysUserMuteStrategy
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.google.llm import GoogleLLMService
@@ -751,6 +752,69 @@ class VADToUserFrameBridge(FrameProcessor):
             if self._user_speaking:
                 self._user_speaking = False
                 await self.push_frame(UserStoppedSpeakingFrame(), direction)
+
+
+class AudioLevelTap(FrameProcessor):
+    """Compute RMS level from passing audio frames and notify a callback.
+
+    Used to drive the browser-side visualizer in *local* mode: when the
+    host's PowerConf mic and speaker handle audio (instead of a browser
+    WebSocket), no audio flows to the page, so the visualizer's
+    AnalyserNodes have nothing to react to. This tap broadcasts a tiny
+    (~30 Hz) stream of RMS levels over a separate WebSocket so the
+    visualizer can animate even in local mode.
+
+    Two instances are placed:
+      * one just after ``transport.input()`` for mic levels;
+      * one just before ``transport.output()`` for bot-TTS levels.
+
+    The tap is non-blocking and rate-limited; if the callback raises or
+    a level update arrives faster than ``min_interval_secs``, we drop
+    the update.
+    """
+
+    def __init__(
+        self,
+        channel: str,
+        on_level: Optional[callable] = None,  # type: ignore[type-arg]
+        min_interval_secs: float = 0.033,  # ~30 Hz
+        frame_types: tuple[type, ...] = (InputAudioRawFrame, OutputAudioRawFrame),
+    ) -> None:
+        super().__init__()
+        self._channel = channel
+        self._on_level = on_level
+        self._min_interval = min_interval_secs
+        self._frame_types = frame_types
+        self._last_push: float = 0.0
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
+        await super().process_frame(frame, direction)
+        await self.push_frame(frame, direction)
+        if self._on_level is None:
+            return
+        if not isinstance(frame, self._frame_types):
+            return
+        now = time.monotonic()
+        if now - self._last_push < self._min_interval:
+            return
+        try:
+            samples = np.frombuffer(frame.audio, dtype=np.int16)
+        except Exception:
+            return
+        if samples.size == 0:
+            return
+        # RMS, normalised to [0, 1] against int16 full-scale (32767).
+        rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2)) / 32767.0)
+        # Clamp to a sensible range for visualizer scaling.
+        level = max(0.0, min(1.0, rms))
+        self._last_push = now
+        try:
+            res = self._on_level(self._channel, level)
+            if asyncio.iscoroutine(res):
+                # If the callback is async, schedule it.
+                asyncio.create_task(res)
+        except Exception as exc:  # pragma: no cover
+            _log.debug("AudioLevelTap[%s]: callback error: %s", self._channel, exc)
 
 
 class PipelineStateTracker(FrameProcessor):
@@ -1965,6 +2029,7 @@ def build_pipeline_task(
     transport: BaseTransport,
     *,
     vad_analyzer: Optional[VADAnalyzer] = None,
+    on_audio_level: Optional[callable] = None,  # type: ignore[type-arg]
     system_prompt: Optional[str] = None,
     tts_voice: Optional[str] = None,
     allow_interruptions: Optional[bool] = None,
@@ -2215,7 +2280,24 @@ def build_pipeline_task(
     # StartupAudioGate / MuteGate can see speech-start/stop events before
     # STT. The aggregator's turn analyzer still functions; it just relies
     # on STT timing instead of doing its own VAD inference.
-    context_aggregator = LLMContextAggregatorPair(context)
+    #
+    # Interrupt control: Pipecat 1.x removed
+    # ``PipelineParams.allow_interruptions``. The replacement is per-
+    # aggregator ``user_mute_strategies``. ``AlwaysUserMuteStrategy``
+    # mutes incoming user-speaking frames while the bot is speaking, so
+    # `UserStartedSpeakingFrame` (and the InterruptionTaskFrame derived
+    # from it) is suppressed mid-reply — i.e. the bot finishes its turn
+    # instead of being cut off. When ``allow_interruptions`` is True,
+    # we omit the strategy and the user can interrupt.
+    user_params_kwargs: dict = {}
+    if not interrupt:
+        user_params_kwargs["user_mute_strategies"] = [AlwaysUserMuteStrategy()]
+    context_aggregator = LLMContextAggregatorPair(
+        context,
+        user_params=LLMUserAggregatorParams(**user_params_kwargs)
+        if user_params_kwargs
+        else None,
+    )
 
     # Wake-word config: prefer the API-supplied list, fall back to env.
     wake_models_resolved = wake_word_models or [
@@ -2228,6 +2310,12 @@ def build_pipeline_task(
 
     processors: list[FrameProcessor] = [
         transport.input(),
+        # Tap raw mic audio for the local-mode browser visualizer.
+        # Pushes RMS levels to on_audio_level (~30Hz). Pass-through —
+        # frames flow downstream unchanged.
+        AudioLevelTap(channel="mic", on_level=on_audio_level)
+        if on_audio_level
+        else None,
         # Run VAD upstream of all gates so WakeWordGate / StartupAudioGate /
         # MuteGate can react to speech-start/stop. VADProcessor emits the
         # 1.x VAD-prefixed frames; the bridge re-emits them as the
@@ -2296,6 +2384,11 @@ def build_pipeline_task(
                 on_empty_llm_round=on_empty_llm_round,
             ),
             tts,
+            # Tap outgoing TTS audio for the local-mode browser
+            # visualizer — same channel as mic tap, different label.
+            AudioLevelTap(channel="bot", on_level=on_audio_level)
+            if on_audio_level
+            else None,
             transport.output(),
             context_aggregator.assistant(),
         ]
@@ -2308,11 +2401,13 @@ def build_pipeline_task(
     return PipelineTask(
         pipeline,
         params=PipelineParams(
-            # User-toggleable. Default is False because near-field
-            # mic+speaker setups (e.g. PowerConf) pick up the bot's own
-            # TTS past hardware AEC and self-cancel mid-sentence. Flip
-            # to True for headphone / clean-room setups.
-            allow_interruptions=interrupt,
+            # NOTE: Pipecat 1.x dropped ``allow_interruptions`` from
+            # PipelineParams. The flag is now enforced via a
+            # ``user_mute_strategies=[AlwaysUserMuteStrategy()]`` on
+            # the user aggregator (see context_aggregator construction
+            # above). When ``interrupt`` is False the strategy mutes
+            # user-speaking frames while the bot is talking, so the
+            # bot finishes its turn instead of being cut off.
             enable_metrics=True,
         ),
         # Disable pipecat's idle-timeout watchdog. Default behaviour

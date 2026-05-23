@@ -1310,6 +1310,12 @@ class SessionManager:
         # leaves the frontend stuck on "Thinking..." forever.
         self._processing_watchdog_task: Optional[asyncio.Task] = None
         self._last_response_time_ms: Optional[int] = None
+        # Playback duration of the most recent bot reply (TTS audio).
+        # Computed as time from on_bot_started to on_bot_stopped. Useful
+        # for verifying behaviour from the API when audio capture on the
+        # caller side is unreliable (e.g. integration tests that can't
+        # confirm bot speech via mic loopback).
+        self._last_bot_playback_ms: Optional[int] = None
         self._last_wake_at: Optional[float] = None  # epoch seconds
         self._wake_pulse: int = 0  # increments each time wake fires
         # Currently-attached browser WebSocket, if any. Tracked so a
@@ -1387,6 +1393,13 @@ class SessionManager:
         # 500 ms grace after bot stops so any in-flight audio has time
         # to leave the speaker before the wake detector re-arms.
         self._bot_quiet_at = time.monotonic() + 0.5
+        # Capture how long the bot just spoke. Surfaced on /api/status
+        # so callers (e.g. the voice-tester harness) can verify reply
+        # length without depending on mic loopback.
+        if self._bot_speaking_at is not None:
+            playback_ms = int((time.monotonic() - self._bot_speaking_at) * 1000)
+            if playback_ms > 0:
+                self._last_bot_playback_ms = playback_ms
 
     def on_stt_stalled(self) -> None:
         """Called by STTUserTextCapture's watchdog when a finalized
@@ -1947,6 +1960,7 @@ async def api_status() -> dict[str, Any]:
         "whisper": whisper_state.to_dict(),
         "processing": session._processing,  # noqa: SLF001
         "last_response_time_ms": session._last_response_time_ms,  # noqa: SLF001
+        "last_bot_playback_ms": session._last_bot_playback_ms,  # noqa: SLF001
         "last_wake_at": session._last_wake_at,  # noqa: SLF001
         "wake_pulse": session._wake_pulse,  # noqa: SLF001
         "muted": session.muted,

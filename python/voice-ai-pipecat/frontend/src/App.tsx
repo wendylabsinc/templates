@@ -10,7 +10,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./components/ui/tooltip"
-import { usePipecatClient, useWendyosMicrophones, useShowTranscripts } from "./audio"
+import {
+  useAudioLevels,
+  usePipecatClient,
+  useShowTranscripts,
+  useWendyosMicrophones,
+} from "./audio"
 
 function resolveBotWsUrl(): string {
   const override = (import.meta.env.VITE_BOT_WS_URL as string | undefined) ?? null
@@ -18,6 +23,14 @@ function resolveBotWsUrl(): string {
   if (typeof window === "undefined") return ""
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
   return `${proto}//${window.location.host}/bot-audio`
+}
+
+function resolveAudioLevelsWsUrl(): string {
+  const override = (import.meta.env.VITE_AUDIO_LEVELS_WS_URL as string | undefined) ?? null
+  if (override) return override
+  if (typeof window === "undefined") return ""
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:"
+  return `${proto}//${window.location.host}/api/audio-levels`
 }
 
 type AppState = "initializing" | "listening" | "thinking" | "speaking" | "error"
@@ -78,6 +91,7 @@ function App() {
   }, [browserDeviceId])
 
   const botWsUrl = React.useMemo(resolveBotWsUrl, [])
+  const audioLevelsWsUrl = React.useMemo(resolveAudioLevelsWsUrl, [])
   const client = usePipecatClient({
     url: browserDeviceId && !handedOff ? botWsUrl : null,
     inputDeviceId: browserDeviceId,
@@ -159,6 +173,15 @@ function App() {
     }
   }, [wendyosStatus?.wakePulse])
 
+  // Local-mode level stream: only subscribed when the page is in
+  // local mode (no browser mic session). When the user picks a
+  // browser mic, AnalyserNodes drive the visualizer instead.
+  const inLocalMode = !browserDeviceId || handedOff
+  const localLevels = useAudioLevels({
+    url: audioLevelsWsUrl,
+    enabled: inLocalMode,
+  })
+
   return (
     <TooltipProvider>
       <main className="relative h-screen w-screen overflow-hidden bg-black text-white">
@@ -168,6 +191,8 @@ function App() {
           botAnalyser={client.botAnalyser}
           botSpeaking={client.botSpeaking}
           lineCount={40}
+          localMicLevel={inLocalMode ? localLevels.micLevel : undefined}
+          localBotLevel={inLocalMode ? localLevels.botLevel : undefined}
         />
 
         {/* Wake-fired flash — full-screen amber pulse on top of the

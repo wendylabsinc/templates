@@ -146,11 +146,19 @@ function Scene({
   botAnalyser,
   botSpeaking,
   lineCount,
+  localMicLevel,
+  localBotLevel,
 }: {
   micAnalyser: AnalyserNode | null
   botAnalyser: AnalyserNode | null
   botSpeaking: boolean
   lineCount: number
+  /** Local-mode RMS level (0..1) for the user mic. Drives the blue
+   *  lines when there's no AnalyserNode (i.e. bot is in local mode,
+   *  no audio reaches the browser). */
+  localMicLevel?: number
+  /** Local-mode RMS level (0..1) for the bot TTS. */
+  localBotLevel?: number
 }) {
   const micDataArray = React.useMemo(
     () => (micAnalyser ? new Uint8Array(micAnalyser.frequencyBinCount) : null),
@@ -160,12 +168,16 @@ function Scene({
     () => (botAnalyser ? new Uint8Array(botAnalyser.frequencyBinCount) : null),
     [botAnalyser],
   )
-  // Synthetic spectrum we drive ourselves when there's no real bot
-  // AnalyserNode — Pipecat's WebSocket transport plays bot TTS through
-  // an internal AudioContext that we can't reach, but we know when the
-  // bot is speaking from `onBotStartedSpeaking`/`onBotStoppedSpeaking`
-  // events. Fill this with a wandering sine pattern so the emerald
-  // lines move in time with playback.
+  // Synthetic spectra we drive ourselves when there's no real
+  // AnalyserNode. Two cases:
+  //   * Bot in browser-mic mode → AnalyserNodes exist → unused.
+  //   * Bot in local mode → no AnalyserNodes → we receive RMS levels
+  //     over /api/audio-levels and shape them into a wandering
+  //     sine pattern so the lines move organically.
+  // We also keep the original "botSpeaking flag" fallback so the
+  // emerald lines still animate even if /api/audio-levels isn't
+  // connected (e.g. trusted-LAN bots on older builds).
+  const syntheticMicData = React.useMemo(() => new Uint8Array(64), [])
   const syntheticBotData = React.useMemo(() => new Uint8Array(64), [])
   const syntheticDecay = React.useRef(0)
 
@@ -173,16 +185,40 @@ function Scene({
     if (micAnalyser && micDataArray) micAnalyser.getByteFrequencyData(micDataArray)
     if (botAnalyser && botDataArray) botAnalyser.getByteFrequencyData(botDataArray)
 
-    if (!botAnalyser) {
-      const target = botSpeaking ? 1 : 0
-      // Smooth on/off so the lines fade in/out instead of snapping.
-      syntheticDecay.current += (target - syntheticDecay.current) * 0.1
+    // ----- synthesize mic data from local level stream -----
+    if (!micAnalyser) {
       const t = state.clock.getElapsedTime()
-      const amp = syntheticDecay.current
+      const amp = Math.max(0, Math.min(1, localMicLevel ?? 0))
+      for (let i = 0; i < syntheticMicData.length; i++) {
+        const phase = t * 5 + i * 0.4
+        const v = (Math.sin(phase) * 0.5 + 0.5) * (0.6 + Math.sin(t + i) * 0.4)
+        // Boost the visual gain — raw int16 RMS is small even at
+        // normal voice volume. Map ~0.1 RMS to a full-amplitude line.
+        syntheticMicData[i] = Math.floor(v * Math.min(1, amp * 6) * 220)
+      }
+    }
+
+    // ----- synthesize bot data from local level OR botSpeaking flag -----
+    if (!botAnalyser) {
+      const t = state.clock.getElapsedTime()
+      let amp: number
+      if (typeof localBotLevel === "number" && localBotLevel > 0) {
+        // Have a live RMS stream — use it directly (with the same
+        // visual-gain boost as the mic).
+        amp = Math.min(1, localBotLevel * 6)
+        // Keep the decay ref in sync so a transient drop to 0
+        // doesn't flicker the lines off.
+        syntheticDecay.current = Math.max(syntheticDecay.current, amp)
+      } else {
+        // Fall back to the binary botSpeaking flag with smoothing.
+        const target = botSpeaking ? 1 : 0
+        syntheticDecay.current += (target - syntheticDecay.current) * 0.1
+        amp = syntheticDecay.current
+      }
+      // Always bleed decay slightly so paused TTS frames fade.
+      syntheticDecay.current *= 0.92
       for (let i = 0; i < syntheticBotData.length; i++) {
         const phase = t * 4 + i * 0.35
-        // Combine two sines so different lines see different magnitudes
-        // (mimics the variation a real spectrum produces).
         const v = (Math.sin(phase) * 0.5 + 0.5) * (0.6 + Math.sin(t + i) * 0.4)
         syntheticBotData[i] = Math.floor(v * amp * 220)
       }
@@ -191,6 +227,7 @@ function Scene({
 
   const perGroup = Math.max(1, Math.floor(lineCount / 2))
   const emptyData = React.useMemo(() => new Uint8Array(0), [])
+  const micData = micDataArray ?? syntheticMicData
   const botData = botDataArray ?? syntheticBotData
 
   return (
@@ -202,7 +239,7 @@ function Scene({
           key={`mic-${i}`}
           index={i}
           total={perGroup}
-          audioData={micDataArray || emptyData}
+          audioData={micData || emptyData}
           color={MIC_COLOR}
         />
       ))}
@@ -236,6 +273,8 @@ export function LifestreamVisualizer({
   botAnalyser,
   botSpeaking = false,
   lineCount = 40,
+  localMicLevel,
+  localBotLevel,
 }: {
   /** AnalyserNode for the user's microphone input. Lines rendered in blue. */
   micAnalyser: AnalyserNode | null
@@ -247,6 +286,13 @@ export function LifestreamVisualizer({
   botSpeaking?: boolean
   /** Total line count, split evenly between mic and bot groups. */
   lineCount?: number
+  /** Local-mode mic RMS level from /api/audio-levels (0..1). Used to drive
+   *  the blue lines when ``micAnalyser`` is null (i.e. the bot is in
+   *  local mode and audio never reaches the browser). */
+  localMicLevel?: number
+  /** Local-mode bot RMS level (0..1). Used to drive the emerald lines
+   *  when ``botAnalyser`` is null. */
+  localBotLevel?: number
 }) {
   return (
     <div className="absolute inset-0 bg-black">
@@ -262,6 +308,8 @@ export function LifestreamVisualizer({
           botAnalyser={botAnalyser}
           botSpeaking={botSpeaking}
           lineCount={lineCount}
+          localMicLevel={localMicLevel}
+          localBotLevel={localBotLevel}
         />
       </Canvas>
     </div>

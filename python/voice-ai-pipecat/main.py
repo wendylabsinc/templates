@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 import os
 import re
@@ -1686,6 +1687,9 @@ class SessionManager:
             task = build_pipeline_task(
                 transport,
                 vad_analyzer=_build_vad_analyzer(),
+                # AudioLevelTap publishes mic + bot RMS levels here.
+                # Module-level broadcast set is shared across rebuilds.
+                on_audio_level=_broadcast_audio_level,
                 system_prompt=settings_store.system_prompt,
                 tts_voice=settings_store.tts_voice,
                 allow_interruptions=settings_store.allow_interruptions,
@@ -1742,6 +1746,42 @@ class SessionManager:
 
 
 session = SessionManager()
+
+
+# ---------- Local-mode audio level broadcast --------------------------------
+# In local mode (host PowerConf as the mic and speaker), no audio reaches the
+# browser, so the visualizer's AnalyserNodes have nothing to react to. To
+# animate the visualizer in that mode we run two AudioLevelTap processors in
+# the pipeline (one upstream of STT, one between TTS and transport.output())
+# that publish RMS levels here. Connected /api/audio-levels WebSocket clients
+# receive the JSON stream and the frontend turns them into bar movement.
+#
+# The set is module-level (not on SessionManager) because the pipeline is
+# rebuilt every settings change; carrying the connected-clients set across
+# rebuilds keeps the browser connection alive without reconnect churn.
+_audio_level_clients: set[WebSocket] = set()
+
+
+async def _broadcast_audio_level(channel: str, level: float) -> None:
+    """AudioLevelTap callback: fan out (channel, level) to all listeners.
+
+    Throttling and RMS computation happen inside AudioLevelTap itself (about
+    30 Hz), so this just JSON-serialises and sends. Failed sends drop the
+    socket from the set silently — the WS route's finally-block also cleans
+    up on disconnect.
+    """
+    if not _audio_level_clients:
+        return
+    payload = json.dumps({"channel": channel, "level": level})
+    dead: list[WebSocket] = []
+    for ws in list(_audio_level_clients):
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _audio_level_clients.discard(ws)
+# ----------------------------------------------------------------------------
 
 
 async def _hotplug_watchdog() -> None:
@@ -2388,6 +2428,49 @@ def _ws_token_ok(websocket: WebSocket) -> bool:
     if not candidate:
         return False
     return hmac.compare_digest(candidate, WENDY_AUTH_TOKEN)
+
+
+@app.websocket("/api/audio-levels")
+async def audio_levels(websocket: WebSocket) -> None:
+    """Stream RMS audio levels to the browser for the local-mode visualizer.
+
+    Messages are JSON, one per ~33ms throttled update:
+        {"channel": "mic", "level": 0.04}
+        {"channel": "bot", "level": 0.31}
+    where ``level`` is normalised int16 RMS in [0, 1]. The visualizer treats
+    ``mic`` as the user lines (blue) and ``bot`` as the assistant lines
+    (emerald).
+
+    Same origin / token policy as /bot-audio. Read-only stream; client
+    messages are ignored (we just hold the socket open until disconnect).
+    """
+    origin = websocket.headers.get("origin")
+    host_header = websocket.headers.get("host")
+    if not _ws_origin_allowed(origin, host_header):
+        logger.warning(
+            "Rejecting /api/audio-levels: origin=%r not allowed (host=%r)",
+            origin,
+            host_header,
+        )
+        await websocket.close(code=1008)
+        return
+    if not _ws_token_ok(websocket):
+        logger.warning("Rejecting /api/audio-levels: missing or invalid token")
+        await websocket.close(code=1008)
+        return
+    await websocket.accept()
+    _audio_level_clients.add(websocket)
+    try:
+        # Hold the socket open. We don't expect client → server messages,
+        # but if they arrive we discard them.
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("/api/audio-levels error")
+    finally:
+        _audio_level_clients.discard(websocket)
 
 
 @app.websocket("/bot-audio")

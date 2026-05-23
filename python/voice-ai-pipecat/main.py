@@ -1129,9 +1129,22 @@ class AppSettings:
             self.continuous_conversation = continuous_conversation
             changed = True
         if continuous_window_secs is not None:
-            # Clamp to a sensible range. <3 s feels jumpy, >15 s makes a
+            # Clamp to a sensible range. <3 s feels jumpy. >60 s makes a
             # forgotten quiet room hold the gate open for nothing.
-            clamped = max(3.0, min(15.0, float(continuous_window_secs)))
+            # (Was capped at 15 s; widened to 60 s so callers integrating
+            # the demo can pick longer windows for slower-paced flows.
+            # Surface a warning when clamping happens — the previous
+            # silent clamp wasted hours debugging "why didn't my POST
+            # take effect?" during the voice-tester development.)
+            requested = float(continuous_window_secs)
+            clamped = max(3.0, min(60.0, requested))
+            if abs(clamped - requested) > 1e-6:
+                logger.warning(
+                    "continuous_window_secs=%.2f clamped to %.2f "
+                    "(allowed range: 3.0-60.0)",
+                    requested,
+                    clamped,
+                )
             if clamped != self.continuous_window_secs:
                 self.continuous_window_secs = clamped
                 changed = True

@@ -43,6 +43,8 @@ from pipecat.frames.frames import (
     TTSSpeakFrame,
     UserStartedSpeakingFrame,
     UserStoppedSpeakingFrame,
+    VADUserStartedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
 
 # Pipecat broadcasts ``FunctionCallsStartedFrame`` BEFORE scheduling
@@ -66,6 +68,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.piper.tts import PiperTTSService
@@ -705,6 +708,49 @@ def _make_chime(freq_hz: int, duration_ms: int, sample_rate: int, volume: float 
     env[-fade_n:] = np.linspace(1, 0, fade_n)
     wave = wave * env * volume
     return (wave * 32767).astype(np.int16).tobytes()
+
+
+class VADToUserFrameBridge(FrameProcessor):
+    """Translate Pipecat 1.x VAD frames into pre-1.x user-speaking frames.
+
+    Pipecat 1.x split VAD events into two layers:
+      - ``VADUserStartedSpeakingFrame`` / ``VADUserStoppedSpeakingFrame`` —
+        raw VAD signal, pushed by ``VADProcessor`` (or the aggregator's VAD).
+      - ``UserStartedSpeakingFrame`` / ``UserStoppedSpeakingFrame`` —
+        turn-aware refined boundary, pushed by the aggregator's turn
+        analyzer downstream.
+
+    The gates in this pipeline (``WakeWordGate``, ``StartupAudioGate``,
+    ``MuteGate``) live upstream of the aggregator and need raw VAD events
+    to decide when to open/close. They listen for the non-prefixed names
+    (the pre-1.x convention). This processor re-emits the VAD-prefixed
+    frames as the non-prefixed equivalents immediately after the upstream
+    ``VADProcessor``, so the gates keep working without per-gate edits.
+
+    State machine: we only emit ``UserStoppedSpeakingFrame`` if we
+    previously emitted ``UserStartedSpeakingFrame``. Silero VAD can
+    flicker on background noise and the bridge would otherwise convert
+    spurious stops into empty STT flushes, which downstream consumers
+    interpret as a (zero-duration) user turn — visible as
+    ``faster_whisper | Processing audio with duration 00:00.001`` log
+    spam every ~30s while idle.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._user_speaking = False
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        await self.push_frame(frame, direction)
+        if isinstance(frame, VADUserStartedSpeakingFrame):
+            if not self._user_speaking:
+                self._user_speaking = True
+                await self.push_frame(UserStartedSpeakingFrame(), direction)
+        elif isinstance(frame, VADUserStoppedSpeakingFrame):
+            if self._user_speaking:
+                self._user_speaking = False
+                await self.push_frame(UserStoppedSpeakingFrame(), direction)
 
 
 class PipelineStateTracker(FrameProcessor):
@@ -1490,7 +1536,23 @@ class WakeWordGate(FrameProcessor):
         if self._listening_until is None:
             return
         self._listening_until = None
-        self._mute_oww_until = time.monotonic() + 0.25
+        # Post-close cooldown: openWakeWord's internal prediction buffer
+        # otherwise re-matches the same just-detected audio segment
+        # immediately after the gate closes (especially on `timeout`),
+        # producing a runaway 8-second loop of `'hey_jarvis' fired
+        # (score=1.00) → ... → closed (timeout) → fired again` even
+        # when nobody is speaking. Resetting the prediction buffer +
+        # holding a 1.5s mute lets the buffer flush organically before
+        # the next predict() call.
+        self._mute_oww_until = time.monotonic() + 1.5
+        try:
+            # openwakeword.Model.reset() (0.6.0+) clears the rolling
+            # prediction buffer. Older versions don't have it; that
+            # path falls back to the timeout-only mitigation.
+            if hasattr(self._oww, "reset"):
+                self._oww.reset()
+        except Exception as exc:  # pragma: no cover
+            _log.debug("WakeWordGate: oww.reset() failed: %s", exc)
         if self._chimes_enabled:
             await self._push_chime(self._chime_close)
         _log.info("WakeWordGate: closed listening window (%s)", reason)
@@ -1816,6 +1878,16 @@ class MuteGate(FrameProcessor):
 SYSTEM_PROMPT = (
     "You are a terse voice assistant on a Wendy device.\n"
     "\n"
+    "Wake-word handling:\n"
+    "- The user activates you by saying a wake word ('hey jarvis', "
+    "'alexa', 'hey mycroft', or another configured phrase). This is "
+    "NOT your name.\n"
+    "- NEVER apologize about your name, correct the user about what "
+    "they called you, or say 'my name is X'. The wake word is just how "
+    "the user gets your attention.\n"
+    "- NEVER start a reply with 'I apologize', 'I'm sorry', or any "
+    "self-introduction. Start every reply directly with the answer.\n"
+    "\n"
     "Output rules:\n"
     "- Reply in ONE short sentence. Aim for ~15 words.\n"
     "- Answer only what was asked. Do NOT add definitions, context, "
@@ -2138,10 +2210,12 @@ def build_pipeline_task(
         context = LLMContext(messages=initial_messages, tools=tools_schema)
     else:
         context = LLMContext(messages=initial_messages)
-    context_aggregator = LLMContextAggregatorPair(
-        context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=vad_analyzer),
-    )
+    # Note: vad_analyzer is intentionally NOT passed to the aggregator.
+    # We run VAD once upstream via VADProcessor so the WakeWordGate /
+    # StartupAudioGate / MuteGate can see speech-start/stop events before
+    # STT. The aggregator's turn analyzer still functions; it just relies
+    # on STT timing instead of doing its own VAD inference.
+    context_aggregator = LLMContextAggregatorPair(context)
 
     # Wake-word config: prefer the API-supplied list, fall back to env.
     wake_models_resolved = wake_word_models or [
@@ -2154,6 +2228,19 @@ def build_pipeline_task(
 
     processors: list[FrameProcessor] = [
         transport.input(),
+        # Run VAD upstream of all gates so WakeWordGate / StartupAudioGate /
+        # MuteGate can react to speech-start/stop. VADProcessor emits the
+        # 1.x VAD-prefixed frames; the bridge re-emits them as the
+        # pre-1.x names the gates already listen for.
+        # audio_idle_timeout=0 disables VADProcessor's "no audio frames
+        # received → force stop" safety net. We don't need it because
+        # LocalAudioTransport / FastAPIWebsocketTransport always stream
+        # audio frames (silence audio, not absence), and the default 1s
+        # timeout otherwise fires periodic spurious stops.
+        VADProcessor(vad_analyzer=vad_analyzer, audio_idle_timeout=0)
+        if vad_analyzer
+        else None,
+        VADToUserFrameBridge() if vad_analyzer else None,
         StartupAudioGate(
             floor_secs=2.0,
             ceiling_secs=10.0,
@@ -2214,7 +2301,9 @@ def build_pipeline_task(
         ]
     )
 
-    pipeline = Pipeline(processors)
+    # Filter out optional Nones (e.g. VADProcessor/bridge when vad_analyzer
+    # is not provided).
+    pipeline = Pipeline([p for p in processors if p is not None])
 
     return PipelineTask(
         pipeline,

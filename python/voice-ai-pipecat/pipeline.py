@@ -25,13 +25,15 @@ from google.genai import types as genai_types
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
-from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.audio.vad.vad_analyzer import VADAnalyzer, VADParams
 from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     BotStoppedSpeakingFrame,
     Frame,
     FunctionCallInProgressFrame,
+    FunctionCallsStartedFrame,
     InputAudioRawFrame,
+    InterruptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
     OutputAudioRawFrame,
@@ -46,33 +48,24 @@ from pipecat.frames.frames import (
 # Pipecat broadcasts ``FunctionCallsStartedFrame`` BEFORE scheduling
 # function-runner tasks, while ``FunctionCallInProgressFrame`` is pushed
 # from inside the runner task and can race ahead of/behind
-# ``LLMFullResponseEndFrame``. Gating on both closes that race for
-# pipecat versions that expose the started-frame. Import is optional —
-# pipecat-ai < 1.0 versions vary on which frames they export.
-_FUNCTION_CALL_SIGNAL_FRAMES: tuple[type, ...] = (FunctionCallInProgressFrame,)
-try:
-    from pipecat.frames.frames import FunctionCallsStartedFrame  # type: ignore
-
-    _FUNCTION_CALL_SIGNAL_FRAMES = (
-        FunctionCallInProgressFrame,
-        FunctionCallsStartedFrame,
-    )
-except ImportError:
-    pass
+# ``LLMFullResponseEndFrame``. Gating on both closes that race.
+_FUNCTION_CALL_SIGNAL_FRAMES: tuple[type, ...] = (
+    FunctionCallInProgressFrame,
+    FunctionCallsStartedFrame,
+)
 
 # Interruption signal can also race the startup gate (the wake-word
 # gate or user can synthesize one while the greeting is still
-# speaking). Import defensively — older pipecat doesn't export it.
-try:
-    from pipecat.frames.frames import InterruptionFrame  # type: ignore
-
-    _INTERRUPTION_FRAME_TYPES: tuple[type, ...] = (InterruptionFrame,)
-except ImportError:
-    _INTERRUPTION_FRAME_TYPES = ()
+# speaking).
+_INTERRUPTION_FRAME_TYPES: tuple[type, ...] = (InterruptionFrame,)
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.google.llm import GoogleLLMService
 from pipecat.services.piper.tts import PiperTTSService
@@ -1899,6 +1892,7 @@ PROMPT_PRESETS: dict[str, str] = {
 def build_pipeline_task(
     transport: BaseTransport,
     *,
+    vad_analyzer: Optional[VADAnalyzer] = None,
     system_prompt: Optional[str] = None,
     tts_voice: Optional[str] = None,
     allow_interruptions: Optional[bool] = None,
@@ -2141,10 +2135,13 @@ def build_pipeline_task(
     if conversation_history:
         initial_messages.extend(conversation_history)
     if tools_schema is not None:
-        context = OpenAILLMContext(messages=initial_messages, tools=tools_schema)
+        context = LLMContext(messages=initial_messages, tools=tools_schema)
     else:
-        context = OpenAILLMContext(messages=initial_messages)
-    context_aggregator = llm.create_context_aggregator(context)
+        context = LLMContext(messages=initial_messages)
+    context_aggregator = LLMContextAggregatorPair(
+        context,
+        user_params=LLMUserAggregatorParams(vad_analyzer=vad_analyzer),
+    )
 
     # Wake-word config: prefer the API-supplied list, fall back to env.
     wake_models_resolved = wake_word_models or [

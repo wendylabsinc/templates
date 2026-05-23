@@ -1556,7 +1556,6 @@ class SessionManager:
                 audio_out_enabled=True,
                 audio_in_sample_rate=in_rate,
                 audio_out_sample_rate=out_rate,
-                vad_analyzer=_build_vad_analyzer(),
                 input_device_index=in_idx,
                 output_device_index=out_idx,
             )
@@ -1576,7 +1575,6 @@ class SessionManager:
                 audio_in_sample_rate=16000,
                 audio_out_sample_rate=browser_out_rate,
                 add_wav_header=False,
-                vad_analyzer=_build_vad_analyzer(),
                 serializer=_InterruptAwareProtobufSerializer(),
             ),
         )
@@ -1674,6 +1672,7 @@ class SessionManager:
         try:
             task = build_pipeline_task(
                 transport,
+                vad_analyzer=_build_vad_analyzer(),
                 system_prompt=settings_store.system_prompt,
                 tts_voice=settings_store.tts_voice,
                 allow_interruptions=settings_store.allow_interruptions,

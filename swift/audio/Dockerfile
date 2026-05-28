@@ -24,10 +24,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /app/.build/release/{{.APP_ID}} /app/{{.APP_ID}}
+COPY --from=builder /app/.build/release/{{.APP_ID}} /usr/local/bin/{{.APP_ID}}
 COPY index.html /app/index.html
 COPY assets/ /app/assets/
 
 EXPOSE {{.PORT}}
 
-ENTRYPOINT ["/app/{{.APP_ID}}"]
+CMD ["{{.APP_ID}}"]

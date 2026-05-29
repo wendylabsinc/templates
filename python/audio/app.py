@@ -348,8 +348,22 @@ async def websocket_stream(websocket: WebSocket):
                 if "switch_microphone" in msg:
                     try:
                         await audio.switch_microphone(msg["switch_microphone"])
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "mic_switched",
+                                    "device": msg["switch_microphone"],
+                                }
+                            )
+                        )
                     except Exception as e:
                         logger.error(f"Microphone switch failed: {e}")
+                        try:
+                            await websocket.send_text(
+                                json.dumps({"type": "mic_switch_failed"})
+                            )
+                        except Exception:
+                            pass
         except WebSocketDisconnect:
             pass
         except Exception:

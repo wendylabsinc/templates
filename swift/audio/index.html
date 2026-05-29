@@ -92,7 +92,9 @@
         ctx.fillStyle = "black";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        const bars = Math.max(1, Math.floor(canvas.width / 6));
+        // Cap at RING_SIZE so step stays >= 1 even on very wide viewports
+        // (otherwise step rounds to 0 → divide-by-zero and out-of-range reads).
+        const bars = Math.min(RING_SIZE, Math.max(1, Math.floor(canvas.width / 6)));
         if (!barHeights || barHeights.length !== bars) {
           barHeights = new Float32Array(bars);
         }

@@ -116,8 +116,11 @@ async fn handle_ws(mut socket: WebSocket) {
                         // restart, then acknowledge so the UI can leave "Switching".
                         if let Some(tx) = MIC_SWITCH_TX.get() {
                             let (ack_tx, ack_rx) = oneshot::channel();
-                            if tx.send((device.clone(), ack_tx)).is_ok() {
-                                let _ = ack_rx.await;
+                            // Only acknowledge once the switch task confirms the
+                            // restart. If the ack sender is dropped (the task is
+                            // gone), ack_rx resolves to Err and we leave the UI in
+                            // "Switching" rather than falsely clearing it.
+                            if tx.send((device.clone(), ack_tx)).is_ok() && ack_rx.await.is_ok() {
                                 let ack = json!({ "type": "mic_switched", "device": device })
                                     .to_string();
                                 if socket.send(Message::Text(ack.into())).await.is_err() {

@@ -238,6 +238,14 @@ wss.on("connection", (ws) => {
   console.log("[ws] client connected");
   audio.addClient(ws);
 
+  // Send only while the socket is open, so a client that disconnects mid-switch
+  // can't make ws.send throw and take down the message handler.
+  const safeSend = (payload: object) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(payload));
+    }
+  };
+
   ws.on("message", (msg) => {
     try {
       const data = JSON.parse(msg.toString());
@@ -245,9 +253,9 @@ wss.on("connection", (ws) => {
         try {
           audio.switchMicrophone(data.switch_microphone);
           // Acknowledge so the UI can leave the "Switching" state.
-          ws.send(JSON.stringify({ type: "mic_switched", device: data.switch_microphone }));
+          safeSend({ type: "mic_switched", device: data.switch_microphone });
         } catch {
-          ws.send(JSON.stringify({ type: "mic_switch_failed" }));
+          safeSend({ type: "mic_switch_failed" });
         }
       }
     } catch {

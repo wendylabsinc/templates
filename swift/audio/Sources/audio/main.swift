@@ -256,11 +256,19 @@ private struct SwitchMicrophoneMessage: Decodable {
     let switch_microphone: String
 }
 
-func handleWebSocketText(_ text: String, audioCapture: AudioCapture) async {
+private struct MicSwitchedAck: Encodable {
+    let type = "mic_switched"
+    let device: String
+}
+
+/// Handle an inbound text command. Returns the device that was switched to
+/// (so the caller can acknowledge it), or nil if it was not a switch command.
+func handleWebSocketText(_ text: String, audioCapture: AudioCapture) async -> String? {
     guard let data = text.data(using: .utf8),
           let msg = try? JSONDecoder().decode(SwitchMicrophoneMessage.self, from: data)
-    else { return }
+    else { return nil }
     await audioCapture.switchMicrophone(to: msg.switch_microphone)
+    return msg.switch_microphone
 }
 
 // MARK: - Main
@@ -308,7 +316,12 @@ wsRouter.ws("/stream") { inbound, outbound, _ in
 
     for try await input in inbound.messages(maxSize: 1_000_000) {
         guard case .text(let text) = input else { continue }
-        await handleWebSocketText(text, audioCapture: audioCapture)
+        if let device = await handleWebSocketText(text, audioCapture: audioCapture),
+           let data = try? JSONEncoder().encode(MicSwitchedAck(device: device)),
+           let json = String(data: data, encoding: .utf8) {
+            // Acknowledge so the UI can leave the "Switching" state.
+            try? await outbound.write(.text(json))
+        }
     }
 
     await audioCapture.removeClient(id: clientId)

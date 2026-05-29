@@ -17,11 +17,14 @@ use std::{
     sync::{Mutex, OnceLock},
     thread,
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tower_http::services::ServeDir;
 
 static AUDIO_TX: OnceLock<broadcast::Sender<Vec<u8>>> = OnceLock::new();
-static MIC_SWITCH_TX: OnceLock<mpsc::UnboundedSender<String>> = OnceLock::new();
+// Each switch request carries a oneshot sender so the requesting socket can
+// be acknowledged once the capture pipeline has restarted.
+static MIC_SWITCH_TX: OnceLock<mpsc::UnboundedSender<(String, oneshot::Sender<()>)>> =
+    OnceLock::new();
 static SPEAKER: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
 struct AudioCapture {
@@ -107,7 +110,23 @@ async fn handle_ws(mut socket: WebSocket) {
                 Err(broadcast::error::RecvError::Closed) => break,
             },
             message = socket.recv() => match message {
-                Some(Ok(Message::Text(text))) => handle_ws_command(text.as_str()),
+                Some(Ok(Message::Text(text))) => {
+                    if let Some(device) = parse_switch_microphone(text.as_str()) {
+                        // Forward the switch and wait for the capture pipeline to
+                        // restart, then acknowledge so the UI can leave "Switching".
+                        if let Some(tx) = MIC_SWITCH_TX.get() {
+                            let (ack_tx, ack_rx) = oneshot::channel();
+                            if tx.send((device.clone(), ack_tx)).is_ok() {
+                                let _ = ack_rx.await;
+                                let ack = json!({ "type": "mic_switched", "device": device })
+                                    .to_string();
+                                if socket.send(Message::Text(ack.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
                 Some(Ok(Message::Close(_))) | None => break,
                 Some(Ok(_)) => {}
                 Some(Err(_)) => break,
@@ -116,16 +135,12 @@ async fn handle_ws(mut socket: WebSocket) {
     }
 }
 
-fn handle_ws_command(text: &str) {
-    let Ok(value) = serde_json::from_str::<Value>(text) else {
-        return;
-    };
-
-    if let Some(device) = value.get("switch_microphone").and_then(Value::as_str) {
-        if let Some(tx) = MIC_SWITCH_TX.get() {
-            let _ = tx.send(device.to_string());
-        }
-    }
+fn parse_switch_microphone(text: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(text).ok()?;
+    value
+        .get("switch_microphone")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 async fn list_sounds() -> impl IntoResponse {
@@ -330,15 +345,18 @@ fn escape_gst_value(value: &str) -> String {
 
 #[tokio::main]
 async fn main() {
-    let (switch_tx, mut switch_rx) = mpsc::unbounded_channel::<String>();
+    let (switch_tx, mut switch_rx) =
+        mpsc::unbounded_channel::<(String, oneshot::Sender<()>)>();
     let _ = MIC_SWITCH_TX.get_or_init(|| switch_tx);
 
     let capture = AudioCapture::start(None);
     tokio::spawn(async move {
         let mut capture = Some(capture);
-        while let Some(device) = switch_rx.recv().await {
+        while let Some((device, ack)) = switch_rx.recv().await {
             capture.take();
             capture = Some(AudioCapture::start(Some(&device)));
+            // Signal the requesting socket that the switch has completed.
+            let _ = ack.send(());
         }
     });
 

@@ -242,7 +242,13 @@ wss.on("connection", (ws) => {
     try {
       const data = JSON.parse(msg.toString());
       if (typeof data.switch_microphone === "string") {
-        audio.switchMicrophone(data.switch_microphone);
+        try {
+          audio.switchMicrophone(data.switch_microphone);
+          // Acknowledge so the UI can leave the "Switching" state.
+          ws.send(JSON.stringify({ type: "mic_switched", device: data.switch_microphone }));
+        } catch {
+          ws.send(JSON.stringify({ type: "mic_switch_failed" }));
+        }
       }
     } catch {
       // ignore non-JSON messages

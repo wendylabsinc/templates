@@ -186,7 +186,7 @@ private:
 // ---------------------------------------------------------------------------
 class StreamWs : public WebSocketController<StreamWs> {
 public:
-    void handleNewMessage(const WebSocketConnectionPtr&,
+    void handleNewMessage(const WebSocketConnectionPtr& conn,
                           std::string&& message,
                           const WebSocketMessageType&) override {
         Json::Value root;
@@ -196,7 +196,19 @@ public:
         if (!Json::parseFromStream(builder, stream, &root, &errors)) return;
 
         if (root.isMember("switch_microphone") && root["switch_microphone"].isString()) {
-            AudioCapture::instance().switchMicrophone(root["switch_microphone"].asString());
+            const std::string device = root["switch_microphone"].asString();
+            Json::Value ack;
+            try {
+                AudioCapture::instance().switchMicrophone(device);
+                ack["type"] = "mic_switched";
+                ack["device"] = device;
+            } catch (const std::exception&) {
+                ack["type"] = "mic_switch_failed";
+            }
+            // Acknowledge so the UI can leave the "Switching" state.
+            Json::StreamWriterBuilder wbuilder;
+            wbuilder["indentation"] = "";
+            conn->send(Json::writeString(wbuilder, ack));  // Text frame by default
         }
     }
 

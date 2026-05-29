@@ -81,8 +81,9 @@ public:
         return ac;
     }
 
-    void start() {
-        if (running_.exchange(true)) return;
+    // Returns true if the capture pipeline started (or was already running).
+    bool start() {
+        if (running_.exchange(true)) return true;
 
         std::string device;
         {
@@ -101,7 +102,7 @@ public:
         if (!pipeline_) {
             std::cerr << "Failed to create GStreamer pipeline" << std::endl;
             running_ = false;
-            return;
+            return false;
         }
 
         GstElement* sink = gst_bin_get_by_name(GST_BIN(pipeline_), "sink");
@@ -125,7 +126,13 @@ public:
                          nullptr);
         gst_object_unref(sink);
 
-        gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+        const GstStateChangeReturn ret =
+            gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+        if (ret == GST_STATE_CHANGE_FAILURE) {
+            std::cerr << "Failed to start GStreamer pipeline" << std::endl;
+            stop();
+            return false;
+        }
 
         // Run a GLib main loop so GStreamer bus messages are dispatched
         loop_thread_ = std::thread([this]() {
@@ -134,6 +141,7 @@ public:
         });
 
         std::cout << "AudioCapture started" << std::endl;
+        return true;
     }
 
     void stop() {
@@ -156,13 +164,14 @@ public:
         return buffer_;
     }
 
-    void switchMicrophone(const std::string& device) {
+    // Returns true if the capture pipeline restarted on the new device.
+    bool switchMicrophone(const std::string& device) {
         {
             std::lock_guard<std::mutex> lock(deviceMutex_);
             current_device_ = device;
         }
         stop();
-        start();
+        return start();
     }
 
 private:
@@ -186,7 +195,7 @@ private:
 // ---------------------------------------------------------------------------
 class StreamWs : public WebSocketController<StreamWs> {
 public:
-    void handleNewMessage(const WebSocketConnectionPtr&,
+    void handleNewMessage(const WebSocketConnectionPtr& conn,
                           std::string&& message,
                           const WebSocketMessageType&) override {
         Json::Value root;
@@ -196,7 +205,19 @@ public:
         if (!Json::parseFromStream(builder, stream, &root, &errors)) return;
 
         if (root.isMember("switch_microphone") && root["switch_microphone"].isString()) {
-            AudioCapture::instance().switchMicrophone(root["switch_microphone"].asString());
+            const std::string device = root["switch_microphone"].asString();
+            Json::Value ack;
+            if (AudioCapture::instance().switchMicrophone(device)) {
+                ack["type"] = "mic_switched";
+                ack["device"] = device;
+            } else {
+                // Pipeline failed to restart — keep the UI out of "Live".
+                ack["type"] = "mic_switch_failed";
+            }
+            // Acknowledge so the UI can leave the "Switching" state.
+            Json::StreamWriterBuilder wbuilder;
+            wbuilder["indentation"] = "";
+            conn->send(Json::writeString(wbuilder, ack));  // Text frame by default
         }
     }
 

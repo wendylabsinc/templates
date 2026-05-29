@@ -78,10 +78,13 @@ actor AudioCapture {
         source = nil
     }
 
-    func switchMicrophone(to deviceID: String) async {
+    /// Returns true if the capture pipeline restarted successfully. `start()`
+    /// leaves `source` nil when the GStreamer pipeline fails to build.
+    func switchMicrophone(to deviceID: String) async -> Bool {
         currentDevice = deviceID
         await stop()
         start()
+        return source != nil
     }
 
     func addClient(id: UUID, send: @escaping @Sendable (ByteBuffer) async -> Void) {
@@ -256,11 +259,25 @@ private struct SwitchMicrophoneMessage: Decodable {
     let switch_microphone: String
 }
 
-func handleWebSocketText(_ text: String, audioCapture: AudioCapture) async {
+private struct MicSwitchedAck: Encodable {
+    let type: String
+    let device: String?
+
+    init(ok: Bool, device: String) {
+        type = ok ? "mic_switched" : "mic_switch_failed"
+        self.device = ok ? device : nil
+    }
+}
+
+/// Handle an inbound text command. Returns the switch acknowledgement to send
+/// back (success reflects whether the capture pipeline restarted), or nil if
+/// it was not a switch command.
+private func handleWebSocketText(_ text: String, audioCapture: AudioCapture) async -> MicSwitchedAck? {
     guard let data = text.data(using: .utf8),
           let msg = try? JSONDecoder().decode(SwitchMicrophoneMessage.self, from: data)
-    else { return }
-    await audioCapture.switchMicrophone(to: msg.switch_microphone)
+    else { return nil }
+    let ok = await audioCapture.switchMicrophone(to: msg.switch_microphone)
+    return MicSwitchedAck(ok: ok, device: msg.switch_microphone)
 }
 
 // MARK: - Main
@@ -308,7 +325,12 @@ wsRouter.ws("/stream") { inbound, outbound, _ in
 
     for try await input in inbound.messages(maxSize: 1_000_000) {
         guard case .text(let text) = input else { continue }
-        await handleWebSocketText(text, audioCapture: audioCapture)
+        if let ack = await handleWebSocketText(text, audioCapture: audioCapture),
+           let data = try? JSONEncoder().encode(ack),
+           let json = String(data: data, encoding: .utf8) {
+            // Acknowledge so the UI can leave the "Switching" state.
+            try? await outbound.write(.text(json))
+        }
     }
 
     await audioCapture.removeClient(id: clientId)

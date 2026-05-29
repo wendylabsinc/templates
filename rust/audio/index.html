@@ -62,7 +62,18 @@
 
       let ws = null;
       let reconnectDelay = 2000;
-      let audioData = new Float32Array(0);
+      // Rolling buffer of recent samples so the waveform scrolls smoothly
+      // instead of snapping to each ~10 ms packet (~0.5 s on screen at 16 kHz).
+      const RING_SIZE = 8192;
+      let ring = new Float32Array(RING_SIZE);
+      // Eased per-bar heights (px), reused across frames for 60 fps smoothing.
+      let barHeights = null;
+
+      // Remembered device selections (persist across `wendy run`).
+      const SAVED_MIC_KEY = "wendy-audio-mic";
+      const SAVED_SPK_KEY = "wendy-audio-speaker";
+      // Mic id to switch to once the WebSocket is open (set before connect).
+      let pendingMic = null;
 
       function resize() {
         canvas.width = window.innerWidth;
@@ -81,26 +92,32 @@
         ctx.fillStyle = "black";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        if (audioData.length === 0) {
-          requestAnimationFrame(drawWaveform);
-          return;
+        // Cap at RING_SIZE so step stays >= 1 even on very wide viewports
+        // (otherwise step rounds to 0 → divide-by-zero and out-of-range reads).
+        const bars = Math.min(RING_SIZE, Math.max(1, Math.floor(canvas.width / 6)));
+        if (!barHeights || barHeights.length !== bars) {
+          barHeights = new Float32Array(bars);
         }
-
-        const bars = Math.min(audioData.length, Math.floor(canvas.width / 3));
-        const step = Math.floor(audioData.length / bars);
-        const barW = Math.max(1, (canvas.width / bars) - 1);
+        const step = Math.floor(RING_SIZE / bars);
+        const barW = Math.max(1, canvas.width / bars - 1);
         const midY = canvas.height / 2;
+        const maxH = canvas.height * 0.8;
+        // Lower = smoother/slower response, higher = snappier (0..1).
+        const smoothing = 0.25;
 
         ctx.fillStyle = "white";
 
         for (let i = 0; i < bars; i++) {
-          // Average a chunk of samples
+          // Average a slice of the rolling buffer.
           let sum = 0;
           for (let j = 0; j < step; j++) {
-            sum += Math.abs(audioData[i * step + j] || 0);
+            sum += Math.abs(ring[i * step + j]);
           }
-          const amp = sum / step;
-          const h = Math.max(2, amp * canvas.height * 0.8);
+          const target = Math.max(2, (sum / step) * maxH);
+          // Ease toward the target each frame so motion stays smooth at 60 fps
+          // even though audio packets arrive in bursts.
+          barHeights[i] += (target - barHeights[i]) * smoothing;
+          const h = barHeights[i];
           const x = i * (canvas.width / bars);
           ctx.fillRect(x, midY - h / 2, barW, h);
         }
@@ -116,24 +133,45 @@
         ws = new WebSocket(`${proto}//${location.host}/stream`);
         ws.binaryType = "arraybuffer";
 
-        ws.onopen = () => setStatus("Live", "green");
+        ws.onopen = () => {
+          setStatus("Live", "green");
+          // Apply a remembered mic that differs from the server default.
+          if (pendingMic) {
+            setStatus("Switching...", "yellow");
+            ws.send(JSON.stringify({ switch_microphone: pendingMic }));
+            pendingMic = null;
+          }
+        };
 
         ws.onmessage = (e) => {
           if (e.data instanceof ArrayBuffer) {
-            // PCM 16-bit signed LE → Float32
+            // PCM 16-bit signed LE → append to the rolling buffer (scrolling).
             const pcm = new Int16Array(e.data);
-            const floats = new Float32Array(pcm.length);
-            for (let i = 0; i < pcm.length; i++) {
-              floats[i] = pcm[i] / 32768;
+            const n = pcm.length;
+            if (n >= RING_SIZE) {
+              for (let i = 0; i < RING_SIZE; i++) ring[i] = pcm[n - RING_SIZE + i] / 32768;
+            } else {
+              ring.copyWithin(0, n); // shift older samples left
+              const off = RING_SIZE - n;
+              for (let i = 0; i < n; i++) ring[off + i] = pcm[i] / 32768;
             }
-            audioData = floats;
             reconnectDelay = 2000;
+            // Audio resumed → a pending switch has completed (fallback if the
+            // server ack is missed).
+            if (statusText.textContent === "Switching...") setStatus("Live", "green");
+            return;
           }
+          // JSON control message (e.g. mic switch acknowledgement).
+          try {
+            const m = JSON.parse(e.data);
+            if (m.type === "mic_switched") setStatus("Live", "green");
+            else if (m.type === "mic_switch_failed") setStatus("Switch failed", "red");
+          } catch {}
         };
 
         ws.onclose = () => {
           setStatus("Disconnected", "red");
-          audioData = new Float32Array(0);
+          ring.fill(0);
           setTimeout(connect, reconnectDelay);
           reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
         };
@@ -185,16 +223,32 @@
             o.textContent = m.name || `Microphone ${i}`;
             micSelect.appendChild(o);
           });
+          // Restore the previously selected mic if it's still present.
+          const saved = localStorage.getItem(SAVED_MIC_KEY);
+          if (saved && mics.some((m) => m.id === saved)) {
+            micSelect.value = saved;
+            // The server starts on mics[0]; only switch if we want a different one.
+            if (saved !== mics[0].id) switchMicrophone(saved);
+          }
         } catch {
           micSelect.innerHTML = '<option>Failed to load</option>';
         }
       }
 
-      micSelect.addEventListener("change", () => {
-        if (micSelect.value && ws?.readyState === WebSocket.OPEN) {
+      // Switch the mic now if the socket is open, otherwise once it opens.
+      function switchMicrophone(id) {
+        if (ws?.readyState === WebSocket.OPEN) {
           setStatus("Switching...", "yellow");
-          ws.send(JSON.stringify({ switch_microphone: micSelect.value }));
+          ws.send(JSON.stringify({ switch_microphone: id }));
+        } else {
+          pendingMic = id;
         }
+      }
+
+      micSelect.addEventListener("change", () => {
+        if (!micSelect.value) return;
+        localStorage.setItem(SAVED_MIC_KEY, micSelect.value);
+        switchMicrophone(micSelect.value);
       });
 
       // -- Load speakers --------------------------------------------------------
@@ -213,19 +267,21 @@
             o.textContent = s.name || `Speaker ${i}`;
             speakerSelect.appendChild(o);
           });
-          // Auto-select first speaker on server
-          if (speakers.length) {
-            fetch(`/speaker/${speakers[0].id}`, { method: "POST" });
-          }
+          // Restore the previously selected speaker, else default to the first.
+          const saved = localStorage.getItem(SAVED_SPK_KEY);
+          const chosen =
+            saved && speakers.some((s) => s.id === saved) ? saved : speakers[0].id;
+          speakerSelect.value = chosen;
+          fetch(`/speaker/${chosen}`, { method: "POST" });
         } catch {
           speakerSelect.innerHTML = '<option>Failed to load</option>';
         }
       }
 
       speakerSelect.addEventListener("change", () => {
-        if (speakerSelect.value) {
-          fetch(`/speaker/${speakerSelect.value}`, { method: "POST" });
-        }
+        if (!speakerSelect.value) return;
+        localStorage.setItem(SAVED_SPK_KEY, speakerSelect.value);
+        fetch(`/speaker/${speakerSelect.value}`, { method: "POST" });
       });
 
       loadMicrophones();

@@ -272,7 +272,7 @@ private struct MicSwitchedAck: Encodable {
 /// Handle an inbound text command. Returns the switch acknowledgement to send
 /// back (success reflects whether the capture pipeline restarted), or nil if
 /// it was not a switch command.
-func handleWebSocketText(_ text: String, audioCapture: AudioCapture) async -> MicSwitchedAck? {
+private func handleWebSocketText(_ text: String, audioCapture: AudioCapture) async -> MicSwitchedAck? {
     guard let data = text.data(using: .utf8),
           let msg = try? JSONDecoder().decode(SwitchMicrophoneMessage.self, from: data)
     else { return nil }

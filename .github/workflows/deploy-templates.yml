@@ -29,9 +29,11 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     # Serialize deploys per branch so concurrent pushes don't race on rsync --delete.
+    # Do NOT cancel in progress: interrupting an rsync --delete mid-run can leave the
+    # published prefix partially deleted/updated. Let each run finish; queued runs follow.
     concurrency:
       group: deploy-templates-${{ github.ref_name }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -44,9 +46,12 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Sync repo to gs://${{ env.GCS_BUCKET }}/${{ github.ref_name }}/
+        # Pass the ref through env, not inline ${{ }} interpolation, so an exotic
+        # branch name (apostrophes, etc.) can't break shell quoting or inject commands.
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          BRANCH='${{ github.ref_name }}'
           echo "Deploying branch '$BRANCH' -> gs://${GCS_BUCKET}/${BRANCH}/"
           gcloud storage rsync . "gs://${GCS_BUCKET}/${BRANCH}" \
             --recursive \
@@ -69,9 +74,18 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Remove gs://${{ env.GCS_BUCKET }}/${{ github.event.ref }}/
+        env:
+          BRANCH: ${{ github.event.ref }}
         run: |
           set -euo pipefail
-          BRANCH='${{ github.event.ref }}'
           echo "Removing gs://${GCS_BUCKET}/${BRANCH}/"
-          gcloud storage rm --recursive "gs://${GCS_BUCKET}/${BRANCH}/" || \
-            echo "Nothing to remove for '$BRANCH'."
+          # Only swallow the "prefix doesn't exist" case; any other failure (auth,
+          # permissions, transient GCS error) must fail the job rather than report success.
+          if ! err=$(gcloud storage rm --recursive "gs://${GCS_BUCKET}/${BRANCH}/" 2>&1); then
+            printf '%s\n' "$err"
+            if printf '%s' "$err" | grep -q 'matched no objects or files'; then
+              echo "Nothing to remove for '$BRANCH'."
+            else
+              exit 1
+            fi
+          fi

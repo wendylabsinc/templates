@@ -1,0 +1,77 @@
+name: Deploy templates
+
+# Publishes the repo tree to https://templates.wendy.dev/<branch>/* on every push,
+# and removes a branch's prefix when the branch is deleted.
+#
+# Infra (GCP project cloud-c7e56):
+#   gs://wendy-templates-public  -> CDN backend bucket -> shared wendy-docs HTTPS LB
+#   templates.wendy.dev A 8.232.49.165 (Cloud DNS zone wendy-dev)
+# Auth: keyless via Workload Identity Federation (github-actions-pool) as
+#   wendy-github-deploy-sa@cloud-c7e56.iam.gserviceaccount.com
+
+on:
+  push:
+    branches:
+      - '**'
+  delete:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  GCS_BUCKET: wendy-templates-public
+  WIF_PROVIDER: projects/114319063177/locations/global/workloadIdentityPools/github-actions-pool/providers/github-actions-provider
+  DEPLOY_SA: wendy-github-deploy-sa@cloud-c7e56.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Serialize deploys per branch so concurrent pushes don't race on rsync --delete.
+    concurrency:
+      group: deploy-templates-${{ github.ref_name }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Sync repo to gs://${{ env.GCS_BUCKET }}/${{ github.ref_name }}/
+        run: |
+          set -euo pipefail
+          BRANCH='${{ github.ref_name }}'
+          echo "Deploying branch '$BRANCH' -> gs://${GCS_BUCKET}/${BRANCH}/"
+          gcloud storage rsync . "gs://${GCS_BUCKET}/${BRANCH}" \
+            --recursive \
+            --delete-unmatched-destination-objects \
+            --cache-control='public, max-age=300' \
+            --exclude='(^|/)\.git/|(^|/)\.github/|(^|/)\.DS_Store$'
+          echo "Published: https://templates.wendy.dev/${BRANCH}/"
+
+  cleanup:
+    # Remove a branch's published prefix when the branch is deleted.
+    if: github.event_name == 'delete' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Remove gs://${{ env.GCS_BUCKET }}/${{ github.event.ref }}/
+        run: |
+          set -euo pipefail
+          BRANCH='${{ github.event.ref }}'
+          echo "Removing gs://${GCS_BUCKET}/${BRANCH}/"
+          gcloud storage rm --recursive "gs://${GCS_BUCKET}/${BRANCH}/" || \
+            echo "Nothing to remove for '$BRANCH'."

@@ -1,6 +1,6 @@
 {
     "name": "camera-feed-yolo",
-    "description": "Live camera feed with YOLOv8 COCO object detection (GPU on Jetson, CPU elsewhere)",
+    "description": "Live camera feed with YOLOv8 COCO object detection (CUDA, ROCm, or CPU)",
     "variables": [
         {
             "name": "APP_ID",

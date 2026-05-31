@@ -66,20 +66,25 @@ def _env_bool(name: str) -> bool | None:
     return None
 
 
-def _has_cuda() -> bool:
+def _gpu_vendor() -> str:
+    return os.environ.get("WENDY_GPU_VENDOR", "").strip().lower()
+
+
+def _has_torch_gpu() -> bool:
     # wendy CLI bakes WENDY_HAS_GPU into the image from the agent's device
     # capability probe (see WENDY_HAS_GPU / WENDY_GPU_VENDOR build args). Prefer
-    # that over runtime detection so CPU-only devices never load the CUDA path.
+    # that over runtime detection so CPU-only devices never load the GPU path.
+    # PyTorch exposes ROCm/HIP devices through the torch.cuda API as well.
     hint = _env_bool("WENDY_HAS_GPU")
     if hint is False:
         return False
-    if os.environ.get("WENDY_GPU_VENDOR", "").lower() not in ("", "nvidia"):
+    if _gpu_vendor() not in ("", "nvidia", "amd", "rocm"):
         return False
     try:
         import torch
         return torch.cuda.is_available()
     except Exception:
-        logger.warning("CUDA probe failed; falling back to CPU inference", exc_info=True)
+        logger.warning("GPU probe failed; falling back to CPU inference", exc_info=True)
         return False
 
 
@@ -95,24 +100,27 @@ def _is_rpi() -> bool:
         return False
 
 
-_HAS_CUDA = _has_cuda()
+_HAS_TORCH_GPU = _has_torch_gpu()
+_ACCELERATOR = "rocm" if _HAS_TORCH_GPU and _gpu_vendor() in ("amd", "rocm") else ("cuda" if _HAS_TORCH_GPU else "cpu")
 IS_RPI = _is_rpi()
+_PLATFORM = os.environ.get("WENDY_PLATFORM", "rpi" if IS_RPI else "generic")
+_USE_JETSON_GSTREAMER_PIPELINES = _HAS_TORCH_GPU and _PLATFORM == "nvidia-jetson"
 
-if not _HAS_CUDA:
-    # Stops ONNX Runtime from probing CUDA providers on CPU-only devices.
+if not _HAS_TORCH_GPU:
+    # Stops CUDA-aware libraries from probing GPU providers on CPU-only devices.
     os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
-_MAX_INFERENCE_FPS = float(os.environ.get("YOLO_MAX_FPS", "15" if _HAS_CUDA else "3"))
+_MAX_INFERENCE_FPS = float(os.environ.get("YOLO_MAX_FPS", "15" if _HAS_TORCH_GPU else "3"))
 _MIN_INFERENCE_INTERVAL = 1.0 / _MAX_INFERENCE_FPS if _MAX_INFERENCE_FPS > 0 else 0
-_INFERENCE_IMGSZ = 320 if _HAS_CUDA else 224
+_INFERENCE_IMGSZ = 320 if _HAS_TORCH_GPU else 224
 # RPi5 browns out under GStreamer + inference when USB-powered; OpenCV idles lighter.
 _backend = os.environ.get("CAMERA_BACKEND", "auto").lower()
-_FORCE_OPENCV = not _HAS_GSTREAMER or (_backend == "opencv") or (_backend == "auto" and (IS_RPI or not _HAS_CUDA))
-logger.info("Platform: %s (device=%s, gpu=%s), CUDA: %s, capture: %s, max inference FPS: %s, imgsz: %s",
-            os.environ.get("WENDY_PLATFORM", "rpi" if IS_RPI else "generic"),
+_FORCE_OPENCV = not _HAS_GSTREAMER or (_backend == "opencv") or (_backend == "auto" and (IS_RPI or not _HAS_TORCH_GPU))
+logger.info("Platform: %s (device=%s, gpu=%s), accelerator: %s, capture: %s, max inference FPS: %s, imgsz: %s",
+            _PLATFORM,
             os.environ.get("WENDY_DEVICE_TYPE", "unknown"),
             os.environ.get("WENDY_GPU_VENDOR", "none"),
-            _HAS_CUDA,
+            _ACCELERATOR,
             "opencv" if _FORCE_OPENCV else "gstreamer", _MAX_INFERENCE_FPS, _INFERENCE_IMGSZ)
 
 _model: YOLO | None = None
@@ -127,7 +135,7 @@ def _get_model() -> YOLO:
         if _model is not None:
             return _model
         model_path = "yolov8n.onnx" if Path("yolov8n.onnx").exists() else "yolov8n.pt"
-        logger.info("Loading YOLOv8n model (CUDA: %s)...", _HAS_CUDA)
+        logger.info("Loading YOLOv8n model (accelerator: %s)...", _ACCELERATOR)
         m = YOLO(model_path)
         logger.info("YOLOv8n ready — %d COCO classes, backend: %s", len(m.names), model_path)
         _model = m
@@ -370,7 +378,7 @@ class YOLOCamera:
     def _start_pipeline(self, device_id: str | None = None) -> Gst.Pipeline | None:
         src = build_source(device_id)
         appsink = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
-        if _HAS_CUDA:
+        if _USE_JETSON_GSTREAMER_PIPELINES:
             # Jetson has HW JPEG codecs, so decode+re-encode for quality control is cheap.
             pipelines = [
                 f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! {appsink}",
@@ -857,7 +865,8 @@ async def debug_info():
         content={
             "mode": "yolo-mjpeg-ws",
             "model": "yolov8n",
-            "cuda": _HAS_CUDA,
+            "cuda": _HAS_TORCH_GPU,
+            "accelerator": _ACCELERATOR,
             "is_rpi": IS_RPI,
             "max_inference_fps": _MAX_INFERENCE_FPS,
             "inference_imgsz": _INFERENCE_IMGSZ,

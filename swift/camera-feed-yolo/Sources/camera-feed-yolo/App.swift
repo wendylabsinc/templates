@@ -29,6 +29,34 @@ private func envTruthy(_ name: String) -> Bool {
     return v == "true" || v == "1" || v == "yes"
 }
 
+private enum Accelerator: String {
+    case cpu
+    case cuda
+    case rocm
+
+    var isGpu: Bool { self != .cpu }
+}
+
+private func envLower(_ name: String) -> String {
+    (ProcessInfo.processInfo.environment[name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+}
+
+private func selectedAccelerator() -> Accelerator {
+    guard envTruthy("WENDY_HAS_GPU") else { return .cpu }
+    switch envLower("WENDY_GPU_VENDOR") {
+    case "amd", "rocm":
+        return .rocm
+    case "", "nvidia":
+        return .cuda
+    default:
+        return .cpu
+    }
+}
+
+private func isJetsonPlatform() -> Bool {
+    envLower("WENDY_PLATFORM") == "nvidia-jetson"
+}
+
 private func isRpi() -> Bool {
     let dev = ProcessInfo.processInfo.environment["WENDY_DEVICE_TYPE"] ?? ""
     if dev.hasPrefix("raspberrypi") { return true }
@@ -119,7 +147,7 @@ final class YoloEngine: @unchecked Sendable {
     private var outputNameStr: String = "output0"
     private let decoder: tjhandle?
 
-    init(modelPath: String, useGpu: Bool) throws {
+    init(modelPath: String, accelerator: Accelerator) throws {
         self.api = ortApi()
         self.decoder = tjInitDecompress()
 
@@ -134,7 +162,7 @@ final class YoloEngine: @unchecked Sendable {
         try checkStatus(api.pointee.SetIntraOpNumThreads(optsPtr, 2), api)
         try checkStatus(api.pointee.SetSessionGraphOptimizationLevel(optsPtr, ORT_ENABLE_ALL), api)
 
-        if useGpu {
+        if accelerator == .cuda {
             // CUDA EP via the V2 options struct (rolls back gracefully if the
             // runtime wasn't built with CUDA support).
             var cudaOpts: OpaquePointer?
@@ -144,6 +172,16 @@ final class YoloEngine: @unchecked Sendable {
                 print("[yolo] CUDA execution provider requested")
             } else {
                 print("[yolo] CUDA EP unavailable — using CPU")
+            }
+        } else if accelerator == .rocm {
+            var migraphxOpts = OrtMIGraphXProviderOptions()
+            migraphxOpts.device_id = 0
+            let status = api.pointee.SessionOptionsAppendExecutionProvider_MIGraphX(optsPtr, &migraphxOpts)
+            if let status {
+                api.pointee.ReleaseStatus(status)
+                print("[yolo] MIGraphX EP unavailable — using CPU")
+            } else {
+                print("[yolo] MIGraphX execution provider requested")
             }
         } else {
             print("[yolo] using CPU execution provider")
@@ -554,19 +592,20 @@ private struct ClientCommand: Decodable {
 @main
 struct CameraFeedYoloApp {
     static func main() async throws {
-        let useGpu = envTruthy("WENDY_HAS_GPU")
+        let accelerator = selectedAccelerator()
+        let useGpu = accelerator.isGpu
         let rpi = isRpi()
-        let usePassthrough = !useGpu || rpi
+        let usePassthrough = !(useGpu && isJetsonPlatform()) || rpi
         let minIntervalMs: UInt64 = useGpu ? UInt64(1000 / 15) : UInt64(1000 / 3)
 
-        print("[startup] platform=\(ProcessInfo.processInfo.environment["WENDY_PLATFORM"] ?? "unknown"), has_gpu=\(useGpu), is_rpi=\(rpi), capture=\(usePassthrough ? "passthrough" : "decode-encode")")
+        print("[startup] platform=\(ProcessInfo.processInfo.environment["WENDY_PLATFORM"] ?? "unknown"), accelerator=\(accelerator.rawValue), is_rpi=\(rpi), capture=\(usePassthrough ? "passthrough" : "decode-encode")")
 
         let camera = MJPEGCamera(device: "/dev/video0", usePassthrough: usePassthrough)
         let confidence = ConfidenceState()
 
         let engine: YoloEngine
         do {
-            engine = try YoloEngine(modelPath: "yolov8n.onnx", useGpu: useGpu)
+            engine = try YoloEngine(modelPath: "yolov8n.onnx", accelerator: accelerator)
             print("[yolo] model loaded")
         } catch {
             print("[yolo] failed to load model: \(error)")

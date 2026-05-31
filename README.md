@@ -83,6 +83,28 @@ Shared building blocks (not selectable as templates):
 
 ---
 
+## Hosted template sources
+
+Every push mirrors this repo to a public, branch-namespaced clone at **[templates.wendy.dev](https://templates.wendy.dev/)**, so any branch's template sources are fetchable over plain HTTPS without cloning the repo:
+
+```
+https://templates.wendy.dev/<branch>/<path>
+```
+
+| URL | Serves |
+|-----|--------|
+| `https://templates.wendy.dev/` | 302 redirect to `/main/` |
+| `https://templates.wendy.dev/main/python/simple-api/wendy.json` | that file on `main` |
+| `https://templates.wendy.dev/<branch>/...` | the same path on any branch |
+
+Deployment is handled by [`.github/workflows/deploy-templates.yml`](.github/workflows/deploy-templates.yml): on every push it `rsync`s the repo tree (minus `.git`/`.github`) to `gs://wendy-templates-public/<branch>/`; deleting a branch removes its prefix. Content is fronted by Cloud CDN with a 5-minute `max-age`, so updates go live within a few minutes. Auth is keyless via GitHub OIDC / Workload Identity Federation — no secrets in the repo. The backing infrastructure (GCS bucket, CDN backend, HTTPS load balancer, managed cert, DNS) is managed in Google Cloud and mirrors the `docs.wendy.dev` setup.
+
+### Branch names with slashes
+
+Slashes in a branch name (e.g. `max/foo/bar`) are preserved verbatim as URL path segments — `https://templates.wendy.dev/max/foo/bar/...` — and need no encoding. You don't have to worry about a deep branch clobbering a shallower one (e.g. `max/foo` vs `max/foo/bar`): Git itself forbids a branch and a path-prefix of it from existing at the same time (the directory/file ref conflict), so the `rsync --delete` of one branch can never overlap another's prefix.
+
+---
+
 ## Creating Templates
 
 Templates are plain project directories with a `template.json` manifest and Go [`text/template`](https://pkg.go.dev/text/template) syntax in the source files.

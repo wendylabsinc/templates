@@ -3,7 +3,6 @@ import Hummingbird
 import HummingbirdWebSocket
 import Logging
 import NIOCore
-import OTel
 import ServiceLifecycle
 
 private struct SwitchCameraMessage: Decodable {
@@ -17,7 +16,6 @@ private struct SwitchMicrophoneMessage: Decodable {
 @main
 struct App {
     static func main() async throws {
-        let observability = try OTel.bootstrap()
         let logger = Logger(label: "{{.APP_ID}}")
 
         let carStore: CarStore
@@ -35,8 +33,6 @@ struct App {
         // MARK: - HTTP Router
 
         let router = Router()
-        router.middlewares.add(TracingMiddleware())
-        router.middlewares.add(MetricsMiddleware())
 
         router.get("/health") { _, _ -> HTTPResponse.Status in .ok }
 
@@ -95,6 +91,8 @@ struct App {
         router.get("api/gpu") { _, _ in try jsonResponse(gpuInfo(), status: .ok) }
         router.get("api/system") { _, _ in try jsonResponse(systemInfo(), status: .ok) }
 
+        router.get("/", use: spaHandler(staticDir: staticDir))
+        router.get("assets/{path+}", use: spaHandler(staticDir: staticDir))
         router.get("{path+}", use: spaHandler(staticDir: staticDir))
 
         // MARK: - WebSocket Router
@@ -155,7 +153,7 @@ struct App {
         logger.info("Starting server on http://\(hostDisplay):{{.PORT}}")
 
         let serviceGroup = ServiceGroup(
-            services: [observability, app],
+            services: [app],
             gracefulShutdownSignals: [.sigterm, .sigint],
             logger: logger
         )

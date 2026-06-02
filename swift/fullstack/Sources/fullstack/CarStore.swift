@@ -36,7 +36,7 @@ actor CarStore {
                 t.column("model", .text).notNull()
                 t.column("color", .text).notNull()
                 t.column("year", .integer).notNull()
-                t.column("created_at", .text).notNull().defaults(sql: "datetime('now')")
+                t.column("created_at", .text).notNull().defaults(sql: "CURRENT_TIMESTAMP")
                 t.column("updated_at", .text)
             }
         }
@@ -67,7 +67,7 @@ actor CarStore {
     func update(id: Int, input: CarInput) throws -> Car? {
         try dbQueue.write { db in
             try db.execute(
-                sql: "UPDATE cars SET make=?, model=?, color=?, year=?, updated_at=datetime('now') WHERE id=?",
+                sql: "UPDATE cars SET make=?, model=?, color=?, year=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 arguments: [input.make, input.model, input.color, input.year, id]
             )
             return try Car.filter(Column("id") == id).fetchOne(db)

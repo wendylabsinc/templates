@@ -34,6 +34,11 @@
             "languages": ["python"]
         },
         {
+            "name": "llm",
+            "description": "Local LLM chat app with Ollama and Open WebUI",
+            "languages": ["python"]
+        },
+        {
             "name": "camera-feed-yolo",
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },

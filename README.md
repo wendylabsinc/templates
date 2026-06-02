@@ -71,6 +71,20 @@ Always-on voice AI assistant: local [faster-whisper](https://github.com/SYSTRAN/
 
 The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into the Python template directory.
 
+### llm
+
+Local LLM chat app with Ollama and Open WebUI, rebranded with Wendy assets. Entitlements: network (host), gpu, persist (model cache at `/models` and Open WebUI data at `/data`).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | Ollama + Open WebUI | 8080 | `python/llm/` |
+
+Interactive init shows a model picker with `model`, `size`, `parameters`, and `comments` columns. Non-interactive init defaults to the smallest Gemma 4 option:
+
+```bash
+wendy init --app-id llm --target wendyos --language python --template llm --assistant skip --git-init no
+```
+
 ### common
 
 Shared building blocks (not selectable as templates):

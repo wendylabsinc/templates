@@ -1,31 +1,26 @@
 internal import Foundation
+#if os(Linux)
+import GStreamer
+#endif
 import Logging
 
-struct JPEGFrameParser: Sendable {
-    private var buffer = Data()
+#if os(Linux)
+private struct CameraProfile: Sendable {
+    let name: String
+    let resolution: VideoSource.Resolution?
+    let framerate: Int
+    let quality: Int
+}
+#endif
 
-    mutating func append(_ data: Data) -> [Data] {
-        buffer.append(data)
-        var frames: [Data] = []
-        while let range = findFrame() {
-            frames.append(Data(buffer[range]))
-            buffer.removeSubrange(buffer.startIndex...range.upperBound)
-        }
-        if buffer.count > 10_000_000 { buffer.removeAll() }
-        return frames
-    }
+private enum CameraError: Error, CustomStringConvertible {
+    case unsupportedPlatform
 
-    private func findFrame() -> ClosedRange<Int>? {
-        guard buffer.count >= 4 else { return nil }
-        var soi: Int?
-        for i in buffer.startIndex..<(buffer.endIndex - 1) {
-            if buffer[i] == 0xFF && buffer[i + 1] == 0xD8 { soi = i; break }
+    var description: String {
+        switch self {
+        case .unsupportedPlatform:
+            "camera streaming is only supported on Linux"
         }
-        guard let start = soi else { return nil }
-        for i in (start + 2)..<(buffer.endIndex - 1) {
-            if buffer[i] == 0xFF && buffer[i + 1] == 0xD9 { return start...(i + 1) }
-        }
-        return nil
     }
 }
 
@@ -59,7 +54,12 @@ actor MJPEGCamera {
     }
 
     private func broadcast(_ frame: Data) async {
-        for (_, handler) in subscribers { await handler(frame) }
+        let handlers = Array(subscribers.values)
+        await withTaskGroup(of: Void.self) { group in
+            for handler in handlers {
+                group.addTask { await handler(frame) }
+            }
+        }
     }
 
     private func startPipeline() {
@@ -81,36 +81,79 @@ actor MJPEGCamera {
     }
 
     private func runPipeline(device: String) async throws {
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/gst-launch-1.0")
-        process.arguments = [
-            "v4l2src", "device=\(device)", "!",
-            "image/jpeg", "!",
-            "fdsink", "fd=1",
-        ]
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-
-        let handle = pipe.fileHandleForReading
-        let (stream, continuation) = AsyncStream<Data>.makeStream()
-        handle.readabilityHandler = { fh in
-            let data = fh.availableData
-            if data.isEmpty { continuation.finish() } else { continuation.yield(data) }
-        }
-        defer { handle.readabilityHandler = nil }
-
-        var parser = JPEGFrameParser()
-        await withTaskCancellationHandler {
-            for await chunk in stream {
-                let frames = parser.append(chunk)
-                for frame in frames { await self.broadcast(frame) }
+        while !Task.isCancelled {
+            do {
+                try await streamCamera(device: device)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                logger.warning("camera pipeline failed; retrying", metadata: ["device": "\(device)", "error": "\(error)"])
             }
-            process.terminate()
-        } onCancel: {
-            process.terminate()
-            continuation.finish()
+
+            try Task.checkCancellation()
+            try await Task.sleep(for: .seconds(1))
         }
+    }
+
+    #if os(Linux)
+    private func cameraProfiles() -> [CameraProfile] {
+        [
+            CameraProfile(name: "vga-30", resolution: .vga, framerate: 30, quality: 80),
+            CameraProfile(name: "hd720-30", resolution: .hd720p, framerate: 30, quality: 80),
+            CameraProfile(name: "default-30", resolution: nil, framerate: 30, quality: 80),
+        ]
+    }
+
+    private func makeVideoSource(device: String) throws -> (String, VideoSource) {
+        var errors: [String] = []
+
+        for profile in cameraProfiles() {
+            do {
+                var builder = try VideoSource.webcam(devicePath: device)
+                    .withFramerate(profile.framerate)
+                    .withJPEGEncoding(quality: profile.quality)
+
+                if let resolution = profile.resolution {
+                    builder = builder.withResolution(resolution)
+                }
+
+                let source = try builder.build()
+                logger.info(
+                    "selected camera pipeline",
+                    metadata: ["device": "\(device)", "profile": "\(profile.name)", "pipeline": "\(source.selectedPipeline)"]
+                )
+                return (profile.name, source)
+            } catch {
+                errors.append("\(profile.name): \(error)")
+            }
+        }
+
+        throw VideoSource.VideoSourceError.noWorkingPipeline(errors)
+    }
+    #endif
+
+    private func streamCamera(device: String) async throws {
+        #if os(Linux)
+        let (profile, source) = try makeVideoSource(device: device)
+        logger.info("started camera pipeline", metadata: ["device": "\(device)", "profile": "\(profile)"])
+
+        do {
+            for try await frame in source.frames() {
+                try Task.checkCancellation()
+                let data = try frame.withUnsafeBytes { buffer in
+                    Data(buffer)
+                }
+                await broadcast(data)
+            }
+            await source.stop()
+        } catch {
+            await source.stop()
+            throw error
+        }
+
+        logger.warning("camera pipeline exited", metadata: ["device": "\(device)", "profile": "\(profile)"])
+        #else
+        throw CameraError.unsupportedPlatform
+        #endif
     }
 }

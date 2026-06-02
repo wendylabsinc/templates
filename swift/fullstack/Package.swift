@@ -21,6 +21,7 @@ let package = Package(
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
                 .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "GStreamer", package: "gstreamer-swift", condition: .when(platforms: [.linux])),
             ]
         ),
     ]

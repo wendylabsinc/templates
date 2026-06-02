@@ -25,6 +25,22 @@ func shell(_ args: [String]) -> String? {
     }
 }
 
+func v4l2DeviceName(_ path: String) -> String {
+    guard let output = shell(["v4l2-ctl", "--device", path, "--info"]) else {
+        return URL(filePath: path).lastPathComponent
+    }
+    for line in output.components(separatedBy: "\n") {
+        guard line.contains("Card type"), let range = line.range(of: ":") else { continue }
+        return String(line[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+    return URL(filePath: path).lastPathComponent
+}
+
+func v4l2IsCaptureDevice(_ path: String) -> Bool {
+    guard let output = shell(["v4l2-ctl", "--device", path, "--all"]) else { return false }
+    return output.contains("Video Capture")
+}
+
 func listCameras() -> [DeviceInfo] {
     if let output = shell(["v4l2-ctl", "--list-devices"]) {
         var cameras: [DeviceInfo] = []
@@ -34,17 +50,18 @@ func listCameras() -> [DeviceInfo] {
             if !line.hasPrefix("\t") && !line.hasPrefix(" ") && trimmed.hasSuffix(":") {
                 currentName = String(trimmed.dropLast())
             } else if trimmed.hasPrefix("/dev/video") {
-                cameras.append(DeviceInfo(id: trimmed, name: currentName ?? trimmed))
+                guard v4l2IsCaptureDevice(trimmed) else { continue }
+                cameras.append(DeviceInfo(id: trimmed, name: currentName ?? v4l2DeviceName(trimmed)))
             }
         }
         if !cameras.isEmpty { return cameras }
     }
 
     var cameras: [DeviceInfo] = []
-    for i in 0..<16 {
+    for i in 0..<64 {
         let path = "/dev/video\(i)"
-        if FileManager.default.fileExists(atPath: path) {
-            cameras.append(DeviceInfo(id: path, name: "Camera \(i)"))
+        if FileManager.default.fileExists(atPath: path), v4l2IsCaptureDevice(path) {
+            cameras.append(DeviceInfo(id: path, name: v4l2DeviceName(path)))
         }
     }
     return cameras

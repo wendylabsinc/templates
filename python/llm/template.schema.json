@@ -1,0 +1,68 @@
+{
+    "phases": [
+        {
+            "id": "model",
+            "title": "LLM model",
+            "questions": [
+                {
+                    "id": "OLLAMA_MODEL",
+                    "label": "Choose an Ollama model",
+                    "type": "radio",
+                    "required": true,
+                    "default": "gemma4:e2b",
+                    "options": [
+                        {
+                            "value": "gemma4:e2b",
+                            "label": "gemma4:e2b",
+                            "size": "edge",
+                            "parameters": "E2B",
+                            "comments": "Default. Raspberry Pi 5 possible but slow; Orin Nano 8GB is a good fit."
+                        },
+                        {
+                            "value": "gemma4:e4b",
+                            "label": "gemma4:e4b",
+                            "size": "edge+",
+                            "parameters": "E4B",
+                            "comments": "Best small quality step. Jetson Orin Nano 8GB fits; Pi 5 is tight."
+                        },
+                        {
+                            "value": "gemma4:26b",
+                            "label": "gemma4:26b",
+                            "size": "workstation",
+                            "parameters": "26B/4B active",
+                            "comments": "Use AGX Orin 32GB or 64GB, Thor, or larger. Not for Pi 5 or Orin Nano 8GB."
+                        },
+                        {
+                            "value": "gemma4:31b",
+                            "label": "gemma4:31b",
+                            "size": "workstation+",
+                            "parameters": "31B dense",
+                            "comments": "Use AGX Orin 64GB, Thor, or larger. Avoid Pi 5, Orin Nano 8GB, and AGX 32GB."
+                        },
+                        {
+                            "value": "hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",
+                            "label": "nemotron-3-nano-4b",
+                            "size": "edge",
+                            "parameters": "4B Q4",
+                            "comments": "Good Nemotron edge pick. Pi 5 possible slowly; Jetson Orin Nano 8GB is a good fit."
+                        },
+                        {
+                            "value": "nemotron-3-nano:30b",
+                            "label": "nemotron-3-nano:30b",
+                            "size": "edge server",
+                            "parameters": "30B/3B active",
+                            "comments": "Local 24GB VRAM class. Use AGX Orin 32GB or 64GB, Thor, or larger."
+                        },
+                        {
+                            "value": "nemotron-3-super:cloud",
+                            "label": "nemotron-3-super:cloud",
+                            "size": "cloud",
+                            "parameters": "120B/12B active",
+                            "comments": "Use Ollama Cloud or datacenter serving. Thor/B200 class if self-hosting."
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

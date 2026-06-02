@@ -4,20 +4,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
+import { type Device, resolveDeviceSelection, storeDevice } from "@/lib/device-storage"
 import { CameraIcon, CameraOffIcon, AlertCircleIcon, WifiOffIcon } from "lucide-react"
 
-interface Device { id: string; name: string }
+const CAMERA_STORAGE_KEY = "wendy.fullstack.cameraDevice"
 
 export default function CameraPage() {
   const imgRef = useRef<HTMLImageElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const selectedCameraRef = useRef("")
+  const receivedFrameRef = useRef(false)
   const [status, setStatus] = useState<"connecting" | "live" | "no-feed" | "error">("connecting")
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [fps, setFps] = useState(0)
   const [cameras, setCameras] = useState<Device[]>([])
   const [camerasLoaded, setCamerasLoaded] = useState(false)
   const [selectedCamera, setSelectedCamera] = useState<string>("")
-  const [receivedFrame, setReceivedFrame] = useState(false)
+
+  const sendSelectedCamera = useCallback((cameraId: string) => {
+    if (cameraId && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ switch_camera: cameraId }))
+    }
+  }, [])
 
   const fetchCameras = useCallback(() => {
     fetch("/api/cameras")
@@ -25,13 +33,13 @@ export default function CameraPage() {
       .then((list: Device[]) => {
         setCameras(list)
         setCamerasLoaded(true)
-        if (!selectedCamera && list.length > 0) setSelectedCamera(list[0].id)
+        setSelectedCamera((current) => resolveDeviceSelection(list, current, CAMERA_STORAGE_KEY))
       })
       .catch((e) => {
         setCamerasLoaded(true)
         setErrorMsg(`Failed to list cameras: ${e.message}`)
       })
-  }, [selectedCamera])
+  }, [])
 
   useEffect(() => {
     fetchCameras()
@@ -40,10 +48,12 @@ export default function CameraPage() {
   }, [fetchCameras])
 
   useEffect(() => {
-    if (selectedCamera && wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ switch_camera: selectedCamera }))
-    }
-  }, [selectedCamera])
+    selectedCameraRef.current = selectedCamera
+    if (!selectedCamera) return
+
+    storeDevice(CAMERA_STORAGE_KEY, selectedCamera)
+    sendSelectedCamera(selectedCamera)
+  }, [selectedCamera, sendSelectedCamera])
 
   useEffect(() => {
     let frameCount = 0
@@ -66,14 +76,15 @@ export default function CameraPage() {
       const ws = new WebSocket(`${proto}//${location.host}/api/camera/stream`)
       ws.binaryType = "blob"
       wsRef.current = ws
-      setReceivedFrame(false)
+      receivedFrameRef.current = false
 
       ws.onopen = () => {
         setStatus("connecting")
         setErrorMsg(null)
+        sendSelectedCamera(selectedCameraRef.current)
         // If no frame arrives within 5s, mark as no-feed
         noFrameTimer = setTimeout(() => {
-          if (!receivedFrame) setStatus("no-feed")
+          if (!receivedFrameRef.current) setStatus("no-feed")
         }, 5000)
       }
       ws.onmessage = (e) => {
@@ -83,7 +94,7 @@ export default function CameraPage() {
           if (prevBlob) URL.revokeObjectURL(prevBlob)
           prevBlob = url
           frameCount++
-          setReceivedFrame(true)
+          receivedFrameRef.current = true
           setStatus("live")
           if (noFrameTimer) { clearTimeout(noFrameTimer); noFrameTimer = null }
         }
@@ -110,7 +121,7 @@ export default function CameraPage() {
       if (noFrameTimer) clearTimeout(noFrameTimer)
       wsRef.current?.close()
     }
-  }, [])
+  }, [sendSelectedCamera])
 
   const showFeed = status === "live" && cameras.length > 0
 

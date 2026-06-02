@@ -4,20 +4,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
+import { type Device, resolveDeviceSelection, storeDevice } from "@/lib/device-storage"
 import { AudioLinesIcon, MicOffIcon, AlertCircleIcon, WifiOffIcon } from "lucide-react"
 
-interface Device { id: string; name: string }
+const MICROPHONE_STORAGE_KEY = "wendy.fullstack.microphoneDevice"
 
 export default function AudioPage() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wsRef = useRef<WebSocket | null>(null)
+  const selectedMicRef = useRef("")
+  const receivedDataRef = useRef(false)
   const [status, setStatus] = useState<"connecting" | "live" | "no-feed" | "error">("connecting")
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const audioDataRef = useRef(new Float32Array(0))
   const [microphones, setMicrophones] = useState<Device[]>([])
   const [micsLoaded, setMicsLoaded] = useState(false)
   const [selectedMic, setSelectedMic] = useState<string>("")
-  const [receivedData, setReceivedData] = useState(false)
+
+  const sendSelectedMic = useCallback((micId: string) => {
+    if (micId && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ switch_microphone: micId }))
+    }
+  }, [])
 
   const fetchMics = useCallback(() => {
     fetch("/api/microphones")
@@ -25,13 +33,13 @@ export default function AudioPage() {
       .then((list: Device[]) => {
         setMicrophones(list)
         setMicsLoaded(true)
-        if (!selectedMic && list.length > 0) setSelectedMic(list[0].id)
+        setSelectedMic((current) => resolveDeviceSelection(list, current, MICROPHONE_STORAGE_KEY))
       })
       .catch((e) => {
         setMicsLoaded(true)
         setErrorMsg(`Failed to list microphones: ${e.message}`)
       })
-  }, [selectedMic])
+  }, [])
 
   useEffect(() => {
     fetchMics()
@@ -40,10 +48,12 @@ export default function AudioPage() {
   }, [fetchMics])
 
   useEffect(() => {
-    if (selectedMic && wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ switch_microphone: selectedMic }))
-    }
-  }, [selectedMic])
+    selectedMicRef.current = selectedMic
+    if (!selectedMic) return
+
+    storeDevice(MICROPHONE_STORAGE_KEY, selectedMic)
+    sendSelectedMic(selectedMic)
+  }, [selectedMic, sendSelectedMic])
 
   useEffect(() => {
     let animId: number
@@ -86,13 +96,14 @@ export default function AudioPage() {
       const ws = new WebSocket(`${proto}//${location.host}/api/audio/stream`)
       ws.binaryType = "arraybuffer"
       wsRef.current = ws
-      setReceivedData(false)
+      receivedDataRef.current = false
 
       ws.onopen = () => {
         setStatus("connecting")
         setErrorMsg(null)
+        sendSelectedMic(selectedMicRef.current)
         noDataTimer = setTimeout(() => {
-          if (!receivedData) setStatus("no-feed")
+          if (!receivedDataRef.current) setStatus("no-feed")
         }, 5000)
       }
       ws.onmessage = (e) => {
@@ -101,7 +112,7 @@ export default function AudioPage() {
           const floats = new Float32Array(pcm.length)
           for (let i = 0; i < pcm.length; i++) floats[i] = pcm[i] / 32768
           audioDataRef.current = floats
-          setReceivedData(true)
+          receivedDataRef.current = true
           setStatus("live")
           if (noDataTimer) { clearTimeout(noDataTimer); noDataTimer = null }
         }
@@ -129,7 +140,7 @@ export default function AudioPage() {
       if (noDataTimer) clearTimeout(noDataTimer)
       wsRef.current?.close()
     }
-  }, [])
+  }, [sendSelectedMic])
 
   const showWaveform = status === "live" && microphones.length > 0
 

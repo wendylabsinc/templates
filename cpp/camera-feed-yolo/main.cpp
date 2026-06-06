@@ -25,6 +25,13 @@ namespace
 {
 constexpr int kInputSize = 640;
 
+enum class Accelerator
+{
+    CPU,
+    CUDA,
+    ROCm
+};
+
 constexpr std::array<const char *, 80> kCocoNames = {
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
     "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog",
@@ -45,6 +52,47 @@ bool envTruthy(const char *name)
     std::string s = v;
     std::transform(s.begin(), s.end(), s.begin(), ::tolower);
     return s == "true" || s == "1" || s == "yes";
+}
+
+std::string envLower(const char *name)
+{
+    const char *v = std::getenv(name);
+    if (!v)
+        return "";
+    std::string s = v;
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    return s;
+}
+
+const char *acceleratorName(Accelerator accelerator)
+{
+    switch (accelerator)
+    {
+    case Accelerator::CUDA:
+        return "cuda";
+    case Accelerator::ROCm:
+        return "rocm";
+    case Accelerator::CPU:
+    default:
+        return "cpu";
+    }
+}
+
+Accelerator selectedAccelerator()
+{
+    if (!envTruthy("WENDY_HAS_GPU"))
+        return Accelerator::CPU;
+    std::string vendor = envLower("WENDY_GPU_VENDOR");
+    if (vendor == "amd" || vendor == "rocm")
+        return Accelerator::ROCm;
+    if (vendor.empty() || vendor == "nvidia")
+        return Accelerator::CUDA;
+    return Accelerator::CPU;
+}
+
+bool isJetsonPlatform()
+{
+    return envLower("WENDY_PLATFORM") == "nvidia-jetson";
 }
 
 bool isRpi()
@@ -93,13 +141,13 @@ float iou(const Detection &a, const Detection &b)
 class YoloEngine
 {
   public:
-    YoloEngine(const std::string &modelPath, bool useGpu)
+    YoloEngine(const std::string &modelPath, Accelerator accelerator)
         : env_(ORT_LOGGING_LEVEL_WARNING, "yolo")
     {
         Ort::SessionOptions opts;
         opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         opts.SetIntraOpNumThreads(2);
-        if (useGpu)
+        if (accelerator == Accelerator::CUDA)
         {
             try
             {
@@ -110,6 +158,22 @@ class YoloEngine
             catch (const Ort::Exception &e)
             {
                 LOG_WARN << "[yolo] CUDA EP append failed (" << e.what() << ") — falling back to CPU";
+            }
+        }
+        else if (accelerator == Accelerator::ROCm)
+        {
+            OrtMIGraphXProviderOptions migraphx{};
+            migraphx.device_id = 0;
+            OrtStatus *status = Ort::GetApi().SessionOptionsAppendExecutionProvider_MIGraphX(opts, &migraphx);
+            if (!status)
+            {
+                LOG_INFO << "[yolo] MIGraphX execution provider requested";
+            }
+            else
+            {
+                std::string msg = Ort::GetApi().GetErrorMessage(status);
+                Ort::GetApi().ReleaseStatus(status);
+                LOG_WARN << "[yolo] MIGraphX EP append failed (" << msg << ") — falling back to CPU";
             }
         }
         else
@@ -270,11 +334,11 @@ class YoloCamera
         return cam;
     }
 
-    void init(bool useGpu, bool usePassthrough)
+    void init(Accelerator accelerator, bool usePassthrough)
     {
-        useGpu_ = useGpu;
+        useGpu_ = accelerator != Accelerator::CPU;
         usePassthrough_ = usePassthrough;
-        engine_ = std::make_unique<YoloEngine>("yolov8n.onnx", useGpu_);
+        engine_ = std::make_unique<YoloEngine>("yolov8n.onnx", accelerator);
         inferenceThread_ = std::thread(&YoloCamera::inferenceLoop, this);
     }
 
@@ -699,15 +763,16 @@ int main()
 {
     gst_init(nullptr, nullptr);
 
-    bool useGpu = envTruthy("WENDY_HAS_GPU");
+    Accelerator accelerator = selectedAccelerator();
+    bool useGpu = accelerator != Accelerator::CPU;
     bool rpi = isRpi();
-    bool usePassthrough = !useGpu || rpi;
-    LOG_INFO << "Startup: has_gpu=" << useGpu << " is_rpi=" << rpi
+    bool usePassthrough = !(useGpu && isJetsonPlatform()) || rpi;
+    LOG_INFO << "Startup: accelerator=" << acceleratorName(accelerator) << " is_rpi=" << rpi
              << " capture=" << (usePassthrough ? "passthrough" : "decode-encode");
 
     try
     {
-        YoloCamera::instance().init(useGpu, usePassthrough);
+        YoloCamera::instance().init(accelerator, usePassthrough);
     }
     catch (const std::exception &e)
     {

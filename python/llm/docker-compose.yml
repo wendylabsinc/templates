@@ -1,0 +1,29 @@
+# Service topology only — this file stays fully Docker Desktop-compatible.
+# Wendy-specific config (appId, GPU entitlement) lives in the companion
+# wendy.json next to it; `wendy run` merges the two.
+services:
+  ollama:
+    build:
+      context: ./ollama
+      args:
+        OLLAMA_MODEL: "{{.OLLAMA_MODEL}}"
+    ports:
+      - "11434:11434"
+    volumes:
+      - {{.APP_ID}}-models:/models
+
+  open-webui:
+    build: ./open-webui
+    ports:
+      - "{{.PORT}}:{{.PORT}}"
+    environment:
+      PORT: "{{.PORT}}"
+      OLLAMA_BASE_URL: "http://ollama:11434"
+    volumes:
+      - {{.APP_ID}}-openwebui:/data
+    depends_on:
+      - ollama
+
+volumes:
+  {{.APP_ID}}-models:
+  {{.APP_ID}}-openwebui:

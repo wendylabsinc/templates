@@ -54,8 +54,9 @@ Live Intel RealSense D415 multi-stream viewer: color, left IR, right IR, and col
 |----------|-----------|-------------|-----------|
 | Python | FastAPI + pyrealsense2 | 8000 | `python/realsense-camera/` |
 | C++ | Drogon + librealsense | 7007 | `cpp/realsense-camera/` |
+| Swift | Hummingbird + librealsense (Swift C++ interop) | 6007 | `swift/realsense-camera/` |
 
-The shared viewer frontend source lives at `common/realsense-camera-frontend/` and is vendored into both language template directories.
+The shared viewer frontend source lives at `common/realsense-camera-frontend/` and is vendored into each language template directory.
 
 ### audio
 

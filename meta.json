@@ -35,7 +35,7 @@
         },
         {
             "name": "llm",
-            "description": "Local LLM chat app with Ollama and Open WebUI",
+            "description": "Local LLM chat app: Ollama + Open WebUI as a compose app group",
             "languages": ["python"]
         },
         {

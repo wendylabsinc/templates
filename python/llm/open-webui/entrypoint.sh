@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p "$DATA_DIR" "$OLLAMA_MODELS"
+mkdir -p "$DATA_DIR"
 
 export WEBUI_AUTH="${WEBUI_AUTH:-False}"
 export ENABLE_PERSISTENT_CONFIG="${ENABLE_PERSISTENT_CONFIG:-False}"
 export WEBUI_NAME="${WEBUI_NAME:-Wendy}"
+
+# On a Wendy device each compose service runs in its own network namespace,
+# so the Docker service-name URL from docker-compose.yml does not resolve.
+# The ollama service publishes 11434 on the device host, so point at it via
+# the agent-injected device hostname instead (see the README).
+if [[ -n "${WENDY_DEVICE_HOSTNAME:-}" && "${OLLAMA_BASE_URL:-}" == "http://ollama:11434" ]]; then
+  export OLLAMA_BASE_URL="http://${WENDY_DEVICE_HOSTNAME}:11434"
+  echo "Wendy device detected; OLLAMA_BASE_URL=${OLLAMA_BASE_URL}"
+fi
 
 BRAND_PYTHON="/root/.local/share/uv/tools/open-webui/bin/python"
 if [[ ! -x "$BRAND_PYTHON" ]]; then
@@ -98,29 +107,5 @@ if brand.exists():
             ).rstrip()
             target.write_text(f"{existing}\n\n{custom_css.strip()}\n")
 PY
-
-echo "Starting Ollama on ${OLLAMA_HOST}"
-ollama serve &
-OLLAMA_PID=$!
-
-cleanup() {
-  kill "$OLLAMA_PID" 2>/dev/null || true
-}
-trap cleanup EXIT
-
-until curl -fsS "http://127.0.0.1:11434/api/tags" >/dev/null; do
-  if ! kill -0 "$OLLAMA_PID" 2>/dev/null; then
-    echo "ollama exited before readiness."
-    wait "$OLLAMA_PID"
-  fi
-  sleep 2
-done
-
-if ! OLLAMA_HOST=127.0.0.1:11434 ollama list | awk '{print $1}' | grep -qx "$OLLAMA_MODEL"; then
-  (
-    echo "Pulling ${OLLAMA_MODEL} into ${OLLAMA_MODELS}"
-    OLLAMA_HOST=127.0.0.1:11434 ollama pull "$OLLAMA_MODEL"
-  ) &
-fi
 
 exec /root/.local/bin/open-webui serve

@@ -36,7 +36,7 @@ private func jsonResponse(_ value: some Encodable, status: HTTPResponse.Status =
 }
 
 private func intParam(_ request: Request, _ name: String, fallback: Int, min: Int, max: Int) throws -> Int {
-    guard let raw = request.uri.queryParameters.get(name).map(String.init), !raw.isEmpty else {
+    guard let raw = request.uri.queryParameters.get(name).map({ String($0) }), !raw.isEmpty else {
         return fallback
     }
     guard let value = Int(raw) else {
@@ -76,7 +76,7 @@ struct App {
                 let width = try intParam(request, "width", fallback: 640, min: 1, max: 8192)
                 let height = try intParam(request, "height", fallback: 480, min: 1, max: 8192)
                 let fps = try intParam(request, "fps", fallback: 30, min: 1, max: 300)
-                let preset = request.uri.queryParameters.get("preset").map(String.init) ?? "default"
+                let preset = request.uri.queryParameters.get("preset").map({ String($0) }) ?? "default"
                 guard PumpConfig.presets.contains(preset) else {
                     return try jsonResponse(ErrorResponse(error: "Unknown preset: \(preset)"), status: .badRequest)
                 }

@@ -10,7 +10,7 @@ enum JPEGEncoder {
     // Encodes one frame view with TurboJPEG. Must run on the capture thread,
     // while the view's backing frameset is still alive (i.e. before the next
     // cameraWaitForFrames call). Returns nil on encode failure.
-    static func encode(_ view: rsk.FrameView, encoder: OpaquePointer?) -> [UInt8]? {
+    static func encode(_ view: rsk.FrameView, encoder: tjhandle?) -> [UInt8]? {
         guard view.isValid(), let encoder else { return nil }
 
         let pixelFormat: Int32
@@ -25,6 +25,8 @@ enum JPEGEncoder {
         case .rgb8:
             pixelFormat = Int32(TJPF_RGB.rawValue)
             subsampling = Int32(TJSAMP_420.rawValue)
+        default:
+            return nil
         }
 
         var jpegBuffer: UnsafeMutablePointer<UInt8>? = nil

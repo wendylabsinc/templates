@@ -72,6 +72,9 @@ actor RealSensePump {
     }
 
     private func spawnWorker() {
+        let config = self.config
+        let logger = self.logger
+
         let shared = WorkerShared()
         shared.pendingPreset.withLock { $0 = config.preset }
 
@@ -79,9 +82,6 @@ actor RealSensePump {
             of: [String: [UInt8]].self,
             bufferingPolicy: .bufferingNewest(4)
         )
-
-        let config = self.config
-        let logger = self.logger
         let thread = Thread {
             Self.captureLoop(shared: shared, config: config, logger: logger, continuation: continuation)
         }
@@ -97,7 +97,7 @@ actor RealSensePump {
             // restart, the pipeline died (no device, USB error) — reflect it.
             if !shared.stopRequested.load(ordering: .sequentiallyConsistent) {
                 await store.setRunning(false)
-                await self.reap(shared)
+                self.reap(shared)
             }
         }
         worker = (shared, consumer)

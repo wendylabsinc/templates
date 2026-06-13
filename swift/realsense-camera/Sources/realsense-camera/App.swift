@@ -117,7 +117,7 @@ struct App {
         }
 
         router.get("/", use: spaHandler(staticDir: "static"))
-        router.get("{path+}", use: spaHandler(staticDir: "static"))
+        router.get("**", use: spaHandler(staticDir: "static"))
 
         let app = Application(
             router: router,

@@ -35,7 +35,7 @@
         },
         {
             "name": "llm",
-            "description": "Local LLM chat app with Ollama and Open WebUI",
+            "description": "Local LLM chat app: Ollama + Open WebUI as a compose app group",
             "languages": ["python"]
         },
         {
@@ -45,7 +45,7 @@
         {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
-            "languages": ["python", "cpp"]
+            "languages": ["python", "cpp", "swift"]
         }
     ],
     "languages": [

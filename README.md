@@ -54,8 +54,9 @@ Live Intel RealSense D415 multi-stream viewer: color, left IR, right IR, and col
 |----------|-----------|-------------|-----------|
 | Python | FastAPI + pyrealsense2 | 8000 | `python/realsense-camera/` |
 | C++ | Drogon + librealsense | 7007 | `cpp/realsense-camera/` |
+| Swift | Hummingbird + librealsense (Swift C++ interop) | 6007 | `swift/realsense-camera/` |
 
-The shared viewer frontend source lives at `common/realsense-camera-frontend/` and is vendored into both language template directories.
+The shared viewer frontend source lives at `common/realsense-camera-frontend/` and is vendored into each language template directory.
 
 ### audio
 
@@ -73,7 +74,7 @@ The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is
 
 ### llm
 
-Local LLM chat app with Ollama and Open WebUI, rebranded with Wendy assets. Entitlements: network (host), gpu, persist (model cache at `/models` and Open WebUI data at `/data`).
+Local LLM chat app with Ollama and Open WebUI, rebranded with Wendy assets. Built as a **multi-service app group**: a standard `docker-compose.yml` defines the `ollama` and `open-webui` services (ports, environment, named volumes, `depends_on`) and stays fully Docker Desktop-compatible, while a companion `wendy.json` adds the `appId` and the GPU entitlement for the `ollama` service. Model weights and WebUI data persist in named volumes.
 
 | Language | Framework | Default Port | Directory |
 |----------|-----------|-------------|-----------|

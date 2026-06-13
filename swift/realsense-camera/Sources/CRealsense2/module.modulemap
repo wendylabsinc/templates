@@ -1,0 +1,5 @@
+module CRealsense2 {
+    header "shim.h"
+    link "realsense2"
+    export *
+}

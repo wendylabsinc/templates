@@ -1,7 +1,6 @@
-FROM ollama/ollama:latest
+FROM debian:bookworm-slim
 
 ARG OPEN_WEBUI_VERSION=0.9.5
-ARG OLLAMA_MODEL={{.OLLAMA_MODEL}}
 ARG PORT={{.PORT}}
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -19,24 +18,21 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
 
 ENV PATH="/root/.local/bin:${PATH}" \
     DATA_DIR="/data/open-webui" \
-    OLLAMA_HOST="0.0.0.0:11434" \
-    OLLAMA_MODELS="/models/ollama" \
-    OLLAMA_MODEL="${OLLAMA_MODEL}" \
-    OLLAMA_BASE_URL="http://127.0.0.1:11434" \
+    OLLAMA_BASE_URL="http://ollama:11434" \
     ENABLE_OLLAMA_API="True" \
     ENABLE_OPENAI_API="False" \
     WEBUI_NAME="Wendy" \
     HOST="0.0.0.0" \
     PORT="${PORT}"
 
-RUN mkdir -p /data/open-webui /models/ollama
+RUN mkdir -p /data/open-webui
 
 COPY branding /opt/wendy-brand
-COPY entrypoint.sh /usr/local/bin/wendy-llm-entrypoint
+COPY entrypoint.sh /usr/local/bin/wendy-webui-entrypoint
 
-RUN chmod 0755 /usr/local/bin/wendy-llm-entrypoint
+RUN chmod 0755 /usr/local/bin/wendy-webui-entrypoint
 
-EXPOSE {{.PORT}} 11434
+EXPOSE {{.PORT}}
 
 ENTRYPOINT []
-CMD ["wendy-llm-entrypoint"]
+CMD ["wendy-webui-entrypoint"]

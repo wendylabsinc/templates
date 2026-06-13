@@ -41,7 +41,7 @@ RUN sed -i 's|^libdir=.*|libdir=/usr/local/lib|' /usr/local/lib/pkgconfig/realse
 ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
 
 WORKDIR /app
-COPY Package.swift Package.resolved ./
+COPY Package.swift ./
 COPY Sources Sources
 RUN swift build -c release
 

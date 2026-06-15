@@ -85,10 +85,39 @@ Interactive init shows a model picker with `model`, `size`, `parameters`, and `c
 wendy init --app-id llm --target wendyos --language python --template llm --assistant skip --git-init no
 ```
 
+### tailscale-bridge
+
+Remote-access sidecar for devices behind residential ISP gateways or AP-isolated Wi-Fi networks. Many home routers enable AP isolation by default (clients cannot reach each other), and inbound port forwarding is often unavailable or impractical. This template ships a self-contained Alpine container that runs `tailscaled` in **userspace networking mode** (no `NET_ADMIN` cap, no TUN device required) and exposes the target app's dashboard to your tailnet via `tailscale serve` — zero router config, zero firewall rules.
+
+The sidecar pairs with any other Wendy app that runs a local HTTP dashboard. Point `UPSTREAM_PORT` at that dashboard and the bridge makes it reachable from every device on your tailnet over HTTPS.
+
+**Variables**
+
+| Variable | Default | Description |
+|---|---|---|
+| `APP_ID` | *(required)* | Application identifier |
+| `UPSTREAM_PORT` | `3001` | Local port of the app dashboard to reverse-proxy |
+| `TS_HOSTNAME` | `wendy-bridge` | Tailnet machine name for this device |
+
+**Auth key setup (one-time)**
+
+The Tailscale auth key is not baked into the image. After deploying, paste a **reusable** auth key from the [Tailscale admin console](https://login.tailscale.com/admin/settings/keys) into the shared persist volume:
+
+```bash
+echo "tskey-auth-..." > /data/tailscale-authkey
+```
+
+The entrypoint polls `/data/tailscale-authkey` on startup and calls `tailscale up` once the file appears. The persist volume (`{{.APP_ID}}-tsdata` mounted at `/data`) survives restarts; the auth key only needs to be written once.
+
+Tailscale node state is stored at `/data/state` on the same persist volume, so the device keeps its tailnet identity (machine key) across container restarts. Use a **reusable** auth key (not an ephemeral one): ephemeral keys register a new node on every `tailscale up`, but because the machine key persists here the node will simply re-authenticate without creating a duplicate entry.
+
+**Directory:** `common/tailscale-bridge/` — the first standalone deployable template under `common/` (all other entries are vendored frontend assets).
+
 ### common
 
 Shared building blocks (not selectable as templates):
 
+- `tailscale-bridge/` — Userspace Tailscale remote-access sidecar (see above)
 - `shadcn-vite-frontend/` — Vite + React + shadcn/ui dashboard
 - `camera-feed-html/` — Webcam viewer HTML page
 - `audio-feed-html/` — Audio waveform visualizer HTML page

@@ -46,6 +46,10 @@
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]
+        },
+        {
+            "name": "tailscale-bridge",
+            "description": "Expose another Wendy app's dashboard over your tailnet via a userspace Tailscale sidecar (no router config, AP-isolation-proof)"
         }
     ],
     "languages": [

@@ -1,0 +1,28 @@
+{
+    "name": "tailscale-bridge",
+    "description": "Expose another Wendy app's dashboard over your tailnet via a userspace Tailscale sidecar (no router config, AP-isolation-proof)",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "UPSTREAM_PORT",
+            "description": "Local port of the app dashboard to reverse-proxy",
+            "type": "integer",
+            "default": 3001,
+            "prompt": "Upstream dashboard port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "TS_HOSTNAME",
+            "description": "Tailnet machine name for this device",
+            "type": "string",
+            "default": "wendy-bridge",
+            "prompt": "Tailnet hostname"
+        }
+    ]
+}

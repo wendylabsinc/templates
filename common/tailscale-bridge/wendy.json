@@ -1,0 +1,16 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "entitlements": [
+        { "type": "network", "mode": "host" },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-tsdata",
+            "path": "/data"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.UPSTREAM_PORT}} },
+        "timeoutSeconds": 30
+    }
+}

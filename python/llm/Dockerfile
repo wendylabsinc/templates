@@ -1,4 +1,23 @@
-FROM ollama/ollama:latest
+# syntax=docker/dockerfile:1.6
+#
+# The base Ollama image is selected at `wendy run` time from the WENDY_GPU_VENDOR
+# build arg the wendy CLI injects after querying the target device (see Wendy
+# docs on injected build args):
+#   nvidia  -> NVIDIA's CUDA Ollama build (GPU-accelerated)
+#   <unset> -> stock ollama/ollama (x86_64 CUDA where present, otherwise CPU)
+# Falls back to the stock image for plain `docker build` (no build arg supplied).
+#
+# The stock ollama/ollama image ships no CUDA backend compatible with Jetson AGX
+# Thor (L4T r38 / JetPack 7 / CUDA 13, SBSA arm64) and falls back to CPU there,
+# so the nvidia path uses NVIDIA's Thor build. That image is currently the only
+# NVIDIA path wired up here; other NVIDIA devices (e.g. Jetson Orin / JetPack 6)
+# are not yet special-cased and would also receive it.
+ARG WENDY_GPU_VENDOR=generic
+
+FROM ollama/ollama:latest AS base-generic
+FROM ghcr.io/nvidia-ai-iot/ollama:r38.2.arm64-sbsa-cu130-24.04 AS base-nvidia
+
+FROM base-${WENDY_GPU_VENDOR} AS final
 
 ARG OPEN_WEBUI_VERSION=0.9.5
 ARG OLLAMA_MODEL={{.OLLAMA_MODEL}}

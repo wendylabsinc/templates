@@ -79,10 +79,24 @@ Local LLM chat app with Ollama and Open WebUI, rebranded with Wendy assets. Buil
 |----------|-----------|-------------|-----------|
 | Python | Ollama + Open WebUI | 8080 | `python/llm/` |
 
+### mlx-openwebui
+
+Native macOS Swift backend for Open WebUI using Apple MLX / `mlx-swift-lm`. This template targets Wendy Agent for Mac (`platform: "darwin"`) and exposes `/v1/models` plus `/v1/chat/completions` for OpenAI-compatible clients.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Swift | MLX LLM + Hummingbird | 8080 | `swift/mlx-openwebui/` |
+
 Interactive init shows a model picker with `model`, `size`, `parameters`, and `comments` columns. Non-interactive init defaults to the smallest Gemma 4 option:
 
 ```bash
 wendy init --app-id llm --target wendyos --language python --template llm --assistant skip --git-init no
+```
+
+For the native macOS MLX backend:
+
+```bash
+wendy init --app-id mac-llm --target darwin --language swift --template mlx-openwebui --assistant skip --git-init no
 ```
 
 ### common

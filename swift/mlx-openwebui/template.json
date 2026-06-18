@@ -1,0 +1,36 @@
+{
+    "name": "mlx-openwebui",
+    "description": "Native macOS Swift MLX LLM backend for Open WebUI",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "OpenAI-compatible API port",
+            "type": "integer",
+            "default": 8080,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "MODEL_ID",
+            "description": "Hugging Face MLX model ID to load on the Mac agent",
+            "type": "string",
+            "default": "mlx-community/Qwen1.5-0.5B-Chat-4bit",
+            "prompt": "MLX model ID"
+        },
+        {
+            "name": "MAX_TOKENS",
+            "description": "Default maximum generated tokens per chat completion",
+            "type": "integer",
+            "default": 512,
+            "prompt": "Default max tokens",
+            "validate": { "min": 1, "max": 8192 }
+        }
+    ]
+}

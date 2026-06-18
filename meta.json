@@ -39,6 +39,12 @@
             "languages": ["python"]
         },
         {
+            "name": "mlx-openwebui",
+            "description": "Native macOS Swift MLX LLM backend for Open WebUI",
+            "targets": ["darwin"],
+            "languages": ["swift"]
+        },
+        {
             "name": "camera-feed-yolo",
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },

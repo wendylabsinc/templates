@@ -26,8 +26,14 @@ WIDTH = int(os.environ.get("CAMERA_WIDTH", "640"))
 HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "480"))
 FPS = int(os.environ.get("CAMERA_FPS", "20"))
 JPEG_QUALITY = int(os.environ.get("JPEG_QUALITY", "80"))
+# Generic UVC cams default to raw YUYV, which OpenCV often misreads over a
+# bandwidth-limited USB-2 link (garbled green/noise bands). Forcing MJPG makes
+# the camera deliver compressed JPEG that OpenCV decodes cleanly. Set to ""
+# to disable and use the camera's default format.
+FOURCC = os.environ.get("CAMERA_FOURCC", "MJPG")
 
 app = FastAPI(title="rc-car-camera")
+_info = {}
 
 _frame = None
 _lock = threading.Lock()
@@ -38,6 +44,10 @@ def _capture_loop():
     global _frame
     while _running:
         cap = cv2.VideoCapture(DEVICE, cv2.CAP_V4L2)
+        # FOURCC must be set before width/height so the camera negotiates the
+        # right mode. MJPG avoids the raw-YUYV misread that produces banding.
+        if FOURCC:
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*FOURCC))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
         cap.set(cv2.CAP_PROP_FPS, FPS)
@@ -45,7 +55,15 @@ def _capture_loop():
             logger.warning("could not open %s; retrying in 2s", DEVICE)
             time.sleep(2)
             continue
-        logger.info("camera %s opened (%dx%d@%d)", DEVICE, WIDTH, HEIGHT, FPS)
+        # Read back what the driver actually negotiated.
+        fcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+        _info.update({
+            "fourcc": "".join(chr((fcc >> (8 * i)) & 0xFF) for i in range(4)),
+            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "fps": cap.get(cv2.CAP_PROP_FPS),
+        })
+        logger.info("camera %s opened %s", DEVICE, _info)
         while _running:
             ok, img = cap.read()
             if not ok:
@@ -87,6 +105,11 @@ def health():
     with _lock:
         have = _frame is not None
     return JSONResponse({"ok": True, "device": DEVICE, "streaming": have})
+
+
+@app.get("/info")
+def info():
+    return JSONResponse({"device": DEVICE, "requested_fourcc": FOURCC, "negotiated": _info})
 
 
 if __name__ == "__main__":

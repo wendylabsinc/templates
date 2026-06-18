@@ -46,6 +46,11 @@
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]
+        },
+        {
+            "name": "rc-car",
+            "description": "Remote-control a Yahboom ROSMASTER R2 (Ackerman) robot car from a browser: a 3-service app group (Rosmaster motion + UVC camera + teleop web UI)",
+            "languages": ["python"]
         }
     ],
     "languages": [

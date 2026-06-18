@@ -1,0 +1,27 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "services": {
+        "motion": {
+            "context": "./motion",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "serial", "device": "ttyUSB0" }
+            ]
+        },
+        "camera": {
+            "context": "./camera",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "camera" }
+            ]
+        },
+        "rc": {
+            "context": "./rc",
+            "dependsOn": ["motion", "camera"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    }
+}

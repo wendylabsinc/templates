@@ -1,31 +1,42 @@
-# rc-car camera — generic UVC camera -> MJPEG via OpenCV/V4L2.
+# rc-car camera — Angstrong Nuwa-HP60C depth camera -> MJPEG bridge (C++).
 #
-# Runs with `network: host` and the `camera` entitlement (exposes /dev/video*).
-FROM python:3.11-slim
+# The HP60C needs the proprietary Angstrong SDK (vendored prebuilt aarch64 .so +
+# encrypted config) to initialize and produce RGB frames; raw V4L2/UVC yields
+# only black/IR garbage. bridge.cpp drives the SDK and serves multipart MJPEG.
+#
+# Runs with `network: host`, `usb` (SDK talks USB via libasusb/libasuvc), and
+# `camera` entitlements.
+FROM ubuntu:22.04
 
-ENV PYTHONUNBUFFERED=1
-
-# OpenCV headless still needs a couple of system libs for video/image codecs.
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgl1 \
-        libglib2.0-0 \
+        g++ \
+        libturbojpeg0-dev \
+        libusb-1.0-0 \
+        libudev1 \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# Vendored SDK: prebuilt aarch64 libs, headers, and the camera config file.
+COPY sdk/include /opt/ascam/include
+COPY sdk/lib /opt/ascam/lib
+COPY config /opt/ascam/config
+COPY bridge.cpp ./
 
-COPY app.py ./
+# Link the SDK + the vendored turbojpeg (header comes from libturbojpeg0-dev).
+# rpath so the SDK and its sibling .so deps resolve at runtime.
+RUN g++ -O2 -std=c++17 bridge.cpp -o camera_bridge \
+        -I/opt/ascam/include -L/opt/ascam/lib \
+        -lAngstrongCameraSdk -lasuvc -lasusb -lturbojpeg -lpthread \
+        -Wl,-rpath,/opt/ascam/lib
 
+ENV LD_LIBRARY_PATH=/opt/ascam/lib
+ENV ASCAM_CONFIG=/opt/ascam/config/hp60c_v2_00_20230704_configEncrypt.json
 ENV PORT=8000
-ENV CAMERA_DEVICE=/dev/video0
-ENV CAMERA_WIDTH=640
-ENV CAMERA_HEIGHT=480
-ENV CAMERA_FPS=20
-ENV CAMERA_FOURCC=MJPG
 ENV JPEG_QUALITY=80
 
 EXPOSE 8000
 
-CMD ["python", "app.py"]
+CMD ["./camera_bridge"]

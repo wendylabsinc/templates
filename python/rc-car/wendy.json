@@ -13,7 +13,8 @@
             "context": "./camera",
             "entitlements": [
                 { "type": "network", "mode": "host" },
-                { "type": "camera" }
+                { "type": "camera" },
+                { "type": "usb" }
             ]
         },
         "rc": {

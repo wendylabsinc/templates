@@ -4,10 +4,8 @@ Native macOS Swift LLM backend for [Open WebUI](https://openwebui.com) using
 Apple MLX / `mlx-swift-lm`.
 
 This template runs on **Wendy Agent for Mac** (`platform: "darwin"`). It is not a
-Linux container template. The `network` entitlement is included so the backend
-uses host networking and Open WebUI can reach it from another machine. The app
-exposes a small OpenAI-compatible HTTP API so Open WebUI can connect to local
-inference running on an Apple Silicon Mac.
+Linux container template. The app exposes a small OpenAI-compatible HTTP API so
+Open WebUI can connect to local inference running on an Apple Silicon Mac.
 
 ## What is included
 

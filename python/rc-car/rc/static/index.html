@@ -15,7 +15,7 @@
     #status.err { color: #f85149; }
     main { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; }
     #view { flex: 1 1 480px; min-width: 320px; }
-    #cam { width: 100%; border-radius: 8px; background: #161b22; aspect-ratio: 4 / 3; object-fit: contain; }
+    #cam, #depth { width: 100%; border-radius: 8px; background: #161b22; aspect-ratio: 4 / 3; object-fit: contain; display: block; margin-bottom: 8px; }
     #panel { flex: 0 0 260px; display: flex; flex-direction: column; gap: 14px; }
     .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
     button.k { padding: 18px 0; font-size: 20px; border-radius: 8px; border: 1px solid #30363d;
@@ -34,7 +34,8 @@
   </header>
   <main>
     <div id="view">
-      <img id="cam" src="/api/camera" alt="camera stream" />
+      <img id="cam" alt="color stream" />
+      <img id="depth" alt="depth stream" />
     </div>
     <div id="panel">
       <div class="pad">
@@ -58,6 +59,14 @@
   </main>
 
   <script>
+    // The camera service is host-networked on CAMERA_PORT; load its MJPEG
+    // stream directly so the heavy stream never passes through the rc proxy
+    // (which would starve the control endpoints on a single worker).
+    const CAMERA_PORT = 8000;
+    const camBase = location.protocol + "//" + location.hostname + ":" + CAMERA_PORT;
+    document.getElementById("cam").src = camBase + "/stream/color";
+    document.getElementById("depth").src = camBase + "/stream/depth";
+
     const held = new Set();
     const KEYMAP = { f: "f", b: "b", l: "l", r: "r",
       w: "f", s: "b", a: "l", d: "r",
@@ -72,10 +81,16 @@
       return { throttle, steer };
     }
 
+    let wasMoving = false;
     async function tick() {
       const v = vector();
       document.getElementById("thr").textContent = v.throttle.toFixed(2);
       document.getElementById("str").textContent = v.steer.toFixed(2);
+      const moving = v.throttle !== 0 || v.steer !== 0;
+      // Only POST while driving (the on-car watchdog needs the 10 Hz stream),
+      // plus one final zero on release. Idle = no requests, no error spam.
+      if (!moving && !wasMoving) return;
+      wasMoving = moving;
       try {
         await fetch("/api/drive", {
           method: "POST", headers: { "Content-Type": "application/json" },

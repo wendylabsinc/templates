@@ -14,6 +14,7 @@
 #include "as_camera_sdk_def.h"
 #include <turbojpeg.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -31,25 +32,58 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-static std::mutex g_mtx;
-static std::vector<unsigned char> g_jpeg;     // latest encoded frame
-static std::atomic<unsigned long> g_frames{0};
-static std::atomic<int> g_w{0}, g_h{0};
-static tjhandle g_tj = nullptr;
+struct Stream {
+    std::mutex mtx;
+    std::vector<unsigned char> jpeg;       // latest encoded frame
+    std::atomic<unsigned long> frames{0};
+    std::atomic<int> w{0}, h{0};
+};
+static Stream g_color;
+static Stream g_depth;
+static tjhandle g_tj = nullptr;            // guarded by g_tj_mtx (single encoder)
+static std::mutex g_tj_mtx;
 static int g_quality = 80;
+static int g_depth_min = 200;              // mm -> colormap range
+static int g_depth_max = 4000;
 
-static void encode_bgr(const unsigned char *bgr, int w, int h)
+static void encode_bgr(Stream &s, const unsigned char *bgr, int w, int h)
 {
     unsigned char *out = nullptr;
     unsigned long sz = 0;
-    if (tjCompress2(g_tj, bgr, w, 0, h, TJPF_BGR, &out, &sz,
-                    TJSAMP_420, g_quality, TJFLAG_FASTDCT) == 0) {
-        std::lock_guard<std::mutex> lk(g_mtx);
-        g_jpeg.assign(out, out + sz);
-        g_w = w; g_h = h;
-        g_frames++;
+    int rc;
+    {
+        std::lock_guard<std::mutex> lk(g_tj_mtx);
+        rc = tjCompress2(g_tj, bgr, w, 0, h, TJPF_BGR, &out, &sz,
+                         TJSAMP_420, g_quality, TJFLAG_FASTDCT);
+    }
+    if (rc == 0) {
+        std::lock_guard<std::mutex> lk(s.mtx);
+        s.jpeg.assign(out, out + sz);
+        s.w = w; s.h = h;
+        s.frames++;
     }
     if (out) tjFree(out);
+}
+
+// Colorize a 16-bit depth frame (millimetres) into a BGR jet image, then encode.
+static void encode_depth(const unsigned short *depth, int w, int h)
+{
+    std::vector<unsigned char> bgr((size_t)w * h * 3);
+    const float lo = (float)g_depth_min, hi = (float)g_depth_max;
+    for (int i = 0; i < w * h; i++) {
+        unsigned short d = depth[i];
+        unsigned char *p = &bgr[(size_t)i * 3];
+        if (d == 0) { p[0] = p[1] = p[2] = 0; continue; }  // invalid -> black
+        float t = (d - lo) / (hi - lo);
+        if (t < 0) t = 0; if (t > 1) t = 1;
+        // jet colormap
+        auto cl = [](float v) { return (unsigned char)(255.f * (v < 0 ? 0 : v > 1 ? 1 : v)); };
+        float r = std::min(4 * t - 1.5f, -4 * t + 4.5f);
+        float g = std::min(4 * t - 0.5f, -4 * t + 3.5f);
+        float b = std::min(4 * t + 0.5f, -4 * t + 2.5f);
+        p[0] = cl(b); p[1] = cl(g); p[2] = cl(r);  // BGR
+    }
+    encode_bgr(g_depth, bgr.data(), w, h);
 }
 
 // SDK stream callback — fires for every frame set.
@@ -58,13 +92,18 @@ static void on_frame(AS_CAM_PTR /*cam*/, const AS_SDK_Data_s *d, void * /*priv*/
     if (!d) return;
     if (d->rgbImg.size > 0 && d->rgbImg.data) {
         // SDK delivers RGB as BGR888 (size == width*height*3).
-        encode_bgr((const unsigned char *)d->rgbImg.data, d->rgbImg.width, d->rgbImg.height);
+        encode_bgr(g_color, (const unsigned char *)d->rgbImg.data, d->rgbImg.width, d->rgbImg.height);
     } else if (d->mjpegImg.size > 0 && d->mjpegImg.data) {
         // Some models deliver JPEG directly — pass through.
-        std::lock_guard<std::mutex> lk(g_mtx);
-        g_jpeg.assign((unsigned char *)d->mjpegImg.data,
-                      (unsigned char *)d->mjpegImg.data + d->mjpegImg.size);
-        g_frames++;
+        std::lock_guard<std::mutex> lk(g_color.mtx);
+        g_color.jpeg.assign((unsigned char *)d->mjpegImg.data,
+                            (unsigned char *)d->mjpegImg.data + d->mjpegImg.size);
+        g_color.frames++;
+    }
+    // Depth: 16-bit millimetres (size == w*h*2).
+    if (d->depthImg.size > 0 && d->depthImg.data &&
+        d->depthImg.size == d->depthImg.width * d->depthImg.height * 2) {
+        encode_depth((const unsigned short *)d->depthImg.data, d->depthImg.width, d->depthImg.height);
     }
 }
 
@@ -96,10 +135,13 @@ static void handle_client(int fd)
     }
 
     if (path.rfind("/health", 0) == 0 || path.rfind("/info", 0) == 0) {
-        char body[256];
+        char body[320];
         int n = snprintf(body, sizeof(body),
-                         "{\"ok\":true,\"backend\":\"angstrong-sdk\",\"frames\":%lu,\"width\":%d,\"height\":%d}",
-                         g_frames.load(), g_w.load(), g_h.load());
+                         "{\"ok\":true,\"backend\":\"angstrong-sdk\","
+                         "\"color\":{\"frames\":%lu,\"width\":%d,\"height\":%d},"
+                         "\"depth\":{\"frames\":%lu,\"width\":%d,\"height\":%d}}",
+                         g_color.frames.load(), g_color.w.load(), g_color.h.load(),
+                         g_depth.frames.load(), g_depth.w.load(), g_depth.h.load());
         char hdr[256];
         int hn = snprintf(hdr, sizeof(hdr),
                           "HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
@@ -110,7 +152,10 @@ static void handle_client(int fd)
         return;
     }
 
-    // Default: multipart MJPEG stream (/stream/color and anything else).
+    // Select stream by path: /stream/depth -> depth, everything else -> color.
+    Stream &stream = (path.find("depth") != std::string::npos) ? g_depth : g_color;
+
+    // Default: multipart MJPEG stream.
     const char *hdr =
         "HTTP/1.0 200 OK\r\n"
         "Access-Control-Allow-Origin: *\r\n"
@@ -122,8 +167,8 @@ static void handle_client(int fd)
     for (;;) {
         std::vector<unsigned char> frame;
         {
-            std::lock_guard<std::mutex> lk(g_mtx);
-            frame = g_jpeg;
+            std::lock_guard<std::mutex> lk(stream.mtx);
+            frame = stream.jpeg;
         }
         if (!frame.empty()) {
             char part[128];
@@ -165,6 +210,8 @@ int main()
     if (!cfg) cfg = "/opt/ascam/config/hp60c_v2_00_20230704_configEncrypt.json";
     int port = getenv("PORT") ? atoi(getenv("PORT")) : 8000;
     g_quality = getenv("JPEG_QUALITY") ? atoi(getenv("JPEG_QUALITY")) : 80;
+    if (getenv("DEPTH_MIN_MM")) g_depth_min = atoi(getenv("DEPTH_MIN_MM"));
+    if (getenv("DEPTH_MAX_MM")) g_depth_max = atoi(getenv("DEPTH_MAX_MM"));
 
     g_tj = tjInitCompress();
     if (!g_tj) { fprintf(stderr, "tjInitCompress failed\n"); return 1; }
@@ -197,11 +244,11 @@ int main()
     if (AS_SDK_RegisterStreamCallback(cam, &cb) != 0)
         fprintf(stderr, "[camera] RegisterStreamCallback failed\n");
 
-    if (AS_SDK_StartStream(cam, RGB_IMG_FLG) < 0) {
-        fprintf(stderr, "[camera] StartStream(RGB) failed\n");
+    if (AS_SDK_StartStream(cam, RGB_IMG_FLG | DEPTH_IMG_FLG) < 0) {
+        fprintf(stderr, "[camera] StartStream(RGB|DEPTH) failed\n");
         return 1;
     }
-    fprintf(stderr, "[camera] RGB stream started\n");
+    fprintf(stderr, "[camera] RGB+depth stream started\n");
 
     for (;;) pause();  // SDK delivers frames on its own threads
     return 0;

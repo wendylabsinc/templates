@@ -1,0 +1,25 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "services": {
+        "motion": {
+            "context": "./motion",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "camera": {
+            "context": "./camera",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "rc": {
+            "context": "./rc",
+            "dependsOn": ["motion", "camera"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    }
+}

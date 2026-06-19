@@ -25,6 +25,15 @@
             "entitlements": [
                 { "type": "network", "mode": "host" }
             ]
+        },
+        "joystick": {
+            "context": "./joystick",
+            "dependsOn": ["motion"],
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "input" },
+                { "type": "bluetooth" }
+            ]
         }
     }
 }

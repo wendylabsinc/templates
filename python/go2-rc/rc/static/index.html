@@ -1,0 +1,1143 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <!-- iOS PWA / "Add to Home Screen" niceties: full-screen with no
+         Safari chrome, dark status bar that overlays the page so we
+         draw under the notch. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="go2-RC" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#0b0d10" />
+    <meta name="format-detection" content="telephone=no" />
+    <title>go2-RC</title>
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --panel: rgba(20, 24, 30, 0.78);
+        --panel-edge: rgba(255, 255, 255, 0.08);
+        --fg: #f4f6f8;
+        --muted: #8b95a3;
+        --accent: #4ea7ff;
+        --ok: #43c581;
+        --warn: #f0a23c;
+        --danger: #ef4444;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        overflow: hidden;
+        /* iOS: kill the rubber-band overscroll, double-tap zoom,
+           text selection, and the gray tap-flash. Without these, the
+           joystick + buttons feel "off" on iPhone — taps lag, drags
+           start scrolling instead of moving the stick, long-press
+           pops up a Save Image / Copy Link menu over the camera. */
+        -webkit-tap-highlight-color: transparent;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        overscroll-behavior: none;
+        touch-action: none;
+      }
+
+      #app {
+        position: relative;
+        width: 100vw;
+        /* 100vh on iOS Safari includes the URL bar's overlap area;
+           100dvh tracks the actual visible viewport as the bar
+           shows/hides. Modern Safari supports it; older falls back. */
+        height: 100vh;
+        height: 100dvh;
+      }
+
+      /* Camera fills the whole viewport. The controls float above it.
+         pointer-events:none so a tap on the live frame goes straight
+         to whatever control is layered there (the joystick / talk
+         button etc), and so iOS Safari's long-press "Save Image"
+         menu can't pop over the camera. */
+      #camera {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        background: #000;
+        object-fit: contain;
+        pointer-events: none;
+        -webkit-touch-callout: none;
+        -webkit-user-drag: none;
+      }
+      #camera-fallback {
+        position: absolute;
+        inset: 0;
+        display: none;
+        place-items: center;
+        text-align: center;
+        color: var(--muted);
+        padding: 24px;
+        font-size: 14px;
+      }
+      #camera-fallback.visible {
+        display: grid;
+      }
+
+      /* Top status bar */
+      .status {
+        position: absolute;
+        top: env(safe-area-inset-top, 12px);
+        left: calc(env(safe-area-inset-left, 0px) + 12px);
+        right: calc(env(safe-area-inset-right, 0px) + 12px);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        pointer-events: none;
+      }
+      .status .pill {
+        background: var(--panel);
+        border: 1px solid var(--panel-edge);
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        line-height: 1;
+        backdrop-filter: blur(8px);
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+        pointer-events: auto;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      .dot.ok {
+        background: var(--ok);
+      }
+      .dot.warn {
+        background: var(--warn);
+      }
+      .dot.bad {
+        background: var(--danger);
+      }
+
+      /* Radar (top-right corner, above status pills' z-index but below
+         action buttons). 250x250 fixed-size canvas; the wrapper anchors it
+         to the top-right with the same edge inset as the status pills. */
+      #radar-wrap {
+        position: absolute;
+        top: calc(env(safe-area-inset-top, 12px) + 12px);
+        right: calc(env(safe-area-inset-right, 0px) + 12px);
+        width: 250px;
+        height: 250px;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid var(--panel-edge);
+        backdrop-filter: blur(8px);
+        border-radius: 12px;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      #radar { display: block; width: 100%; height: 100%; }
+      #radar-label {
+        position: absolute;
+        bottom: 6px;
+        left: 8px;
+        font-size: 11px;
+        color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }
+      /* Stale state: no perception message in STALE_MS. Desaturate +
+         dim the canvas, tint the label red, and let the existing
+         "STALE" suffix appended by JS do the rest. */
+      #radar-wrap.stale #radar { filter: grayscale(1) opacity(0.45); }
+      #radar-wrap.stale #radar-label { color: var(--danger); }
+      #radar-wrap.stale {
+        border-color: rgba(239, 68, 68, 0.45);
+      }
+      /* On narrow phones, shrink the radar so it doesn't eat the camera. */
+      @media (max-width: 600px) {
+        #radar-wrap { width: 160px; height: 160px; }
+      }
+
+      /* Action buttons row. Honor left + right safe-area for iPhone
+         landscape (notch on the leading edge). */
+      .actions {
+        position: absolute;
+        top: calc(env(safe-area-inset-top, 12px) + 44px);
+        left: calc(env(safe-area-inset-left, 0px) + 12px);
+        right: calc(env(safe-area-inset-right, 0px) + 12px);
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .btn {
+        background: var(--panel);
+        color: var(--fg);
+        border: 1px solid var(--panel-edge);
+        padding: 10px 14px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        backdrop-filter: blur(8px);
+        transition: transform 80ms ease, background 120ms ease;
+        /* iOS: instant tap (skip the 300 ms double-tap zoom delay) and
+           keep stop/talk events from initiating a scroll. */
+        touch-action: manipulation;
+        -webkit-appearance: none;
+        appearance: none;
+        /* Apple HIG: 44pt minimum touch target. */
+        min-height: 40px;
+      }
+      .btn:active {
+        transform: scale(0.97);
+        background: rgba(40, 48, 60, 0.92);
+      }
+      .btn.danger {
+        background: rgba(239, 68, 68, 0.92);
+        border-color: rgba(239, 68, 68, 1);
+        color: white;
+      }
+      .btn.danger:active {
+        background: rgba(220, 38, 38, 0.95);
+      }
+      /* Talk button: green glow + pulse while transmitting. */
+      #talk-btn.talking {
+        background: rgba(34, 197, 94, 0.85);
+        border-color: rgba(34, 197, 94, 1);
+        color: white;
+        box-shadow: 0 0 12px 2px rgba(34, 197, 94, 0.6);
+      }
+
+      /* Stop button — anchored bottom-center, big and obvious */
+      #stop {
+        position: absolute;
+        bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 16px 28px;
+        font-size: 15px;
+        letter-spacing: 0.5px;
+        font-weight: 700;
+        border-radius: 14px;
+      }
+
+      /* Virtual joystick — bottom-left */
+      #joy {
+        position: absolute;
+        bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
+        left: calc(env(safe-area-inset-left, 16px) + 16px);
+        width: 160px;
+        height: 160px;
+        border-radius: 50%;
+        background: var(--panel);
+        border: 1px solid var(--panel-edge);
+        backdrop-filter: blur(8px);
+        touch-action: none;
+      }
+      #joy .stick {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 64px;
+        height: 64px;
+        margin: -32px 0 0 -32px;
+        border-radius: 50%;
+        background: rgba(78, 167, 255, 0.85);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        transition: transform 80ms ease;
+      }
+      #joy .label {
+        position: absolute;
+        top: 6px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        color: var(--muted);
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+      }
+
+      /* Yaw slider — bottom-right */
+      #yaw {
+        position: absolute;
+        bottom: calc(env(safe-area-inset-bottom, 16px) + 16px);
+        right: calc(env(safe-area-inset-right, 16px) + 16px);
+        width: 160px;
+        height: 64px;
+        border-radius: 14px;
+        background: var(--panel);
+        border: 1px solid var(--panel-edge);
+        backdrop-filter: blur(8px);
+        touch-action: none;
+        display: grid;
+        place-items: center;
+      }
+      #yaw .knob {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 44px;
+        height: 44px;
+        margin: -22px 0 0 -22px;
+        border-radius: 50%;
+        background: rgba(78, 167, 255, 0.85);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      }
+      #yaw .label {
+        position: absolute;
+        top: 6px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 10px;
+        color: var(--muted);
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        pointer-events: none;
+      }
+
+      /* Speed + feel sliders above the stop button. Two stacked rows:
+         feel (soft↔hard) on top, speed (slow↔fast) below. Same chrome. */
+      #speed-wrap, #feel-wrap {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        background: var(--panel);
+        border: 1px solid var(--panel-edge);
+        backdrop-filter: blur(8px);
+        padding: 10px 14px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      #speed-wrap { bottom: calc(env(safe-area-inset-bottom, 16px) + 92px); }
+      #feel-wrap  { bottom: calc(env(safe-area-inset-bottom, 16px) + 138px); }
+      #speed-wrap input, #feel-wrap input {
+        appearance: none;
+        width: 130px;
+        height: 4px;
+        background: rgba(255, 255, 255, 0.15);
+        border-radius: 999px;
+      }
+      #speed-wrap input::-webkit-slider-thumb,
+      #feel-wrap input::-webkit-slider-thumb {
+        appearance: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--accent);
+        cursor: pointer;
+      }
+      #speed-wrap input::-moz-range-thumb,
+      #feel-wrap input::-moz-range-thumb {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--accent);
+        border: none;
+        cursor: pointer;
+      }
+      .slider-label {
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--muted);
+      }
+      .slider-val {
+        /* Fixed width so the slider doesn't jiggle as the digit count
+           changes (20% → 100%). Tabular numerals keep widths even. */
+        min-width: 2.6em;
+        text-align: right;
+        color: var(--fg);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Hint footer (keyboard cheatsheet, hidden on touch). Above
+         iPhone's home indicator on the right side. */
+      .hint {
+        position: absolute;
+        bottom: calc(env(safe-area-inset-bottom, 4px) + 4px);
+        right: calc(env(safe-area-inset-right, 0px) + 12px);
+        font-size: 10px;
+        color: var(--muted);
+        opacity: 0.6;
+      }
+      /* Hide the keyboard cheatsheet on touch-primary devices — it's
+         dead weight on a phone. */
+      @media (hover: none) and (pointer: coarse) {
+        .hint { display: none; }
+      }
+      @media (pointer: coarse) {
+        .hint {
+          display: none;
+        }
+      }
+
+      /* On narrow phones, shrink the joystick + yaw to keep stop
+         button reachable in landscape. iPhone in landscape gives us
+         ~390 px of height — joystick & yaw both shrink, and the
+         radar drops to 140 px so the camera is still visible behind it. */
+      @media (max-height: 480px) {
+        #joy {
+          width: 110px;
+          height: 110px;
+        }
+        #joy .stick {
+          width: 44px;
+          height: 44px;
+          margin: -22px 0 0 -22px;
+        }
+        #yaw {
+          width: 110px;
+          height: 52px;
+        }
+        #radar-wrap { width: 140px; height: 140px; }
+        #speed-wrap, #feel-wrap { padding: 6px 10px; font-size: 11px; }
+        #speed-wrap input, #feel-wrap input { width: 100px; }
+      }
+      /* iPhone portrait. Action buttons wrap to two rows; radar shrinks
+         a bit more to leave room. */
+      @media (max-width: 480px) and (orientation: portrait) {
+        #radar-wrap { width: 130px; height: 130px; }
+        .actions { gap: 6px; }
+        .btn { padding: 9px 11px; font-size: 12px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <img id="camera" alt="" />
+      <div id="camera-fallback">
+        camera offline — check CAMERA_UPSTREAM_URL on go2-RC
+      </div>
+
+      <!-- Lidar radar (top-right). 250x250 canvas drawn in world units
+           with the dog at center. Points fade ~3 s. -->
+      <div id="radar-wrap">
+        <canvas id="radar" width="250" height="250"></canvas>
+        <div id="radar-label">lidar · — m</div>
+      </div>
+
+      <div class="status">
+        <span class="pill"
+          ><span class="dot" id="dot-motion"></span
+          ><span id="motion-label">motion: …</span></span
+        >
+        <span class="pill"
+          ><span class="dot" id="dot-cam"></span
+          ><span id="cam-label">cam: …</span></span
+        >
+        <span class="pill"
+          ><span id="battery-label">battery: —</span></span
+        >
+      </div>
+
+      <div class="actions">
+        <button class="btn" data-action="stand">stand</button>
+        <button class="btn" data-action="sit">sit</button>
+        <button class="btn" data-action="lie">lie</button>
+        <button class="btn" data-action="hello">hello</button>
+        <button class="btn" data-action="dance">dance</button>
+        <button class="btn" data-action="bark">bark</button>
+        <button id="talk-btn" class="btn" aria-label="hold to talk">
+          🎤 hold to talk
+        </button>
+      </div>
+
+      <div id="joy" aria-label="movement">
+        <div class="label">move</div>
+        <div class="stick"></div>
+      </div>
+
+      <div id="yaw" aria-label="turn">
+        <div class="label">turn</div>
+        <div class="knob"></div>
+      </div>
+
+      <div id="speed-wrap">
+        <span class="slider-label">Speed</span>
+        <input id="speed" type="range" min="20" max="100" value="60" />
+        <span id="speed-val" class="slider-val">60%</span>
+      </div>
+
+      <div id="feel-wrap">
+        <span class="slider-label">Response</span>
+        <input id="feel" type="range" min="0" max="100" value="35" />
+        <span id="feel-val" class="slider-val">35%</span>
+      </div>
+
+      <button id="stop" class="btn danger" aria-label="stop">STOP</button>
+
+      <div class="hint">W/S move · A/D turn · Q/E strafe · shift run · T talk · space stop</div>
+    </div>
+
+    <script>
+      // === API helpers ====================================================
+      const TICK_MS = 100; // 10 Hz — matches go2-motion's 1 s watchdog with margin
+
+      // Hardware caps from go2-motion — UI is allowed to send anything,
+      // but we clamp client-side too so the slider's 100% behaves
+      // intuitively (you can read your "command" before it's clipped).
+      const MAX = { vx: 0.6, vy: 0.4, vyaw: 1.0 };
+
+      async function postJSON(path, body) {
+        try {
+          const r = await fetch(path, {
+            method: "POST",
+            headers: body ? { "content-type": "application/json" } : {},
+            body: body ? JSON.stringify(body) : undefined,
+          });
+          return r.ok;
+        } catch {
+          return false;
+        }
+      }
+
+      async function getJSON(path) {
+        try {
+          const r = await fetch(path);
+          if (!r.ok) return null;
+          return await r.json();
+        } catch {
+          return null;
+        }
+      }
+
+      // === Camera =========================================================
+      const cam = document.getElementById("camera");
+      const camFallback = document.getElementById("camera-fallback");
+      const camDot = document.getElementById("dot-cam");
+      const camLabel = document.getElementById("cam-label");
+
+      function attachCamera() {
+        // Cache-bust each (re)attach so MJPEG reloads after a hiccup
+        // instead of serving the closed stream from the browser cache.
+        cam.src = `/api/camera?t=${Date.now()}`;
+      }
+      cam.addEventListener("load", () => {
+        camFallback.classList.remove("visible");
+        camDot.className = "dot ok";
+        camLabel.textContent = "cam: live";
+      });
+      cam.addEventListener("error", () => {
+        camFallback.classList.add("visible");
+        camDot.className = "dot bad";
+        camLabel.textContent = "cam: down";
+        // Retry after a short delay — the camera service may just be
+        // booting; we don't want to spin a tight loop.
+        setTimeout(attachCamera, 3000);
+      });
+      attachCamera();
+
+      // === Velocity loop ==================================================
+      // We hold (vx, vy, vyaw) as a target. Every tick we send it to
+      // /api/velocity. When all three are zero AND were zero last tick
+      // we throttle the post (no point re-asserting "stopped" forever
+      // — go2-motion's watchdog handles that). One zero-tick is sent
+      // when the user releases controls so the watchdog window starts
+      // counting immediately rather than at the next non-zero command.
+
+      // `target` is the user's instantaneous intent (snap from inputs).
+      // `current` is what we actually send to motion. Each tick we lerp
+      // current toward target by `feelAlpha()` — this gives gentle
+      // accel/decel when the slider is "soft" and instant snap when
+      // "hard". STOP bypasses by zeroing both.
+      const target = { vx: 0, vy: 0, vyaw: 0 };
+      const current = { vx: 0, vy: 0, vyaw: 0 };
+      let lastSentZero = false;
+      let runBoost = false; // shift-to-run
+
+      const speedEl = document.getElementById("speed");
+      const feelEl = document.getElementById("feel");
+      const speedValEl = document.getElementById("speed-val");
+      const feelValEl = document.getElementById("feel-val");
+      const updateSpeedVal = () => { speedValEl.textContent = speedEl.value + "%"; };
+      const updateFeelVal = () => { feelValEl.textContent = feelEl.value + "%"; };
+      speedEl.addEventListener("input", updateSpeedVal);
+      feelEl.addEventListener("input", updateFeelVal);
+      updateSpeedVal();
+      updateFeelVal();
+
+      function speedScale() {
+        // Shift adds 25% headroom on top of the slider, capped at 100%.
+        const base = parseInt(speedEl.value, 10) / 100;
+        return Math.min(1, base * (runBoost ? 1.25 : 1.0));
+      }
+
+      function feelAlpha() {
+        // 0  (soft) → α = 0.05  (~1.4 s half-life)
+        // 100 (hard)→ α = 1.00  (instant)
+        const t = parseInt(feelEl.value, 10) / 100;
+        return 0.05 + t * 0.95;
+      }
+
+      function clamp(v, lim) {
+        return Math.max(-lim, Math.min(lim, v));
+      }
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      async function tick() {
+        const a = feelAlpha();
+        current.vx = lerp(current.vx, target.vx, a);
+        current.vy = lerp(current.vy, target.vy, a);
+        current.vyaw = lerp(current.vyaw, target.vyaw, a);
+        // Snap small residuals to zero so we don't dribble at 0.001 m/s.
+        if (Math.abs(current.vx) < 1e-3) current.vx = 0;
+        if (Math.abs(current.vy) < 1e-3) current.vy = 0;
+        if (Math.abs(current.vyaw) < 1e-3) current.vyaw = 0;
+
+        const isZero =
+          current.vx === 0 && current.vy === 0 && current.vyaw === 0;
+        if (isZero && lastSentZero) return; // skip — nothing changed
+        const body = {
+          vx: clamp(current.vx, MAX.vx),
+          vy: clamp(current.vy, MAX.vy),
+          vyaw: clamp(current.vyaw, MAX.vyaw),
+        };
+        const ok = await postJSON("/api/velocity", body);
+        if (!ok) {
+          // Don't spam — just flag the indicator. The status poll
+          // below will refresh on its own cadence.
+          motionDot.className = "dot bad";
+          motionLabel.textContent = "motion: send-fail";
+        }
+        lastSentZero = isZero;
+      }
+
+      setInterval(tick, TICK_MS);
+
+      // === Joystick (move: vx forward, vy strafe) =========================
+      const joy = document.getElementById("joy");
+      const stick = joy.querySelector(".stick");
+      const joyState = { active: false, pid: null, cx: 0, cy: 0, r: 0 };
+
+      function joyStart(e) {
+        e.preventDefault();
+        const t = e.touches ? e.touches[0] : e;
+        const rect = joy.getBoundingClientRect();
+        joyState.active = true;
+        joyState.pid = t.identifier ?? "mouse";
+        joyState.cx = rect.left + rect.width / 2;
+        joyState.cy = rect.top + rect.height / 2;
+        joyState.r = rect.width / 2;
+        joyMove(e);
+      }
+      function joyMove(e) {
+        if (!joyState.active) return;
+        e.preventDefault();
+        const t = e.touches
+          ? Array.from(e.touches).find((tt) => tt.identifier === joyState.pid) ||
+            e.touches[0]
+          : e;
+        const dx = t.clientX - joyState.cx;
+        const dy = t.clientY - joyState.cy;
+        const dist = Math.min(Math.hypot(dx, dy), joyState.r);
+        const ang = Math.atan2(dy, dx);
+        const sx = Math.cos(ang) * dist;
+        const sy = Math.sin(ang) * dist;
+        stick.style.transform = `translate(${sx}px, ${sy}px)`;
+        // Screen Y is down-positive; +vx is forward, so flip dy.
+        // go2-motion's +vy is LEFT strafe; right-stick (dx > 0) means
+        // "go right", so flip dx too.
+        const s = speedScale();
+        target.vx = (-dy / joyState.r) * MAX.vx * s;
+        target.vy = (-dx / joyState.r) * MAX.vy * s;
+      }
+      function joyEnd() {
+        joyState.active = false;
+        stick.style.transform = "translate(0, 0)";
+        target.vx = 0;
+        target.vy = 0;
+      }
+      joy.addEventListener("touchstart", joyStart, { passive: false });
+      joy.addEventListener("touchmove", joyMove, { passive: false });
+      joy.addEventListener("touchend", joyEnd);
+      joy.addEventListener("touchcancel", joyEnd);
+      joy.addEventListener("mousedown", joyStart);
+      window.addEventListener("mousemove", joyMove);
+      window.addEventListener("mouseup", joyEnd);
+
+      // === Yaw slider (turn left/right) ===================================
+      const yawEl = document.getElementById("yaw");
+      const yawKnob = yawEl.querySelector(".knob");
+      const yawState = { active: false, pid: null, cx: 0, w: 0 };
+
+      function yawStart(e) {
+        e.preventDefault();
+        const t = e.touches ? e.touches[0] : e;
+        const rect = yawEl.getBoundingClientRect();
+        yawState.active = true;
+        yawState.pid = t.identifier ?? "mouse";
+        yawState.cx = rect.left + rect.width / 2;
+        yawState.w = rect.width / 2;
+        yawMove(e);
+      }
+      function yawMove(e) {
+        if (!yawState.active) return;
+        e.preventDefault();
+        const t = e.touches
+          ? Array.from(e.touches).find((tt) => tt.identifier === yawState.pid) ||
+            e.touches[0]
+          : e;
+        const dx = t.clientX - yawState.cx;
+        const c = Math.max(-yawState.w, Math.min(yawState.w, dx));
+        yawKnob.style.transform = `translateX(${c}px)`;
+        // Right on knob = clockwise = -vyaw (per +left convention in
+        // go2-motion).
+        const s = speedScale();
+        target.vyaw = -(c / yawState.w) * MAX.vyaw * s;
+      }
+      function yawEnd() {
+        yawState.active = false;
+        yawKnob.style.transform = "translateX(0)";
+        target.vyaw = 0;
+      }
+      yawEl.addEventListener("touchstart", yawStart, { passive: false });
+      yawEl.addEventListener("touchmove", yawMove, { passive: false });
+      yawEl.addEventListener("touchend", yawEnd);
+      yawEl.addEventListener("touchcancel", yawEnd);
+      yawEl.addEventListener("mousedown", yawStart);
+      window.addEventListener("mousemove", yawMove);
+      window.addEventListener("mouseup", yawEnd);
+
+      // === Keyboard (game-style: diagonal-normalized + shift-to-run) =====
+      // W/S = forward/back, Q/E = strafe, A/D = turn. These map to a
+      // unit vector (kx, ky) for translation and a separate kyaw for
+      // turning. We normalize (kx, ky) so W+Q isn't √2 faster than
+      // pure W — exactly like a game's left stick. Yaw is independent
+      // (it's another axis), so it isn't part of the same normalize.
+      const keys = new Set();
+      const MOVE_KEYS = ["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE"];
+      function applyKeys() {
+        const s = speedScale();
+        let kx = 0, ky = 0, kyaw = 0;
+        if (keys.has("KeyW")) kx += 1;
+        if (keys.has("KeyS")) kx -= 1;
+        if (keys.has("KeyQ")) ky += 1; // strafe left  (+vy)
+        if (keys.has("KeyE")) ky -= 1;
+        if (keys.has("KeyA")) kyaw += 1; // turn left   (+vyaw)
+        if (keys.has("KeyD")) kyaw -= 1;
+        const mag = Math.hypot(kx, ky);
+        if (mag > 1) { kx /= mag; ky /= mag; }
+        target.vx = kx * MAX.vx * s;
+        target.vy = ky * MAX.vy * s;
+        target.vyaw = kyaw * MAX.vyaw * s;
+      }
+      document.addEventListener("keydown", (e) => {
+        if (e.repeat) return;
+        if (e.code === "Space") {
+          e.preventDefault();
+          stopBtn.click();
+          return;
+        }
+        if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
+          runBoost = true;
+          applyKeys();
+          return;
+        }
+        if (MOVE_KEYS.includes(e.code)) {
+          keys.add(e.code);
+          applyKeys();
+        }
+      });
+      document.addEventListener("keyup", (e) => {
+        if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
+          runBoost = false;
+          applyKeys();
+          return;
+        }
+        if (keys.delete(e.code)) applyKeys();
+      });
+      // Release everything on tab-out — otherwise the dog walks off
+      // when the user alt-tabs away with W held.
+      window.addEventListener("blur", () => {
+        keys.clear();
+        runBoost = false;
+        applyKeys();
+      });
+
+      // === Action buttons + stop ==========================================
+      // Skip buttons with no data-action — the talk button shares the
+      // .btn class but is wired up separately to push-to-talk and would
+      // otherwise POST /api/undefined → 404.
+      document.querySelectorAll(".actions .btn[data-action]").forEach((b) => {
+        b.addEventListener("click", () => {
+          postJSON(`/api/${b.dataset.action}`);
+        });
+      });
+      const stopBtn = document.getElementById("stop");
+      stopBtn.addEventListener("click", () => {
+        // Zero the target FIRST so the next tick doesn't immediately
+        // re-assert motion if the user was holding a key. Also zero
+        // `current` directly to bypass the soft-feel ramp — STOP must
+        // be instant regardless of the slider position.
+        keys.clear();
+        runBoost = false;
+        target.vx = target.vy = target.vyaw = 0;
+        current.vx = current.vy = current.vyaw = 0;
+        joyEnd();
+        yawEnd();
+        postJSON("/api/stop");
+      });
+
+      // === Status polling =================================================
+      const motionDot = document.getElementById("dot-motion");
+      const motionLabel = document.getElementById("motion-label");
+      const batteryLabel = document.getElementById("battery-label");
+
+      async function pollStatus() {
+        const h = await getJSON("/api/health");
+        if (h && h.motion && h.motion.ok) {
+          motionDot.className = "dot ok";
+          motionLabel.textContent = "motion: ok";
+        } else {
+          motionDot.className = "dot bad";
+          motionLabel.textContent = `motion: ${
+            (h && h.motion && h.motion.reason) || "down"
+          }`;
+        }
+        const s = await getJSON("/api/state");
+        // go2-motion returns {ok: bool, state: {...}}; battery SOC is
+        // typically state.bms.soc in percent. Be defensive — the
+        // schema can vary by firmware.
+        const st = (s && s.state) || {};
+        const soc =
+          (st.bms && (st.bms.soc ?? st.bms.SOC)) ??
+          st.battery ??
+          st.soc ??
+          null;
+        batteryLabel.textContent =
+          soc != null ? `battery: ${Math.round(soc)}%` : "battery: —";
+      }
+      pollStatus();
+      setInterval(pollStatus, 2000);
+
+      // === Push-to-talk: browser mic → dog speaker ========================
+      // Hold the talk button (or T key) → grab mic via getUserMedia,
+      // capture PCM via Web Audio, decimate to 8 kHz mono Int16, send
+      // ~20 ms binary frames over WebSocket. go2-camera µ-law-encodes
+      // and publishes to the dog's audio bus.
+      //
+      // Mic permission requires HTTPS or localhost; we already deploy
+      // behind TLS so this just works.
+      //
+      // Note: ScriptProcessor is deprecated but works in every browser
+      // and lets us keep this in a single file. AudioWorklet would be
+      // cleaner but needs a separate worklet module URL.
+      const talkBtn = document.getElementById("talk-btn");
+
+      // 48 kHz mono — matches what aiortc encodes to Opus on the
+      // server side. We tried 8 kHz first because watchtower's
+      // documentation said the dog wants µ-law @ 8 kHz, but that's
+      // for the DDS audio topics (which we don't use). The WebRTC
+      // audio track negotiated to Opus @ 48 kHz, the standard default.
+      const TALK_OUT_RATE = 48000;
+      const TALK_FRAME_SAMPLES = 960; // 20 ms at 48 kHz
+      let talkCtx = null;
+      let talkStream = null;
+      let talkSrc = null;
+      let talkProc = null;
+      let talkSock = null;
+      let talkActive = false;
+
+      async function talkStart() {
+        if (talkActive) return;
+        talkActive = true;
+        talkBtn.classList.add("talking");
+
+        // Order matters on iOS Safari:
+        //   1. Create AudioContext synchronously inside the gesture
+        //      handler, BEFORE any await. After the first await, the
+        //      browser considers the user-activation token spent and
+        //      a fresh AudioContext won't be allowed to leave the
+        //      "suspended" state.
+        //   2. Open the WebSocket synchronously too — same reason
+        //      isn't strictly enforced but keeps things tidy.
+        //   3. THEN await resume() and getUserMedia.
+        //
+        // We ask for `sampleRate: TALK_OUT_RATE` (8 kHz) so the browser
+        // resamples internally with a proper anti-alias filter, and our
+        // ScriptProcessor sees clean 8 kHz frames — no manual decimator,
+        // no aliasing noise on machines whose native rate isn't a
+        // multiple of 8000 (Mac AudioContext defaults to 44.1 kHz).
+        // If the browser refuses the requested rate (rare on modern
+        // Chrome/Safari/Firefox), it'll throw and we fall back.
+        const Ctor = window.AudioContext || window.webkitAudioContext;
+        try {
+          talkCtx = new Ctor({ sampleRate: TALK_OUT_RATE });
+        } catch (e) {
+          console.warn("AudioContext({sampleRate}) unsupported, falling back:", e);
+          talkCtx = new Ctor();
+        }
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        talkSock = new WebSocket(`${proto}//${location.host}/api/talk/ws`);
+        talkSock.binaryType = "arraybuffer";
+
+        try { await talkCtx.resume(); } catch { /* */ }
+        try {
+          talkStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true },
+          });
+        } catch (e) {
+          console.warn("mic permission denied:", e);
+          talkStop();
+          return;
+        }
+        // If the user already let go of the button before getUserMedia
+        // resolved, talkStop() may have been called and torn things down.
+        if (!talkActive || !talkCtx) return;
+        talkSrc = talkCtx.createMediaStreamSource(talkStream);
+        // ScriptProcessor must use a power-of-two buffer >= 256. At
+        // 8 kHz, 1024 = 128 ms latency — fine for PTT and not so small
+        // it glitches on slower devices. If the AudioContext fell back
+        // to 44.1/48 kHz (rare), this still works — we resample inline
+        // below with linear interpolation.
+        talkProc = talkCtx.createScriptProcessor(1024, 1, 1);
+        const ctxRate = talkCtx.sampleRate;
+        const needsResample = Math.abs(ctxRate - TALK_OUT_RATE) > 1;
+        console.log(
+          `talk: AudioContext rate=${ctxRate} target=${TALK_OUT_RATE} ` +
+          `resample=${needsResample}`
+        );
+        const ratio = ctxRate / TALK_OUT_RATE;
+        let pendingOut = []; // accumulated Int16s, flushed in 160-sample frames
+        let resamplePos = 0; // fractional read position across callbacks
+
+        function clampToInt16(s) {
+          if (s > 1) s = 1; else if (s < -1) s = -1;
+          return (s * 0x7fff) | 0;
+        }
+
+        talkProc.onaudioprocess = (e) => {
+          if (!talkActive) return;
+          const inBuf = e.inputBuffer.getChannelData(0);
+          if (!needsResample) {
+            // Native 8 kHz — straight Float32 → Int16, no decimation.
+            for (let i = 0; i < inBuf.length; i++) {
+              pendingOut.push(clampToInt16(inBuf[i]));
+            }
+          } else {
+            // Linear-interpolating resampler. Walk a fractional read
+            // index across consecutive input buffers; on each step,
+            // interpolate between the two surrounding samples.
+            while (resamplePos < inBuf.length) {
+              const i0 = Math.floor(resamplePos);
+              const i1 = Math.min(i0 + 1, inBuf.length - 1);
+              const frac = resamplePos - i0;
+              const s = inBuf[i0] * (1 - frac) + inBuf[i1] * frac;
+              pendingOut.push(clampToInt16(s));
+              resamplePos += ratio;
+            }
+            resamplePos -= inBuf.length;
+          }
+
+          while (pendingOut.length >= TALK_FRAME_SAMPLES) {
+            const frame = pendingOut.splice(0, TALK_FRAME_SAMPLES);
+            const buf = new Int16Array(frame);
+            if (talkSock && talkSock.readyState === WebSocket.OPEN) {
+              talkSock.send(buf.buffer);
+            }
+          }
+        };
+        talkSrc.connect(talkProc);
+        // Wire processor to a muted destination so onaudioprocess fires
+        // (some browsers won't pump the graph if it's disconnected).
+        const sink = talkCtx.createGain();
+        sink.gain.value = 0;
+        talkProc.connect(sink);
+        sink.connect(talkCtx.destination);
+      }
+
+      function talkStop() {
+        if (!talkActive) return;
+        talkActive = false;
+        talkBtn.classList.remove("talking");
+        try { talkProc && talkProc.disconnect(); } catch { /* */ }
+        try { talkSrc && talkSrc.disconnect(); } catch { /* */ }
+        try { talkCtx && talkCtx.close(); } catch { /* */ }
+        if (talkStream) talkStream.getTracks().forEach((t) => t.stop());
+        if (talkSock) {
+          try { talkSock.close(); } catch { /* */ }
+        }
+        talkProc = talkSrc = talkCtx = talkStream = talkSock = null;
+      }
+
+      // Mouse/touch + T key, all push-to-talk.
+      talkBtn.addEventListener("mousedown", talkStart);
+      talkBtn.addEventListener("touchstart", (e) => { e.preventDefault(); talkStart(); }, { passive: false });
+      window.addEventListener("mouseup", talkStop);
+      talkBtn.addEventListener("touchend", talkStop);
+      talkBtn.addEventListener("touchcancel", talkStop);
+      document.addEventListener("keydown", (e) => {
+        if (e.repeat) return;
+        if (e.code === "KeyT") { e.preventDefault(); talkStart(); }
+      });
+      document.addEventListener("keyup", (e) => {
+        if (e.code === "KeyT") talkStop();
+      });
+      // Tab-out / page hide → stop transmitting; don't leave the mic hot.
+      window.addEventListener("blur", talkStop);
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) talkStop();
+      });
+
+      // === Lidar radar ====================================================
+      // Connects to /api/perception/ws (proxied to go2-camera). Each
+      // message is a snapshot: { free_space[36], free_space_min_m,
+      // free_space_min_bearing_deg, scan_xy: [[x,y],...], ... }.
+      //
+      // Each scan is in the dog's CURRENT body frame at capture time.
+      // We don't have pose-anchored history here, so drawing older scans
+      // against the current frame smears badly when the dog turns. The
+      // radar therefore shows only the latest scan with a brief fade so
+      // the canvas still looks alive between messages (~100 ms apart at
+      // 10 Hz). If you want a multi-scan map later, anchor the buffer
+      // in world frame using /go2/dog/pose_json (same trick as
+      // go2-brain/src/brain/trail.py).
+      const radar = document.getElementById("radar");
+      const radarLabel = document.getElementById("radar-label");
+      const ctx = radar.getContext("2d");
+
+      // World-frame range shown by the radar. Lidar processor caps at
+      // 5 m, so 6 m radius leaves a small margin.
+      const RADAR_RANGE_M = 6.0;
+      // Latest-scan-only with a tight fade — see comment above.
+      const FADE_MS = 150;
+      const SCAN_BUF_MAX = 1;
+      // After this long with no perception message, the radar is stale.
+      // We gray it + badge the label so the operator notices instead of
+      // trusting a frozen snapshot. ~1 s = comfortably longer than the
+      // 100 ms producer cadence, short enough to react to a real outage.
+      const STALE_MS = 1000;
+
+      const scanBuf = []; // [{ t: msMonotonic, xy: [[x,y],...] }, ...]
+      let lastSnap = null;
+      let lastSnapAt = 0; // performance.now() of the most recent applySnap
+
+      function drawRadar() {
+        const W = radar.width, H = radar.height;
+        const cx = W / 2, cy = H / 2;
+        const scale = Math.min(W, H) / 2 / RADAR_RANGE_M;
+        ctx.clearRect(0, 0, W, H);
+
+        // Range rings every 1 m for scale.
+        ctx.strokeStyle = "rgba(255,255,255,0.10)";
+        ctx.lineWidth = 1;
+        for (let r = 1; r <= RADAR_RANGE_M; r++) {
+          ctx.beginPath();
+          ctx.arc(cx, cy, r * scale, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        // Cardinal axes (forward/back/left/right) — faint.
+        ctx.beginPath();
+        ctx.moveTo(cx, 4); ctx.lineTo(cx, H - 4);
+        ctx.moveTo(4, cy); ctx.lineTo(W - 4, cy);
+        ctx.stroke();
+
+        // Lidar points, oldest to newest so newer paints on top.
+        const now = performance.now();
+        for (const scan of scanBuf) {
+          const age = now - scan.t;
+          if (age > FADE_MS) continue;
+          const alpha = 1.0 - age / FADE_MS;
+          ctx.fillStyle = `rgba(120, 220, 255, ${alpha.toFixed(3)})`;
+          for (const [x, y] of scan.xy) {
+            // dog frame: +x forward (up on screen), +y left (left on screen)
+            const px = cx - y * scale;
+            const py = cy - x * scale;
+            ctx.fillRect(px - 1, py - 1, 2, 2);
+          }
+        }
+
+        // Dog marker — small triangle pointing up (+x_robot).
+        ctx.fillStyle = "rgba(122, 162, 247, 0.9)";
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - 8);
+        ctx.lineTo(cx - 6, cy + 6);
+        ctx.lineTo(cx + 6, cy + 6);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      function applySnap(snap) {
+        lastSnap = snap;
+        lastSnapAt = performance.now();
+        if (snap.scan_xy && snap.scan_xy.length) {
+          scanBuf.push({ t: lastSnapAt, xy: snap.scan_xy });
+          while (scanBuf.length > SCAN_BUF_MAX) scanBuf.shift();
+        }
+        const m = Number(snap.free_space_min_m);
+        radarLabel.textContent = Number.isFinite(m)
+          ? `lidar · ${m.toFixed(2)} m @ ${Math.round(snap.free_space_min_bearing_deg)}°`
+          : "lidar · — m";
+      }
+
+      // Visual stale state: once we've had data and then stop getting it,
+      // grey the radar + badge the label.
+      // Short-circuits when the class state hasn't changed so the DOM is
+      // touched at most once per transition.
+      const radarWrap = document.getElementById("radar-wrap");
+      let staleNow = false;
+      function applyStaleness() {
+        const stale = lastSnapAt > 0 && (performance.now() - lastSnapAt) > STALE_MS;
+        if (stale === staleNow) return;
+        staleNow = stale;
+        radarWrap.classList.toggle("stale", stale);
+        if (stale) {
+          // Append STALE if the label has a real reading; replace if "— m".
+          const cur = radarLabel.textContent;
+          radarLabel.textContent = cur.includes("STALE")
+            ? cur
+            : (cur.startsWith("lidar · — m") ? "lidar · STALE" : `${cur} · STALE`);
+        } else if (lastSnap) {
+          // Recovered — let the next applySnap repaint the label cleanly.
+          // Nothing to do here; applySnap will overwrite within ~100 ms.
+        }
+      }
+
+      // Animation: redraw every frame so the latest scan fades smoothly
+      // between WS messages. Cheap (≤500 points × 1 scan).
+      function loop() {
+        applyStaleness();
+        drawRadar();
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+
+      // WebSocket with auto-reconnect. Same-origin, scheme follows the page.
+      function connectPerception() {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        const url = `${proto}//${location.host}/api/perception/ws`;
+        const sock = new WebSocket(url);
+        sock.addEventListener("message", (e) => {
+          try { applySnap(JSON.parse(e.data)); } catch { /* malformed — drop */ }
+        });
+        sock.addEventListener("close", () => setTimeout(connectPerception, 1500));
+        sock.addEventListener("error", () => sock.close());
+      }
+      connectPerception();
+    </script>
+  </body>
+</html>

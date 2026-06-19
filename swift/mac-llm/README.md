@@ -11,7 +11,9 @@ Metal, and unified memory.
 
 ## How it works
 
-`wendy run` deploys a native Swift supervisor to the target Mac. On startup it:
+`wendy run` builds this Xcode project with `xcodebuild` and deploys the native Swift supervisor to the target Mac. The Xcode build is intentional: MLX Swift requires compiled Metal shader resources from the `Cmlx` package, and upstream MLX documents that “SwiftPM (command line) cannot build the Metal shaders so the ultimate build has to be done via Xcode.”
+
+On startup the supervisor:
 
 1. applies `Brewfile.wendy` on the target Mac, installing `uv`
 2. installs pinned Open WebUI (`{{.OPEN_WEBUI_VERSION}}`) app-locally with `uv`
@@ -27,8 +29,8 @@ Persistent runtime data is stored on the target Mac under:
 ```
 
 Model weights are downloaded during app startup into the app cache, before Open
-WebUI is marked ready. Do not commit model weights, Open WebUI data, or `.build/`
-artifacts.
+WebUI is marked ready. Do not commit model weights, Open WebUI data, `.build/`,
+or `.xcode/` artifacts.
 
 ## Run on a headless Mac agent
 
@@ -69,7 +71,7 @@ The default model is:
 Change it in `wendy.json` under `run.args` (`--model`) or regenerate with:
 
 ```sh
-wendy init --target darwin --template llm --var MODEL_ID=mlx-community/Qwen2.5-3B-Instruct-4bit
+wendy init --target darwin --template mac-llm --var MODEL_ID=mlx-community/Qwen2.5-3B-Instruct-4bit
 ```
 
 Useful options in `wendy.json`:
@@ -97,13 +99,19 @@ Examples:
 Build on Apple Silicon macOS:
 
 ```sh
-swift build
+xcodebuild \
+  -project MacLLM.xcodeproj \
+  -scheme MacLLM \
+  -configuration Release \
+  -derivedDataPath .xcode \
+  -skipMacroValidation \
+  -skipPackagePluginValidation
 ```
 
 Run locally without Wendy:
 
 ```sh
-swift run {{.APP_ID}} \
+.xcode/Build/Products/Release/MacLLM \
   --webui-host 127.0.0.1 \
   --webui-port {{.PORT}} \
   --mlx-host 127.0.0.1 \

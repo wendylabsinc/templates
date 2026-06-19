@@ -1,0 +1,11 @@
+.build/
+.xcode/
+DerivedData/
+*.xcuserstate
+!MacLLM.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
+# Runtime data belongs on the target Mac.
+open-webui-data/
+cache/
+secrets/
+uv-tools/

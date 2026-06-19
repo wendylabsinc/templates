@@ -4,6 +4,9 @@
     "language": "swift",
     "platform": "darwin",
     "brewfile": "Brewfile.wendy",
+    "xcode": {
+        "scheme": "MacLLM"
+    },
     "run": {
         "args": [
             "--webui-host", "0.0.0.0",

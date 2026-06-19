@@ -77,23 +77,24 @@ Local LLM chat app with Open WebUI.
 
 On WendyOS, the Python template runs Ollama and Open WebUI as a **multi-service app group**: a standard `docker-compose.yml` defines the `ollama` and `open-webui` services, while a companion `wendy.json` adds the `appId` and GPU entitlement for Ollama.
 
-On Wendy Agent for Mac, the Swift template runs a native Apple MLX backend plus Open WebUI. `Brewfile.wendy` installs `uv` on the target Mac, and the Swift supervisor installs pinned Open WebUI app-locally with `uv`, starts the private MLX `/v1` API on localhost, and exposes Open WebUI on the LAN.
-
 | Target | Language | Framework | Default Port | Directory |
 |--------|----------|-----------|-------------|-----------|
 | WendyOS | Python | Ollama + Open WebUI | 8080 | `python/llm/` |
-| Wendy Agent for Mac | Swift | MLX LLM + Hummingbird + Open WebUI | 8080 | `swift/llm/` |
-
-For WendyOS:
 
 ```bash
 wendy init --app-id llm --target wendyos --language python --template llm --assistant skip --git-init no
 ```
 
-For native macOS MLX:
+### mac-llm
+
+Native macOS MLX LLM chat app with Open WebUI for Wendy Agent for Mac. The Swift template runs a native Apple MLX backend plus Open WebUI. `Brewfile.wendy` installs `uv` on the target Mac, and the Swift supervisor installs pinned Open WebUI app-locally with `uv`, starts the private MLX `/v1` API on localhost, and exposes Open WebUI on the LAN.
+
+| Target | Language | Framework | Default Port | Directory |
+|--------|----------|-----------|-------------|-----------|
+| Wendy Agent for Mac | Swift | MLX LLM + Hummingbird + Open WebUI | 8080 | `swift/mac-llm/` |
 
 ```bash
-wendy init --app-id mac-llm --target darwin --language swift --template llm --assistant skip --git-init no
+wendy init --app-id mac-llm --target darwin --language swift --template mac-llm --assistant skip --git-init no
 ```
 
 ### common

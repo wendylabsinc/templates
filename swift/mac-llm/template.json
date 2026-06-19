@@ -1,5 +1,5 @@
 {
-    "name": "llm",
+    "name": "mac-llm",
     "description": "Native macOS MLX LLM chat app with Open WebUI",
     "variables": [
         {

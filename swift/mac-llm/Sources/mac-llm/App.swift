@@ -1,4 +1,5 @@
 import ArgumentParser
+import Dispatch
 import Foundation
 import Hummingbird
 import HuggingFace
@@ -95,7 +96,11 @@ struct MacMLXLLMApp {
         try await service.prepare()
 
         let openWebUIProcess = try openWebUI.start()
-        defer { openWebUIProcess.terminate() }
+        let shutdownHandlers = installShutdownHandlers(openWebUIProcess: openWebUIProcess)
+        defer {
+            shutdownHandlers.forEach { $0.cancel() }
+            openWebUIProcess.terminate()
+        }
 
         let router = buildRouter(options: options, service: service, apiKey: apiKey)
         let app = Application(
@@ -110,6 +115,22 @@ struct MacMLXLLMApp {
         print("The MLX API is bound to localhost and protected with an app-generated API key.")
 
         try await app.runService()
+    }
+}
+
+func installShutdownHandlers(openWebUIProcess: RunningProcess) -> [DispatchSourceSignal] {
+    let signals = [SIGTERM, SIGINT]
+    return signals.map { signalNumber in
+        signal(signalNumber, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+        source.setEventHandler {
+            print("Received signal \(signalNumber); stopping Open WebUI.")
+            openWebUIProcess.terminate()
+            openWebUIProcess.waitUntilExit()
+            Foundation.exit(signalNumber == SIGINT ? 130 : 143)
+        }
+        source.resume()
+        return source
     }
 }
 
@@ -265,7 +286,11 @@ struct OpenWebUISupervisor: Sendable {
 
         let process = Process()
         process.executableURL = runtime.openWebUIExecutableURL
-        process.arguments = ["serve"]
+        process.arguments = [
+            "serve",
+            "--host", options.webuiHost,
+            "--port", String(options.webuiPort),
+        ]
         process.environment = env
         process.currentDirectoryURL = runtime.openWebUIDataURL
         pipeProcessOutput(process, prefix: "open-webui")
@@ -344,6 +369,10 @@ final class RunningProcess: @unchecked Sendable {
         if process.isRunning {
             process.terminate()
         }
+    }
+
+    func waitUntilExit() {
+        process.waitUntilExit()
     }
 }
 

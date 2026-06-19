@@ -3,16 +3,20 @@
     "version": "0.1.0",
     "language": "swift",
     "platform": "darwin",
+    "brewfile": "Brewfile.wendy",
     "run": {
         "args": [
-            "--host", "0.0.0.0",
-            "--port", "{{.PORT}}",
+            "--webui-host", "0.0.0.0",
+            "--webui-port", "{{.PORT}}",
+            "--mlx-host", "127.0.0.1",
+            "--mlx-port", "{{.MLX_PORT}}",
             "--model", "{{.MODEL_ID}}",
+            "--open-webui-version", "{{.OPEN_WEBUI_VERSION}}",
             "--default-max-tokens", "{{.MAX_TOKENS}}"
         ]
     },
     "readiness": {
         "tcpSocket": { "port": {{.PORT}} },
-        "timeoutSeconds": 60
+        "timeoutSeconds": 300
     }
 }

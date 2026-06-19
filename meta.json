@@ -35,14 +35,9 @@
         },
         {
             "name": "llm",
-            "description": "Local LLM chat app: Ollama + Open WebUI as a compose app group",
-            "languages": ["python"]
-        },
-        {
-            "name": "mlx-openwebui",
-            "description": "Native macOS Swift MLX LLM backend for Open WebUI",
-            "targets": ["darwin"],
-            "languages": ["swift"]
+            "description": "Local LLM chat app: Ollama + Open WebUI on WendyOS, or Swift MLX + Open WebUI on Mac",
+            "targets": ["wendyos", "darwin"],
+            "languages": ["python", "swift"]
         },
         {
             "name": "camera-feed-yolo",

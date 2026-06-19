@@ -1,6 +1,6 @@
 {
-    "name": "mlx-openwebui",
-    "description": "Native macOS Swift MLX LLM backend for Open WebUI",
+    "name": "llm",
+    "description": "Native macOS MLX LLM chat app with Open WebUI",
     "variables": [
         {
             "name": "APP_ID",
@@ -11,18 +11,33 @@
         },
         {
             "name": "PORT",
-            "description": "OpenAI-compatible API port",
+            "description": "Open WebUI port",
             "type": "integer",
             "default": 8080,
-            "prompt": "HTTP port",
+            "prompt": "Open WebUI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "MLX_PORT",
+            "description": "Private localhost OpenAI-compatible MLX API port",
+            "type": "integer",
+            "default": 11435,
+            "prompt": "Private MLX API port",
             "validate": { "min": 1, "max": 65535 }
         },
         {
             "name": "MODEL_ID",
             "description": "Hugging Face MLX model ID to load on the Mac agent",
             "type": "string",
-            "default": "mlx-community/Qwen1.5-0.5B-Chat-4bit",
+            "default": "mlx-community/Llama-3.2-1B-Instruct-4bit",
             "prompt": "MLX model ID"
+        },
+        {
+            "name": "OPEN_WEBUI_VERSION",
+            "description": "Pinned Open WebUI package version installed with uv on the target Mac",
+            "type": "string",
+            "default": "0.9.5",
+            "prompt": "Open WebUI version"
         },
         {
             "name": "MAX_TOKENS",

@@ -73,30 +73,27 @@ The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is
 
 ### llm
 
-Local LLM chat app with Ollama and Open WebUI, rebranded with Wendy assets. Built as a **multi-service app group**: a standard `docker-compose.yml` defines the `ollama` and `open-webui` services (ports, environment, named volumes, `depends_on`) and stays fully Docker Desktop-compatible, while a companion `wendy.json` adds the `appId` and the GPU entitlement for the `ollama` service. Model weights and WebUI data persist in named volumes.
+Local LLM chat app with Open WebUI.
 
-| Language | Framework | Default Port | Directory |
-|----------|-----------|-------------|-----------|
-| Python | Ollama + Open WebUI | 8080 | `python/llm/` |
+On WendyOS, the Python template runs Ollama and Open WebUI as a **multi-service app group**: a standard `docker-compose.yml` defines the `ollama` and `open-webui` services, while a companion `wendy.json` adds the `appId` and GPU entitlement for Ollama.
 
-### mlx-openwebui
+On Wendy Agent for Mac, the Swift template runs a native Apple MLX backend plus Open WebUI. `Brewfile.wendy` installs `uv` on the target Mac, and the Swift supervisor installs pinned Open WebUI app-locally with `uv`, starts the private MLX `/v1` API on localhost, and exposes Open WebUI on the LAN.
 
-Native macOS Swift backend for Open WebUI using Apple MLX / `mlx-swift-lm`. This template targets Wendy Agent for Mac (`platform: "darwin"`) and exposes `/v1/models` plus `/v1/chat/completions` for OpenAI-compatible clients.
+| Target | Language | Framework | Default Port | Directory |
+|--------|----------|-----------|-------------|-----------|
+| WendyOS | Python | Ollama + Open WebUI | 8080 | `python/llm/` |
+| Wendy Agent for Mac | Swift | MLX LLM + Hummingbird + Open WebUI | 8080 | `swift/llm/` |
 
-| Language | Framework | Default Port | Directory |
-|----------|-----------|-------------|-----------|
-| Swift | MLX LLM + Hummingbird | 8080 | `swift/mlx-openwebui/` |
-
-Interactive init shows a model picker with `model`, `size`, `parameters`, and `comments` columns. Non-interactive init defaults to the smallest Gemma 4 option:
+For WendyOS:
 
 ```bash
 wendy init --app-id llm --target wendyos --language python --template llm --assistant skip --git-init no
 ```
 
-For the native macOS MLX backend:
+For native macOS MLX:
 
 ```bash
-wendy init --app-id mac-llm --target darwin --language swift --template mlx-openwebui --assistant skip --git-init no
+wendy init --app-id mac-llm --target darwin --language swift --template llm --assistant skip --git-init no
 ```
 
 ### common

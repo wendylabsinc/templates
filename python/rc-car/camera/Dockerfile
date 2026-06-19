@@ -36,6 +36,8 @@ ENV LD_LIBRARY_PATH=/opt/ascam/lib
 ENV ASCAM_CONFIG=/opt/ascam/config/hp60c_v2_00_20230704_configEncrypt.json
 ENV PORT=8000
 ENV JPEG_QUALITY=80
+# Orientation correction: none | hflip | vflip | 180 (set per how the camera is mounted)
+ENV CAMERA_FLIP=none
 
 EXPOSE 8000
 

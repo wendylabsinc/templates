@@ -45,15 +45,42 @@ static std::mutex g_tj_mtx;
 static int g_quality = 80;
 static int g_depth_min = 200;              // mm -> colormap range
 static int g_depth_max = 4000;
+static std::string g_flip = "none";        // none | hflip | vflip | 180
+
+// In-place orientation transform on a BGR888 buffer (3 bytes/pixel).
+static void transform_bgr(std::vector<unsigned char> &buf, int w, int h)
+{
+    if (g_flip == "none" || g_flip.empty()) return;
+    std::vector<unsigned char> out(buf.size());
+    auto px = [&](std::vector<unsigned char> &b, int x, int y) { return &b[((size_t)y * w + x) * 3]; };
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            int sx = x, sy = y;
+            if (g_flip == "hflip") sx = w - 1 - x;
+            else if (g_flip == "vflip") sy = h - 1 - y;
+            else if (g_flip == "180") { sx = w - 1 - x; sy = h - 1 - y; }
+            memcpy(px(out, x, y), px(buf, sx, sy), 3);
+        }
+    }
+    buf.swap(out);
+}
 
 static void encode_bgr(Stream &s, const unsigned char *bgr, int w, int h)
 {
+    // Apply the configured orientation transform (no-op if g_flip == "none").
+    std::vector<unsigned char> tmp;
+    const unsigned char *src = bgr;
+    if (g_flip != "none" && !g_flip.empty()) {
+        tmp.assign(bgr, bgr + (size_t)w * h * 3);
+        transform_bgr(tmp, w, h);
+        src = tmp.data();
+    }
     unsigned char *out = nullptr;
     unsigned long sz = 0;
     int rc;
     {
         std::lock_guard<std::mutex> lk(g_tj_mtx);
-        rc = tjCompress2(g_tj, bgr, w, 0, h, TJPF_BGR, &out, &sz,
+        rc = tjCompress2(g_tj, src, w, 0, h, TJPF_BGR, &out, &sz,
                          TJSAMP_420, g_quality, TJFLAG_FASTDCT);
     }
     if (rc == 0) {
@@ -212,6 +239,7 @@ int main()
     g_quality = getenv("JPEG_QUALITY") ? atoi(getenv("JPEG_QUALITY")) : 80;
     if (getenv("DEPTH_MIN_MM")) g_depth_min = atoi(getenv("DEPTH_MIN_MM"));
     if (getenv("DEPTH_MAX_MM")) g_depth_max = atoi(getenv("DEPTH_MAX_MM"));
+    if (getenv("CAMERA_FLIP")) g_flip = getenv("CAMERA_FLIP");
 
     g_tj = tjInitCompress();
     if (!g_tj) { fprintf(stderr, "tjInitCompress failed\n"); return 1; }

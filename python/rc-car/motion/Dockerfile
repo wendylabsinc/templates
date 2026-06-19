@@ -17,7 +17,7 @@ COPY Rosmaster_Lib.py app.py ./
 
 ENV PORT=3201
 # Override to open up the speed/steer envelope or point at a different node.
-ENV ROSMASTER_COM=/dev/ttyUSB0
+ENV ROSMASTER_COM=auto
 ENV MAX_SPEED=0.6
 ENV MAX_STEER_DEG=30
 

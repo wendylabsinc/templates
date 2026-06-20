@@ -130,7 +130,10 @@ async def api_run(key: str):
     url = SERVICES.get(spec["service"])
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.post(f"{url}/run", json={"interface": key}, timeout=15)
+            # Manual tests can run long (motion posture/acrobatics; speaker is now
+            # fire-and-forget) — give the trigger headroom so it doesn't 502 a run
+            # that's actually working.
+            r = await client.post(f"{url}/run", json={"interface": key}, timeout=60)
             return {"ok": r.status_code < 400, "status_code": r.status_code, "body": r.text[:500]}
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": str(e)}, status_code=502)

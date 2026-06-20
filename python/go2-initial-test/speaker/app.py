@@ -92,15 +92,26 @@ def status():
     return {"results": [_result]}
 
 
+async def _guarded_play():
+    global _result
+    async with _lock:  # one playback at a time — concurrent WebRTC connects fight over the slot
+        _result = {"interface": "speaker", "status": "manual",
+                   "detail": "playing beep on the dog… (WebRTC megaphone)", "data": {}}
+        await _play()
+
+
 @app.post("/run")
 async def rerun():
-    # One playback at a time — concurrent WebRTC connects fight over the single slot.
+    # The megaphone round-trip (WebRTC connect + upload + play + exit) takes
+    # ~15-20 s — longer than the dashboard's per-run proxy timeout — so kick it off
+    # in the background and return immediately; the tile updates on the next
+    # /status poll (manual → "played … Heard it?").
     if _lock.locked():
-        return {"ok": False, "result": {"interface": "speaker", "status": "manual",
-                                        "detail": "already playing — try again in a moment", "data": {}}}
-    async with _lock:
-        await _play()
-    return {"ok": _result["status"] != "fail", "result": _result}
+        return {"ok": True, "result": {"interface": "speaker", "status": "manual",
+                                       "detail": "already playing — wait a moment", "data": {}}}
+    asyncio.create_task(_guarded_play())
+    return {"ok": True, "result": {"interface": "speaker", "status": "manual",
+                                   "detail": "playing beep on the dog…", "data": {}}}
 
 
 if __name__ == "__main__":

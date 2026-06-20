@@ -19,8 +19,12 @@ WORKDIR /app
 # that runs CMD below — packages land off the runtime interpreter's path and the
 # container crash-loops with ModuleNotFoundError. `-m pip` guarantees we install
 # into the SAME python3 that runs the app.
+# uvicorn 0.33.0 (not 0.34.0): the JetPack-5 base (dustynv/pytorch:*-r35*) ships
+# Python 3.8, and uvicorn>=0.34 requires Python >=3.9. 0.33.0 is the highest
+# py3.8-compatible release and also works on the JetPack-6 base (py3.10), so this
+# single pin builds on both. fastapi 0.115.6 supports py3.8+.
 RUN python3 -m pip install --no-cache-dir --index-url https://pypi.org/simple \
-        fastapi==0.115.6 uvicorn==0.34.0
+        fastapi==0.115.6 uvicorn==0.33.0
 # Fail the build here (not on-device at runtime) if the app's interpreter can't
 # see its deps — turns a crash-loop into a loud build error. Include `torch`: if
 # this line fails it reveals `python3` isn't the torch interpreter, so the whole

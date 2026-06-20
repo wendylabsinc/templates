@@ -26,9 +26,21 @@ RUN python3 -m pip install --no-cache-dir --index-url https://pypi.org/simple \
 # this line fails it reveals `python3` isn't the torch interpreter, so the whole
 # install/launch chain would need to target the real torch-python instead.
 RUN python3 -c "import torch, fastapi, uvicorn; print('gpu deps ok')"
+
+# The dustynv base keeps Python in a venv at /opt/venv and exposes it via the
+# image PATH. The container runtime does NOT inherit that PATH, so a bare
+# `python3` at exec time resolves to the system interpreter WITHOUT uvicorn and
+# the app crash-loops (even though the build guard above passed). Bake a launcher
+# that execs the ABSOLUTE real path of the build interpreter (the venv python
+# that has the deps), independent of whatever PATH the runtime supplies.
+# NOTE: exec the real path — a symlink can break venv (pyvenv.cfg) detection.
+RUN printf '#!/bin/sh\nexec "%s" "$@"\n' "$(python3 -c 'import sys; print(sys.executable)')" > /usr/local/bin/gpu-python \
+ && chmod +x /usr/local/bin/gpu-python \
+ && /usr/local/bin/gpu-python -c "import uvicorn, torch; print('launcher ok')"
 COPY app.py ./
 
 ENV PORT=3610
 EXPOSE 3610
 
-CMD ["python3", "app.py"]
+# Launch via the baked absolute-path interpreter, not a bare `python3`.
+CMD ["/usr/local/bin/gpu-python", "app.py"]

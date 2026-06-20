@@ -22,26 +22,60 @@ app = FastAPI(title="go2-test-mic")
 _result = {"interface": "microphone", "status": "pending", "detail": "not run yet", "data": {}}
 
 
+_NA_HINT = ("the Go2 head mic is on WebRTC, not the Jetson's ALSA; plug a USB mic or "
+            "set MIC_DEVICE to test a local input")
+
+
+def _pick_input_device():
+    """Choose a capture device index, or None if there's no usable input.
+
+    CRITICAL: enumerate first and bail before touching sd.rec(). On a Jetson with
+    /dev/snd present but no real capture device (the common Go2 case), opening a
+    stream on the default device can BLOCK FOREVER in ALSA — `sd.rec()/sd.wait()`
+    never return and the tile hangs at "pending". query_devices() can't block, so
+    we use it to decide whether a capture is even worth attempting.
+    Returns (device_index_or_None, num_input_devices).
+    """
+    try:
+        devices = sd.query_devices()
+    except Exception:  # noqa: BLE001 — no PortAudio host/devices at all
+        return None, 0
+    inputs = [i for i, d in enumerate(devices) if d.get("max_input_channels", 0) > 0]
+    if DEVICE is not None:  # explicit operator override — trust it
+        return DEVICE, len(inputs)
+    if not inputs:
+        return None, 0
+    try:  # prefer PortAudio's default input if it actually has input channels
+        default_in = sd.default.device[0]
+        if isinstance(default_in, int) and default_in in inputs:
+            return default_in, len(inputs)
+    except Exception:  # noqa: BLE001
+        pass
+    return inputs[0], len(inputs)
+
+
 def _record_test():
+    dev, n_inputs = _pick_input_device()
+    if dev is None:
+        # `na` (not fail): no local capture device is expected on the Go2, so don't
+        # drag the board red — and crucially, don't call sd.rec() (which would hang).
+        return {"interface": "microphone", "status": "na",
+                "detail": f"no local ALSA capture device — {_NA_HINT}", "data": {"inputs": n_inputs}}
     try:
         n = int(RATE * SECONDS)
-        rec = sd.rec(n, samplerate=RATE, channels=1, dtype="float32", device=DEVICE)
+        rec = sd.rec(n, samplerate=RATE, channels=1, dtype="float32", device=dev)
         sd.wait()
         mono = rec[:, 0]
         rms = float(np.sqrt(np.mean(mono ** 2)))
         peak = float(np.max(np.abs(mono)))
-        detail = f"recorded {SECONDS:.0f}s @ {RATE} Hz · RMS={rms:.4f} peak={peak:.3f}"
+        detail = f"recorded {SECONDS:.0f}s @ {RATE} Hz on device {dev} · RMS={rms:.4f} peak={peak:.3f}"
         if rms < 1e-4:
             detail += " (very quiet — mic opened but near-silent; speak/clap and re-run)"
         return {"interface": "microphone", "status": "pass", "detail": detail,
-                "data": {"rms": rms, "peak": peak}}
-    except Exception as e:  # noqa: BLE001
-        # `na` (not fail): the Go2 head mic rides WebRTC, not the Jetson's ALSA, so a
-        # missing local capture device is expected — don't drag the board red. Plug a
-        # USB mic / set MIC_DEVICE to test a local input.
+                "data": {"rms": rms, "peak": peak, "device": dev}}
+    except Exception as e:  # noqa: BLE001 — device existed but capture failed
         return {"interface": "microphone", "status": "na",
-                "detail": f"no local ALSA capture device ({e}) — the Go2 head mic is on WebRTC, not "
-                          "the Jetson's ALSA; plug a USB mic or set MIC_DEVICE to test a local input", "data": {}}
+                "detail": f"capture on device {dev} failed ({e}) — {_NA_HINT}", "data": {}}
 
 
 def _run():

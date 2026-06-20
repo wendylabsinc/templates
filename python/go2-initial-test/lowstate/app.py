@@ -103,8 +103,16 @@ def _on_wireless(msg):
 def _on_uwb(msg):
     global _uwb, _uwb_ts
     try:
-        _uwb = {"is_seen": bool(msg.is_seen), "dist": round(float(msg.dist), 3),
-                "yaw_est": round(float(getattr(msg, "yaw_est", 0.0)), 4)}
+        # UwbState_ fields verified against the SDK IDL (and go2-Watchtower's
+        # go2_uwb_bridge): distance_est / yaw_est / error_state / enabled_from_app —
+        # there is NO `dist` or `is_seen`. error_state==0 → tracking a tag; nonzero →
+        # gated (UWB not enabled from the app, or no tag in range).
+        err = int(getattr(msg, "error_state", 0))
+        _uwb = {"distance_est": round(float(msg.distance_est), 3),
+                "yaw_est": round(float(getattr(msg, "yaw_est", 0.0)), 4),
+                "error_state": err,
+                "enabled_from_app": int(getattr(msg, "enabled_from_app", 0)),
+                "tracking": err == 0}
         _uwb_ts = time.time()
     except Exception as e:  # noqa: BLE001
         logger.warning("UwbState parse failed: %s", e)
@@ -224,13 +232,19 @@ def _results():
                     "no controller frames — turn the handheld remote on and move a stick", "data": {}})
 
     if _fresh(_uwb_ts):
+        # Frames arriving = the UWB module is alive → pass; detail distinguishes a
+        # live tag lock from a gated/idle state.
         u = _uwb
-        out.append({"interface": "uwb", "status": "pass",
-                    "detail": (f"tag seen @ {u['dist']} m, yaw {u['yaw_est']} rad" if u["is_seen"]
-                               else "UWB module present · no tag in range"), "data": u})
+        if u["tracking"]:
+            detail = f"tag tracked @ {u['distance_est']} m, yaw {u['yaw_est']} rad"
+        else:
+            hint = "" if u["enabled_from_app"] else " — enable UWB/follow in the app"
+            detail = f"UWB present, frames flowing but no tag lock (error_state=0x{u['error_state']:02x}){hint}"
+        out.append({"interface": "uwb", "status": "pass", "detail": detail, "data": u})
     else:
         out.append({"interface": "uwb", "status": "na",
-                    "detail": "no rt/uwbstate frames — UWB is an optional paid accessory (not fitted?)", "data": {}})
+                    "detail": "no rt/uwbstate frames — is the UWB / handheld remote powered on? "
+                              "(na if your dog has no UWB)", "data": {}})
     return out
 
 

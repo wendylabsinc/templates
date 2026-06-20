@@ -69,8 +69,23 @@ class Go2Controller:
         from unitree_sdk2py.go2.sport.sport_client import SportClient
         from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_
 
-        logger.info("Initializing DDS on interface %s", self._network_interface)
-        ChannelFactoryInitialize(0, self._network_interface)
+        # Prefer binding DDS to a specific local IP (the NIC that reaches the
+        # robot controller). On a multi-homed Jetson — e.g. eth1 holds both
+        # 192.168.100.x and 192.168.123.x — selecting by interface NAME is
+        # ambiguous and CycloneDDS may advertise the wrong address, so the robot
+        # never hears us. Binding by ADDRESS is unambiguous.
+        dds_addr = os.environ.get("GO2_DDS_ADDRESS", "").strip()
+        if dds_addr:
+            os.environ["CYCLONEDDS_URI"] = (
+                "<CycloneDDS><Domain><General><Interfaces>"
+                f'<NetworkInterface address="{dds_addr}"/>'
+                "</Interfaces></General></Domain></CycloneDDS>"
+            )
+            logger.info("Initializing DDS bound to address %s", dds_addr)
+            ChannelFactoryInitialize(0)
+        else:
+            logger.info("Initializing DDS on interface %s", self._network_interface)
+            ChannelFactoryInitialize(0, self._network_interface)
 
         client = SportClient()
         client.SetTimeout(3.0)

@@ -8,7 +8,7 @@
                 <!-- eth0 must be the NIC that has the 192.168.123.0/24
                      address on the deploy host. On the Go2's onboard Jetson
                      this is eth0; if you ever deploy elsewhere, edit this. -->
-                <NetworkInterface name="{{.NETWORK_INTERFACE}}" priority="default" multicast="default" />
+                <NetworkInterface address="{{.GO2_DDS_ADDRESS}}" priority="default" multicast="default" />
             </Interfaces>
             <AllowMulticast>true</AllowMulticast>
             <MaxMessageSize>65500B</MaxMessageSize>

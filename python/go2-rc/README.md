@@ -57,8 +57,8 @@ This template prompts for:
 
 - **APP_ID** — the app group identifier.
 - **RC_PORT** (default `3500`) — where you open the teleop UI.
-- **GO2_IP** (default `192.168.123.161`) — the Go2 main-controller IP the camera connects to.
-- **NETWORK_INTERFACE** (default `eth0`) — the NIC on the deploy host that carries the `192.168.123.0/24` address. On the Go2's onboard Jetson this is `eth0`.
+- **GO2_IP** (default `192.168.123.161`) — the Go2 controller's IP, where the camera/WebRTC connects **to**.
+- **GO2_DDS_ADDRESS** (default `192.168.123.18`) — **this device's own IP** on the robot network (the NIC that can reach the controller). DDS binds to this exact address so the robot can talk back. Binding by IP (instead of an interface name like `eth0`/`eth1`) avoids the multi-homed-Jetson problem where DDS advertises the wrong network and the robot never hears the commands.
 
 ## Deploy
 

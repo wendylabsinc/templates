@@ -36,8 +36,7 @@
         "mic": {
             "context": "./mic",
             "entitlements": [
-                { "type": "network", "mode": "host" },
-                { "type": "audio" }
+                { "type": "network", "mode": "host" }
             ]
         },
         "speaker": {

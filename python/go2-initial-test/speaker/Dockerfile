@@ -24,14 +24,16 @@ ENV CYCLONEDDS_HOME=/usr/local
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
-COPY app.py cyclonedds.xml ./
+COPY app.py ./
 
 ENV PORT=3615
 ENV AUDIO_OUT_TOPIC=rt/audioreceiver
 # pcm16 was the empirically-working codec in the go2-camera demo (ulaw = noise);
 # flip to ulaw/alaw if the tone is silent on your firmware.
 ENV AUDIO_OUT_CODEC=pcm16
-ENV CYCLONEDDS_URI=file:///app/cyclonedds.xml
+# Robot controller IP the app routes to so it can auto-detect this host's DDS bind
+# address at startup (no cyclonedds.xml). Set GO2_DDS_ADDRESS at runtime to override.
+ENV GO2_IP={{.GO2_IP}}
 EXPOSE 3615
 
 CMD ["python3", "app.py"]

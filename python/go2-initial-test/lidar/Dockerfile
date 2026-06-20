@@ -26,15 +26,15 @@ ENV CYCLONEDDS_HOME=/usr/local
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip3 install --no-cache-dir -r requirements.txt
-COPY app.py cyclonedds.xml ./
+COPY app.py ./
 
 ENV PORT=3613
 ENV LIDAR_TOPIC=rt/utlidar/cloud_deskewed
-# Used only to make the DDS-init failure message actionable (the bind itself is
-# driven by cyclonedds.xml).
-ENV GO2_DDS_ADDRESS={{.GO2_DDS_ADDRESS}}
-# Pin the DDS NIC so the participant doesn't route via the Docker bridge.
-ENV CYCLONEDDS_URI=file:///app/cyclonedds.xml
+# The robot controller IP the app routes to so it can auto-detect this host's own
+# DDS bind address at startup (no cyclonedds.xml, no GO2_DDS_ADDRESS prompt). The
+# app builds CYCLONEDDS_URI from the detected address; set GO2_DDS_ADDRESS at
+# runtime to override the auto-detection.
+ENV GO2_IP={{.GO2_IP}}
 EXPOSE 3613
 
 CMD ["python3", "app.py"]

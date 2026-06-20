@@ -19,17 +19,10 @@
         },
         {
             "name": "GO2_IP",
-            "description": "Go2 robot IP on the robot LAN (WebRTC camera/audio)",
+            "description": "Go2 robot controller IP on the robot LAN — the WebRTC camera/audio target, and the address the DDS services route to in order to auto-detect this host's own bind IP at startup (so there's no separate GO2_DDS_ADDRESS prompt; set GO2_DDS_ADDRESS at runtime only to override).",
             "type": "string",
             "default": "192.168.123.161",
             "prompt": "Go2 IP"
-        },
-        {
-            "name": "GO2_DDS_ADDRESS",
-            "description": "This device's OWN IP on the robot network — the address DDS binds to so the Go2 can talk back. On the Go2's onboard Jetson it's usually 192.168.123.18. Binding by IP (not interface name) avoids the multi-homed eth0/eth1 problem where DDS advertises the wrong subnet and the robot never hears us.",
-            "type": "string",
-            "default": "192.168.123.18",
-            "prompt": "This device's IP on the Go2 network"
         },
         {
             "name": "GPU_BASE_IMAGE",

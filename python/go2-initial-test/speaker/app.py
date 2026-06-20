@@ -9,6 +9,7 @@ Do NOT add `from __future__ import annotations` (IdlStruct name-resolves hints).
 import audioop
 import math
 import os
+import socket
 import struct
 import threading
 import time
@@ -31,6 +32,37 @@ RATE = 8000
 FREQ = float(os.environ.get("TONE_HZ", "440"))
 SECONDS = float(os.environ.get("TONE_SECONDS", "1.0"))
 FRAME_SAMPLES = 160  # 20 ms @ 8 kHz
+GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
+
+
+def _resolve_dds_address(robot_ip):
+    """Local IP this host uses to reach the Go2 — the address CycloneDDS must bind
+    to (the Orin is multi-homed). GO2_DDS_ADDRESS overrides; otherwise ask the
+    kernel which source IP routes to the robot (no packets sent, never blocks).
+    Returns "" off-robot (no route)."""
+    override = os.environ.get("GO2_DDS_ADDRESS", "").strip()
+    if override:
+        return override
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((robot_ip, 1))  # no traffic; the kernel just picks the route
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return ""
+
+
+DDS_ADDR = _resolve_dds_address(GO2_IP)
+# Bind CycloneDDS to that IP — built here (not a shipped cyclonedds.xml) so the
+# address is auto-detected at runtime. Off-robot we leave CYCLONEDDS_URI unset.
+if DDS_ADDR:
+    os.environ["CYCLONEDDS_URI"] = (
+        "<CycloneDDS><Domain><General><Interfaces>"
+        f'<NetworkInterface address="{DDS_ADDR}"/>'
+        "</Interfaces></General></Domain></CycloneDDS>"
+    )
 
 
 @dataclass

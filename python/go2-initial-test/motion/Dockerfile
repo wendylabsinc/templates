@@ -34,7 +34,9 @@ RUN pip3 install --no-cache-dir --upgrade pip \
 COPY go2_controller.py app.py ./
 
 ENV PORT=3616
-ENV GO2_DDS_ADDRESS={{.GO2_DDS_ADDRESS}}
+# Robot controller IP the app routes to so it can auto-detect this host's DDS bind
+# address at startup. Set GO2_DDS_ADDRESS at runtime to override the detection.
+ENV GO2_IP={{.GO2_IP}}
 # Skill the (hard-gated) acrobatics test runs. Override e.g. FrontJump/Handstand.
 ENV ACROBATIC_SKILL=FrontFlip
 EXPOSE 3616

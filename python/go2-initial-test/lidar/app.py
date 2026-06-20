@@ -8,6 +8,7 @@ NOTE: do NOT add `from __future__ import annotations` — cyclonedds's IdlStruct
 resolves type hints by name at class-definition time and PEP-563 breaks it.
 """
 import os
+import socket
 import threading
 import time
 from dataclasses import dataclass, field
@@ -26,7 +27,38 @@ PORT = int(os.environ.get("PORT", "3613"))
 LIDAR_TOPIC = os.environ.get("LIDAR_TOPIC", "rt/utlidar/cloud_deskewed")
 DDS_DOMAIN = int(os.environ.get("DDS_DOMAIN", "0"))
 FRESH_S = float(os.environ.get("LIDAR_FRESH_S", "3.0"))
-DDS_ADDR = os.environ.get("GO2_DDS_ADDRESS", "").strip()  # for the error message only
+GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
+
+
+def _resolve_dds_address(robot_ip):
+    """Local IP this host uses to reach the Go2 — the address CycloneDDS must bind
+    to (the Orin is multi-homed). GO2_DDS_ADDRESS overrides; otherwise ask the
+    kernel which source IP routes to the robot (no packets sent, never blocks).
+    Returns "" off-robot (no route)."""
+    override = os.environ.get("GO2_DDS_ADDRESS", "").strip()
+    if override:
+        return override
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((robot_ip, 1))  # no traffic; the kernel just picks the route
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return ""
+
+
+DDS_ADDR = _resolve_dds_address(GO2_IP)
+# Bind CycloneDDS to that IP — built here (not a shipped cyclonedds.xml) so the
+# address is auto-detected at runtime. Off-robot (DDS_ADDR == "") we leave
+# CYCLONEDDS_URI unset and DDS falls back to scanning all interfaces.
+if DDS_ADDR:
+    os.environ["CYCLONEDDS_URI"] = (
+        "<CycloneDDS><Domain><General><Interfaces>"
+        f'<NetworkInterface address="{DDS_ADDR}"/>'
+        "</Interfaces></General></Domain></CycloneDDS>"
+    )
 
 
 @dataclass
@@ -79,13 +111,12 @@ def _run():
             reader = DataReader(Subscriber(dp), topic, qos=qos)
             _err = None
         except Exception as e:  # noqa: BLE001
-            # Most common off-robot cause: GO2_DDS_ADDRESS isn't an IP on any local
-            # NIC, so CycloneDDS hard-fails at DomainParticipant init with a raw
-            # DDS_RETCODE_ERROR. Translate it into the same actionable hint the other
-            # tiles give instead of surfacing the raw error.
-            _err = (f"can't start DDS bound to {DDS_ADDR or 'the configured NIC'} — is this device on "
-                    f"the Go2 robot LAN (192.168.123.x) and is GO2_DDS_ADDRESS this machine's IP there? "
-                    f"[{type(e).__name__}]")
+            # Most common off-robot cause: no route to the Go2, so the auto-detected
+            # bind address is empty and CycloneDDS hard-fails at DomainParticipant
+            # init with a raw DDS_RETCODE_ERROR. Translate it into an actionable hint.
+            _err = (f"can't start DDS (auto-detected bind {DDS_ADDR or 'none — no route to the robot'}) — "
+                    f"is this device on the Go2 LAN (192.168.123.x) and the dog powered? "
+                    f"Set GO2_DDS_ADDRESS to override. [{type(e).__name__}]")
             time.sleep(1.0)
             continue
         while True:
@@ -112,8 +143,9 @@ def _result():
         return {"interface": "lidar", "status": "pass",
                 "detail": f"{s['n']} pts/scan on {LIDAR_TOPIC} (frame {s['frame'] or '?'})",
                 "data": {"points": s["n"], "frame": s["frame"]}}
-    detail = _err or (f"no PointCloud2 on {LIDAR_TOPIC} (DDS bound {DDS_ADDR or '?'}) — is the Go2 "
-                      "LiDAR on and this device on the robot LAN (192.168.123.x)? "
+    detail = _err or (f"no PointCloud2 on {LIDAR_TOPIC} (auto-detected DDS bind "
+                      f"{DDS_ADDR or 'none — no route to the robot'}) — is the Go2 LiDAR on and this "
+                      "device on the robot LAN (192.168.123.x)? Set GO2_DDS_ADDRESS to override. "
                       "(alt topic: LIDAR_TOPIC=rt/utlidar/cloud_undeskewed)")
     return {"interface": "lidar", "status": "fail", "detail": detail, "data": {}}
 

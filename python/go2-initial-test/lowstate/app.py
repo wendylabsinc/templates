@@ -10,6 +10,7 @@ distinguishable from "no frames / robot off".
 import asyncio
 import logging
 import os
+import socket
 import time
 
 import uvicorn
@@ -20,7 +21,29 @@ logger = logging.getLogger("go2-test-lowstate")
 
 PORT = int(os.environ.get("PORT", "3611"))
 IFACE = os.environ.get("GO2_NETWORK_INTERFACE", "eth0")
-DDS_ADDR = os.environ.get("GO2_DDS_ADDRESS", "").strip()
+GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
+
+
+def _resolve_dds_address(robot_ip):
+    """Local IP this host uses to reach the Go2 — the address CycloneDDS must bind
+    to (the Orin is multi-homed). GO2_DDS_ADDRESS overrides; otherwise ask the
+    kernel which source IP routes to the robot (no packets sent, never blocks).
+    Returns "" off-robot (no route)."""
+    override = os.environ.get("GO2_DDS_ADDRESS", "").strip()
+    if override:
+        return override
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((robot_ip, 1))  # no traffic; the kernel just picks the route
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return ""
+
+
+DDS_ADDR = _resolve_dds_address(GO2_IP)
 FRESH_S = float(os.environ.get("LOWSTATE_FRESH_S", "3.0"))
 CONTACT_N = float(os.environ.get("FOOT_CONTACT_N", "50"))
 N_JOINTS = int(os.environ.get("N_JOINTS", "12"))
@@ -137,8 +160,8 @@ def _fresh(ts):
 def _down_detail(parse_err):
     if parse_err:
         return f"frames arriving but parse failed: {parse_err}"
-    return _err or (f"no frames (DDS bind {DDS_ADDR or IFACE}) — is the Go2 powered, on the robot "
-                    "LAN, and GO2_DDS_ADDRESS set to this device's 192.168.123.x IP?")
+    return _err or (f"no frames (auto-detected DDS bind {DDS_ADDR or IFACE}) — is the Go2 powered "
+                    "and is this device on the robot LAN (192.168.123.x)? Set GO2_DDS_ADDRESS to override.")
 
 
 def _results():

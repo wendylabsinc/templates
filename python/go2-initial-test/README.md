@@ -65,15 +65,19 @@ reaches the hardware.
 | **Camera gimbal** | N/A | fixed forward camera on standard Go2 | — | reported `na` |
 
 ### Networking (required for the DDS/SDK/WebRTC tests)
-- DDS binds by **IP address**, not interface name: SDK services set
-  `CYCLONEDDS_URI` to `<NetworkInterface address="{{.GO2_DDS_ADDRESS}}">` then
-  call `ChannelFactoryInitialize(0)`; the `cyclonedds.xml` services template the
-  same address. The Go2 Orin is multi-homed (eth1 carries both `192.168.100.x`
-  and `192.168.123.x`), so a name like `eth0`/`eth1` is ambiguous and DDS can
-  advertise the wrong subnet — binding by IP fixes it (same fix as `go2-rc`).
-- **`GO2_DDS_ADDRESS`** = *this device's own* IP on the robot LAN (~`192.168.123.18`).
-  **`GO2_IP`** = the *robot controller's* IP (~`192.168.123.161`), the WebRTC target.
-  They're different and both needed.
+- DDS binds by **IP address**, not interface name: each DDS/SDK service sets
+  `CYCLONEDDS_URI` to `<NetworkInterface address="<this host's IP>">` then calls
+  `ChannelFactoryInitialize(0)`. The Go2 Orin is multi-homed (eth1 carries both
+  `192.168.100.x` and `192.168.123.x`), so a name like `eth0`/`eth1` is ambiguous
+  and DDS can advertise the wrong subnet — binding by IP fixes it (same fix as
+  `go2-rc`).
+- **The bind address is auto-detected at startup** — each service asks the kernel
+  which local IP routes to **`GO2_IP`** (a non-blocking `socket.connect` route
+  lookup, the same answer `ip route get` gives), so there's **no `GO2_DDS_ADDRESS`
+  prompt** at `wendy init` and a moved/rebuilt image stays correct. Set
+  `GO2_DDS_ADDRESS=<ip>` on a service at runtime only to force a specific bind.
+- **`GO2_IP`** = the *robot controller's* IP (~`192.168.123.161`) — the WebRTC
+  target, and the route target the DDS bind address is derived from.
 - LiDAR/SDK Dockerfiles build **CycloneDDS 0.10.5 + unitree_sdk2_python from
   source** (no arm64 wheels) — copy the steps from `/demos/go2-motion` and
   `/demos/go2-camera` Dockerfiles.

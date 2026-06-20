@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import socket
 import threading
 import time
 from typing import Any, Optional
@@ -34,6 +35,25 @@ _factory_initialized = False
 
 def _clamp(value: float, limit: float) -> float:
     return max(-limit, min(limit, value))
+
+
+def _resolve_dds_address(robot_ip: str) -> str:
+    """Local IP this host uses to reach the Go2 — the address CycloneDDS must bind
+    to (the Orin is multi-homed). GO2_DDS_ADDRESS overrides; otherwise ask the
+    kernel which source IP routes to the robot (no packets sent, never blocks).
+    Returns "" off-robot (no route)."""
+    override = os.environ.get("GO2_DDS_ADDRESS", "").strip()
+    if override:
+        return override
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((robot_ip, 1))  # no traffic; the kernel just picks the route
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return ""
 
 
 class Go2Controller:
@@ -67,7 +87,7 @@ class Go2Controller:
         # never hears us. Binding by ADDRESS is unambiguous.
         global _factory_initialized
         if not _factory_initialized:
-            dds_addr = os.environ.get("GO2_DDS_ADDRESS", "").strip()
+            dds_addr = _resolve_dds_address(os.environ.get("GO2_IP", "192.168.123.161"))
             if dds_addr:
                 os.environ["CYCLONEDDS_URI"] = (
                     "<CycloneDDS><Domain><General><Interfaces>"

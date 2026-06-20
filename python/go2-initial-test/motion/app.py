@@ -77,13 +77,19 @@ async def _do_posture():
     await _ensure()
     await _ctrl.stand_up()
     await _ctrl.skill("BalanceStand")
-    await _ctrl.skill("BodyHeight", 0.1)
-    await _ctrl.skill("BodyHeight", 0.0)
-    await _ctrl.skill("Euler", 0.0, 0.0, 0.2)
-    await _ctrl.skill("Euler", 0.0, 0.0, 0.0)
+    # BodyHeight + Euler are SDK/firmware-dependent (the pinned SDK has no
+    # BodyHeight). Run them best-effort so one missing method doesn't fail the
+    # whole posture check; record any the SDK doesn't expose.
+    skipped = []
+    for name, args in (("BodyHeight", (0.1,)), ("BodyHeight", (0.0,)),
+                       ("Euler", (0.0, 0.0, 0.2)), ("Euler", (0.0, 0.0, 0.0))):
+        r = await _ctrl.skill(name, *args, optional=True)
+        if "skipped" in r and name not in skipped:
+            skipped.append(name)
     await _ctrl.lie_down()
     await _ctrl.stand_up()
-    return "posture/gait sequence OK (stand→balance→body-height→euler→sit→stand)"
+    note = f" (not in this SDK, skipped: {', '.join(skipped)})" if skipped else ""
+    return f"posture/gait sequence OK (stand→balance→body-height→euler→sit→stand){note}"
 
 
 async def _do_obstacle():

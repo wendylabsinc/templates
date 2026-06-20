@@ -267,9 +267,17 @@ class Go2Controller:
             await self._call_sdk("StandDown", timeout=SDK_SKILL_TIMEOUT_S)
         return "lying down"
 
-    async def skill(self, name: str, *args) -> str:
+    async def skill(self, name: str, *args, optional: bool = False) -> str:
         """Run any named SportClient skill (BalanceStand, RecoveryStand, Euler,
-        BodyHeight, FootRaiseHeight, FrontFlip, FrontJump, …) with the skill timeout."""
+        FrontFlip, FrontJump, …) with the skill timeout.
+
+        optional=True: skip cleanly (return "<name> (skipped)") if this SDK build
+        doesn't expose the method. SportClient's API varies by firmware/SDK version
+        — e.g. the pinned SDK has no `BodyHeight` — so a posture/gait self-test must
+        degrade gracefully instead of crashing on one missing call."""
+        if optional and self._sport_client is not None and not hasattr(self._sport_client, name):
+            logger.info("skill %s not in this SDK — skipping", name)
+            return f"{name} (skipped)"
         self._cancel_watchdog()
         async with self._move_lock:
             await self._call_sdk(name, *args, timeout=SDK_SKILL_TIMEOUT_S)

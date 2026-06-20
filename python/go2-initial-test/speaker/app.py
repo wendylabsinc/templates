@@ -1,124 +1,90 @@
-"""speaker test — publish a test tone to rt/audioreceiver (the dog's speaker).
+"""speaker test — play a tone on the Go2 via the WebRTC audiohub megaphone.
 
-MANUAL: the dashboard "Run test" button POSTs /run, which plays a ~1 s tone;
+MANUAL: the dashboard "Run test" button POSTs /run, which connects over WebRTC,
+enters megaphone mode, uploads a short beep WAV, plays it on the dog, then exits;
 a human confirms they heard it (we can't verify audio output programmatically).
-AudioData IDL + publisher adapted from /demos/go2-camera/audio.py.
 
-Do NOT add `from __future__ import annotations` (IdlStruct name-resolves hints).
+The old DDS `rt/audioreceiver` publish was unreliable — the demos found it
+produces "pure noise" and is NOT the live-playback channel. The audiohub
+megaphone file API is what actually plays. Adapted from
+/demos/go2-camera/scripts/test_megaphone.py.
+
+NOTE: the Go2 allows only ONE WebRTC client, so this contends with the camera
+test (and any other WebRTC app like go2-rc's stream) — only one can hold the slot
+at a time.
 """
-import audioop
+import asyncio
 import math
 import os
-import socket
 import struct
-import threading
-import time
-from dataclasses import dataclass, field
+import tempfile
+import wave
 
 import uvicorn
 from fastapi import FastAPI
-
-from cyclonedds.domain import DomainParticipant
-from cyclonedds.idl import IdlStruct
-from cyclonedds.idl.types import sequence, uint8, uint64
-from cyclonedds.pub import DataWriter, Publisher
-from cyclonedds.topic import Topic
+from unitree_webrtc_connect import UnitreeWebRTCConnection, WebRTCConnectionMethod
+from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
 
 PORT = int(os.environ.get("PORT", "3615"))
-TOPIC = os.environ.get("AUDIO_OUT_TOPIC", "rt/audioreceiver")
-CODEC = os.environ.get("AUDIO_OUT_CODEC", "pcm16").lower()
-DDS_DOMAIN = int(os.environ.get("DDS_DOMAIN", "0"))
-RATE = 8000
-FREQ = float(os.environ.get("TONE_HZ", "440"))
-SECONDS = float(os.environ.get("TONE_SECONDS", "1.0"))
-FRAME_SAMPLES = 160  # 20 ms @ 8 kHz
 GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
-
-
-def _resolve_dds_address(robot_ip):
-    """Local IP this host uses to reach the Go2 — the address CycloneDDS must bind
-    to (the Orin is multi-homed). GO2_DDS_ADDRESS overrides; otherwise ask the
-    kernel which source IP routes to the robot (no packets sent, never blocks).
-    Returns "" off-robot (no route)."""
-    override = os.environ.get("GO2_DDS_ADDRESS", "").strip()
-    if override:
-        return override
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        try:
-            s.connect((robot_ip, 1))  # no traffic; the kernel just picks the route
-            return s.getsockname()[0]
-        finally:
-            s.close()
-    except OSError:
-        return ""
-
-
-DDS_ADDR = _resolve_dds_address(GO2_IP)
-# Bind CycloneDDS to that IP — built here (not a shipped cyclonedds.xml) so the
-# address is auto-detected at runtime. Off-robot we leave CYCLONEDDS_URI unset.
-if DDS_ADDR:
-    os.environ["CYCLONEDDS_URI"] = (
-        "<CycloneDDS><Domain><General><Interfaces>"
-        f'<NetworkInterface address="{DDS_ADDR}"/>'
-        "</Interfaces></General></Domain></CycloneDDS>"
-    )
-
-
-@dataclass
-class _AudioData(IdlStruct, typename="unitree_go::msg::dds_::AudioData_"):
-    time_frame: uint64 = 0
-    data: sequence[uint8] = field(default_factory=list)
-
+TONE_HZ = float(os.environ.get("TONE_HZ", "880"))
+TONE_SECONDS = float(os.environ.get("TONE_SECONDS", "1.5"))
 
 app = FastAPI(title="go2-test-speaker")
-_writer = None
-_play_lock = threading.Lock()
+_lock = asyncio.Lock()
 _result = {"interface": "speaker", "status": "manual",
-           "detail": "press “Run test” to play a tone on the dog, then confirm you heard it",
+           "detail": "press “Run test” to play a beep on the dog (WebRTC megaphone), then confirm you heard it",
            "data": {}}
 
 
-def _ensure_writer():
-    global _writer
-    if _writer is None:
-        dp = DomainParticipant(DDS_DOMAIN)
-        _writer = DataWriter(Publisher(dp), Topic(dp, TOPIC, _AudioData))
-    return _writer
+def _make_beep_wav(path: str) -> None:
+    """Clean sine WAV — 16-bit PCM mono, 16 kHz (what the megaphone expects)."""
+    rate = 16000
+    n = int(TONE_SECONDS * rate)
+    amp = 0.4 * 32767
+    samples = (int(amp * math.sin(2 * math.pi * TONE_HZ * i / rate)) for i in range(n))
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"".join(struct.pack("<h", s) for s in samples))
 
 
-def _tone_pcm16() -> bytes:
-    n = int(RATE * SECONDS)
-    return b"".join(struct.pack("<h", int(0.6 * 32767 * math.sin(2 * math.pi * FREQ * i / RATE)))
-                    for i in range(n))
+async def _maybe_await(v):
+    return await v if asyncio.iscoroutine(v) else v
 
 
-def _encode(pcm: bytes) -> bytes:
-    if CODEC == "ulaw":
-        return audioop.lin2ulaw(pcm, 2)
-    if CODEC == "alaw":
-        return audioop.lin2alaw(pcm, 2)
-    return pcm  # pcm16
-
-
-def _play():
+async def _play():
     global _result
+    conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=GO2_IP)
     try:
-        w = _ensure_writer()
-        payload = _encode(_tone_pcm16())
-        step = FRAME_SAMPLES * (1 if CODEC in ("ulaw", "alaw") else 2)
-        frames = 0
-        for off in range(0, len(payload), step):
-            frames += 1
-            w.write(_AudioData(time_frame=frames, data=list(payload[off:off + step])))
-            time.sleep(FRAME_SAMPLES / RATE)  # real-time pacing
+        await conn.connect()
+        hub = WebRTCAudioHub(conn)
+        await hub.enter_megaphone()
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            wav_path = f.name
+        _make_beep_wav(wav_path)
+        result = await _maybe_await(hub.upload_megaphone(wav_path))
+        # Some firmwares auto-play on upload; others return a uuid to play explicitly.
+        uuid = result if isinstance(result, str) else None
+        if uuid:
+            await _maybe_await(hub.play_by_uuid(uuid))
+        await asyncio.sleep(TONE_SECONDS + 1)  # let the beep finish before exiting
+        await _maybe_await(hub.exit_megaphone())
         _result = {"interface": "speaker", "status": "manual",
-                   "detail": f"played {FREQ:.0f} Hz tone ({SECONDS:.0f}s, {CODEC}) → {TOPIC}. "
-                             "Heard it? If silent, try AUDIO_OUT_CODEC=ulaw.",
-                   "data": {"frames": frames}}
+                   "detail": f"played {TONE_HZ:.0f} Hz beep ({TONE_SECONDS:.1f}s) via WebRTC megaphone. "
+                             "Heard it? (if silent, the firmware may gate the audiohub)",
+                   "data": {"uuid": uuid}}
     except Exception as e:  # noqa: BLE001
         _result = {"interface": "speaker", "status": "fail",
-                   "detail": f"publish failed: {e}", "data": {}}
+                   "detail": f"megaphone playback failed: {e} — is the Go2 reachable at {GO2_IP} and the "
+                             "single WebRTC slot free (camera/go2-rc not holding it)?",
+                   "data": {}}
+    finally:
+        try:
+            await conn.close()  # release the single WebRTC slot
+        except Exception:  # noqa: BLE001
+            pass
 
 
 @app.get("/status")
@@ -127,15 +93,13 @@ def status():
 
 
 @app.post("/run")
-def rerun():
-    # One playback at a time — concurrent writes interleave frames (garbled tone).
-    if not _play_lock.acquire(blocking=False):
+async def rerun():
+    # One playback at a time — concurrent WebRTC connects fight over the single slot.
+    if _lock.locked():
         return {"ok": False, "result": {"interface": "speaker", "status": "manual",
                                         "detail": "already playing — try again in a moment", "data": {}}}
-    try:
-        _play()
-    finally:
-        _play_lock.release()
+    async with _lock:
+        await _play()
     return {"ok": _result["status"] != "fail", "result": _result}
 
 

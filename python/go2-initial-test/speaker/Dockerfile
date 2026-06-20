@@ -1,39 +1,28 @@
-# go2-initial-test — speaker test (publish a tone to rt/audioreceiver over DDS).
+# go2-initial-test — speaker test (Go2 megaphone over the WebRTC audiohub).
 #
-# Shares a BYTE-IDENTICAL ubuntu:22.04 + CycloneDDS-from-source prefix with the
-# SDK services (lowstate/motion/vui) and lidar so CycloneDDS is compiled once and
-# the layer is reused across all five (review C1/N2). Keep the prefix identical.
-FROM ubuntu:22.04
+# Same WebRTC stack as the camera service (unitree_webrtc_connect → aiortc +
+# pyaudio/portaudio). NO CycloneDDS — the DDS rt/audioreceiver path was
+# unreliable ("pure noise" / not the live channel); the audiohub megaphone file
+# API is what actually plays on the dog.
+FROM python:3.11-slim
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 python3-pip python3-dev git build-essential cmake pkg-config ca-certificates \
+        libgl1 libglib2.0-0 libsrtp2-1 libffi-dev libssl-dev \
+        gcc python3-dev portaudio19-dev libportaudio2 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-ARG CYCLONEDDS_VERSION=0.10.5
-RUN git clone --depth 1 --branch ${CYCLONEDDS_VERSION} \
-        https://github.com/eclipse-cyclonedds/cyclonedds.git /tmp/cyclonedds \
-    && cmake -S /tmp/cyclonedds -B /tmp/cyclonedds/build \
-        -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DBUILD_IDLC=ON \
-    && cmake --build /tmp/cyclonedds/build -j"$(nproc)" \
-    && cmake --install /tmp/cyclonedds/build && ldconfig && rm -rf /tmp/cyclonedds
-ENV CYCLONEDDS_HOME=/usr/local
 
 WORKDIR /app
 COPY requirements.txt ./
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py ./
 
 ENV PORT=3615
-ENV AUDIO_OUT_TOPIC=rt/audioreceiver
-# pcm16 was the empirically-working codec in the go2-camera demo (ulaw = noise);
-# flip to ulaw/alaw if the tone is silent on your firmware.
-ENV AUDIO_OUT_CODEC=pcm16
-# Robot controller IP the app routes to so it can auto-detect this host's DDS bind
-# address at startup (no cyclonedds.xml). Set GO2_DDS_ADDRESS at runtime to override.
+# Robot controller IP — the WebRTC target (single-client; contends with camera).
 ENV GO2_IP={{.GO2_IP}}
+ENV TONE_HZ=880
+ENV TONE_SECONDS=1.5
 EXPOSE 3615
 
-CMD ["python3", "app.py"]
+CMD ["python", "app.py"]

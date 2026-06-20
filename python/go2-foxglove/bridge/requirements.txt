@@ -1,0 +1,7 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+# Foxglove WebSocket server + well-known schemas (PointCloud/CompressedImage/…).
+# Pin to the version you validate on the robot before shipping.
+foxglove-sdk>=0.5,<1.0
+# cyclonedds python binding — must match the 0.10.5 C library built in the Dockerfile.
+cyclonedds<0.11

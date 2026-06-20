@@ -1,0 +1,110 @@
+{
+  "configById": {
+    "3D!scene": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 12,
+        "phi": 60,
+        "thetaOffset": 45,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "base_link",
+      "scene": { "transforms": { "showLabel": false } },
+      "transforms": {},
+      "topics": {
+        "/go2/points": {
+          "visible": true,
+          "colorMode": "colormap",
+          "colorField": "z",
+          "colorMap": "turbo",
+          "pointSize": 2
+        },
+        "/go2/pose": {
+          "visible": true,
+          "type": "arrow",
+          "color": "#22c55e"
+        }
+      },
+      "layers": {
+        "grid": { "layerId": "foxglove.Grid", "size": 10, "divisions": 20, "visible": true }
+      }
+    },
+    "Image!camera": {
+      "imageTopic": "/go2/camera",
+      "synchronize": false,
+      "rotation": 0,
+      "smooth": true
+    },
+    "Plot!batteryimu": {
+      "title": "Battery & IMU",
+      "paths": [
+        { "value": "/go2/state.soc", "enabled": true, "timestampMethod": "receiveTime", "label": "battery %" },
+        { "value": "/go2/state.rpy[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "roll" },
+        { "value": "/go2/state.rpy[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "pitch" },
+        { "value": "/go2/state.rpy[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "yaw" },
+        { "value": "/go2/state.gyro[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "gyro x" },
+        { "value": "/go2/state.gyro[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "gyro y" },
+        { "value": "/go2/state.gyro[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "gyro z" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "Plot!posefeet": {
+      "title": "Pose (xyz), velocity & foot forces",
+      "paths": [
+        { "value": "/go2/state.position[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "x" },
+        { "value": "/go2/state.position[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "y" },
+        { "value": "/go2/state.position[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "z" },
+        { "value": "/go2/state.velocity[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "vx" },
+        { "value": "/go2/state.foot_force[0]", "enabled": true, "timestampMethod": "receiveTime", "label": "foot FR" },
+        { "value": "/go2/state.foot_force[1]", "enabled": true, "timestampMethod": "receiveTime", "label": "foot FL" },
+        { "value": "/go2/state.foot_force[2]", "enabled": true, "timestampMethod": "receiveTime", "label": "foot RR" },
+        { "value": "/go2/state.foot_force[3]", "enabled": true, "timestampMethod": "receiveTime", "label": "foot RL" }
+      ],
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "timestamp",
+      "isSynced": true
+    },
+    "RawMessages!uwb": {
+      "topicPath": "/go2/uwb",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "fontSize": 14
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "first": {
+      "first": "3D!scene",
+      "second": "Image!camera",
+      "direction": "row",
+      "splitPercentage": 58
+    },
+    "second": {
+      "first": "Plot!batteryimu",
+      "second": {
+        "first": "Plot!posefeet",
+        "second": "RawMessages!uwb",
+        "direction": "row",
+        "splitPercentage": 65
+      },
+      "direction": "row",
+      "splitPercentage": 38
+    },
+    "direction": "column",
+    "splitPercentage": 56
+  }
+}

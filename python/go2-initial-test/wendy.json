@@ -1,0 +1,94 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "services": {
+        "ui": {
+            "context": "./ui",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "gpu": {
+            "context": "./gpu",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "gpu" }
+            ]
+        },
+        "lowstate": {
+            "context": "./lowstate",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "camera": {
+            "context": "./camera",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "lidar": {
+            "context": "./lidar",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "mic": {
+            "context": "./mic",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "audio" }
+            ]
+        },
+        "speaker": {
+            "context": "./speaker",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "motion": {
+            "context": "./motion",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "cloud": {
+            "context": "./cloud",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "extras": {
+            "context": "./extras",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "storage": {
+            "context": "./storage",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "{{.APP_ID}}-teststore", "path": "/data" }
+            ]
+        },
+        "vui": {
+            "context": "./vui",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "bt": {
+            "context": "./bt",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "btscan": {
+            "context": "./btscan",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "bluetooth" }
+            ]
+        }
+    }
+}

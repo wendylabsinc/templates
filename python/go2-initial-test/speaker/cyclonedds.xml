@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+    <Domain id="any">
+        <General>
+            <Interfaces>
+                <!-- Bind by this device's IP on the robot LAN (not interface
+                     name) — the Go2 Orin is multi-homed (eth1 carries both
+                     192.168.100.x and 192.168.123.x), so a name is ambiguous. -->
+                <NetworkInterface address="{{.GO2_DDS_ADDRESS}}" priority="default" multicast="default" />
+            </Interfaces>
+            <AllowMulticast>true</AllowMulticast>
+            <MaxMessageSize>65500B</MaxMessageSize>
+        </General>
+        <Discovery>
+            <ParticipantIndex>auto</ParticipantIndex>
+            <MaxAutoParticipantIndex>60</MaxAutoParticipantIndex>
+        </Discovery>
+    </Domain>
+</CycloneDDS>

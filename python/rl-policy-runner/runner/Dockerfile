@@ -1,7 +1,7 @@
-# runner — loads an ONNX policy and runs the on-robot control loop over Unitree DDS.
-# Builds CycloneDDS + unitree_sdk2_python from source (no arm64 wheels), plus
-# onnxruntime (CPU) for inference. Build for the robot's arch: linux/arm64 on the
-# Go2's Orin (wendy multibuild targets the device arch).
+# runner — runs the Walk-These-Ways Go2 policy (two TorchScript nets) over Unitree
+# DDS. Builds CycloneDDS + unitree_sdk2_python from source, installs torch (CPU) for
+# inference, and bakes in the WTW pre-trained Go2 checkpoints. Build for the robot's
+# arch: linux/arm64 on the Go2 Orin (wendy multibuild targets the device arch).
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -11,7 +11,6 @@ RUN apt-get update \
         libssl-dev curl ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
-# CycloneDDS 0.10.5 (matches the unitree_sdk2_python binding).
 ENV CYCLONEDDS_HOME=/usr/local
 RUN git clone --depth 1 --branch 0.10.5 https://github.com/eclipse-cyclonedds/cyclonedds /tmp/cyclonedds \
  && cmake -S /tmp/cyclonedds -B /tmp/cyclonedds/build -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_IDLC=ON \
@@ -22,33 +21,28 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir cyclonedds==0.10.5 -r requirements.txt
 
-# unitree_sdk2_python (pinned). The empty b2/ package guards an optional import;
-# derive the install path instead of hardcoding a python version.
 RUN git clone --depth 1 https://github.com/unitreerobotics/unitree_sdk2_python /tmp/sdk \
  && pip3 install --no-cache-dir /tmp/sdk \
  && SDK_DIR="$(python3 -c 'import unitree_sdk2py,os;print(os.path.dirname(unitree_sdk2py.__file__))')" \
  && mkdir -p "$SDK_DIR/b2" && touch "$SDK_DIR/b2/__init__.py" \
  && rm -rf /tmp/sdk
 
+# WTW pre-trained Go2 checkpoints (MIT, Teddy-Liao/walk-these-ways-go2).
+ARG WTW_BASE=https://raw.githubusercontent.com/Teddy-Liao/walk-these-ways-go2/main/runs/gait-conditioned-agility/pretrain-go2/train/142238.667503/checkpoints
+RUN mkdir -p /policy \
+ && curl -fsSL "$WTW_BASE/adaptation_module_latest.jit" -o /policy/adaptation_module_latest.jit \
+ && curl -fsSL "$WTW_BASE/body_latest.jit" -o /policy/body_latest.jit
+
 COPY controller.py app.py ./
 
-# Baked from template variables; safety knobs overridable per-deploy.
-ENV ROBOT={{.ROBOT}} \
-    CONTROL_MODE={{.CONTROL_MODE}} \
-    CONTROL_HZ={{.CONTROL_HZ}} \
-    OBS_DIM={{.OBS_DIM}} \
-    ACT_DIM={{.ACT_DIM}} \
-    POLICY_URL={{.POLICY_URL}} \
-    POLICY_PATH=/policy/policy.onnx \
+ENV POLICY_DIR=/policy \
+    NUM_OBS=70 HISTORY_LEN=15 \
     GO2_IP={{.GO2_IP}} \
     GO2_DDS_ADDRESS={{.GO2_DDS_ADDRESS}} \
-    USE_BASE_LIN_VEL=1 \
-    ACTION_SCALE=0.25 \
-    KP=25.0 KD=0.5 STOP_KD=3.0 \
-    JOINT_DELTA_MAX=1.2 \
-    CMD_VX=0.0 CMD_VY=0.0 CMD_VYAW=0.0 \
-    MAX_VX=0.5 MAX_VY=0.3 MAX_VYAW=0.5 \
-    WATCHDOG_S=0.5 \
+    CMD_VX={{.CMD_VX}} CMD_VY=0.0 CMD_VYAW=0.0 \
+    STEP_FREQ=3.0 FOOTSWING=0.08 \
+    KP=25.0 KD=0.6 STOP_KD=3.0 \
+    CONTROL_HZ=50 \
     ENABLE_POLICY=0 \
     ENABLE_LOWCMD=0 \
     PORT=3700

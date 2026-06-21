@@ -1,73 +1,67 @@
-"""On-robot RL policy control loop — wired for the NVIDIA Isaac Lab Unitree Go2
-velocity locomotion policy (``Isaac-Velocity-Flat-Unitree-Go2-v0``), with an
-independent safety watchdog.
+"""On-robot control loop for the Walk-These-Ways (WTW) Unitree Go2 policy.
 
-    load ONNX policy -> build Isaac-Lab observation from rt/lowstate -> policy(obs)
-    -> target_q = default_pose + action*0.25 -> publish rt/lowcmd (PD) @ 50 Hz
-       (+ independent threading.Timer watchdog firing a synchronous damping stop)
+Faithfully replicates the deploy path of github.com/Teddy-Liao/walk-these-ways-go2
+(an MIT-licensed port of Improbable-AI/walk-these-ways): a gait-conditioned RMA
+policy with two TorchScript nets and a stacked observation history.
 
-The Isaac-Lab convention is baked in as named constants below (obs layout, action
-scale, default pose, PD gains, and the Isaac<->Unitree-SDK joint-order permutation).
-Items marked [VERIFY] should be checked against YOUR exported ``env.yaml`` and with a
-one-joint twitch test before any free-standing run — a wrong gain or permutation is
-dangerous on hardware.
+    every 50 Hz tick:
+      update gait clock -> build single obs(70) -> push into history(15*70=1050)
+      latent = adaptation_module(history)
+      action = body(cat(history, latent))           # 12 joint deltas
+      target_q = default_pose + action*0.25 (hip*0.5), reorder to SDK, rt/lowcmd PD
 
-SAFETY (drives a real robot):
-- Never runs until ``/start`` AND ``ENABLE_POLICY=1``; ``lowcmd`` also needs
-  ``ENABLE_LOWCMD=1`` and the robot's high-level ``sport_mode`` turned OFF.
-- Independent ``threading.Timer`` watchdog (its own OS thread) fires a synchronous
-  damping stop if the loop stalls / isn't renewed within ``WATCHDOG_S``.
-- Joint targets are clamped to ``JOINT_DELTA_MAX`` from the default pose every tick.
-- The loop always issues a damping stop on exit/error/disconnect.
-- FIRST RUNS ON A STAND / SUSPENDED, e-stop ready.
+Constants below are the WTW Go2 config; items marked [VERIFY] are the standard
+values that should be confirmed (a startup self-check validates the obs size and
+latent dim against the actual .jit shapes). SAFETY: ENABLE gates, sport_mode OFF,
+independent watchdog -> damping stop, startup ramp to the default pose. Test on a
+stand, e-stop ready.
 """
 
 import os
 import threading
 import time
-import urllib.request
 
 import numpy as np
-import onnxruntime as ort
 
-# ---- Isaac Lab Unitree Go2 velocity convention (edit only to match YOUR policy) ----
+# ---- WTW Go2 spec (from walk-these-ways-go2 deploy code) -------------------------
 
-# Joint-order permutation between the Unitree SDK (rt/lowstate, rt/lowcmd) and the
-# Isaac Lab USD articulation order the policy was trained in.
-#   SDK order:   FR[hip,thigh,calf]=0..2, FL=3..5, RR=6..8, RL=9..11
-#   Isaac order: hips[FL,FR,RL,RR]=0..3, thighs=4..7, calves=8..11
-ISAAC_FROM_SDK = [3, 0, 9, 6, 4, 1, 10, 7, 5, 2, 11, 8]   # isaac[i] = sdk[ISAAC_FROM_SDK[i]]
-SDK_FROM_ISAAC = [1, 5, 9, 0, 4, 8, 3, 7, 11, 2, 6, 10]   # sdk[j]   = isaac[SDK_FROM_ISAAC[j]]
+NUM_OBS = int(os.environ.get("NUM_OBS", "70"))          # single-step obs [VERIFY vs parameters.pkl]
+HISTORY = int(os.environ.get("HISTORY_LEN", "15"))      # observation history length
+NUM_COMMANDS = 15
+ACTION_SCALE = 0.25
+HIP_SCALE_REDUCTION = 0.5                                # applied to policy hip idxs 0,3,6,9
+KP = float(os.environ.get("KP", "25.0"))
+KD = float(os.environ.get("KD", "0.6"))
+STOP_KD = float(os.environ.get("STOP_KD", "3.0"))
+DOF_VEL_SCALE = 0.05
+CLIP_ACTIONS = 100.0
+CONTROL_HZ = float(os.environ.get("CONTROL_HZ", "50"))
+DT = 1.0 / CONTROL_HZ
 
-# Default joint pose in ISAAC order (radians): hips ±0.1, front thighs 0.8 / rear 1.0,
-# all calves -1.5.  [FL_hip,FR_hip,RL_hip,RR_hip, FL_th,FR_th,RL_th,RR_th, FL_cf..RR_cf]
-DEFAULT_POSE_ISAAC = np.array(
-    [0.1, -0.1, 0.1, -0.1, 0.8, 0.8, 1.0, 1.0, -1.5, -1.5, -1.5, -1.5], dtype=np.float32
+# Policy joint order is FL,FR,RL,RR (each hip,thigh,calf); SDK motor order is
+# FR,FL,RR,RL. joint_idxs maps policy->SDK (and is its own inverse for SDK->policy).
+JOINT_IDXS = np.array([3, 4, 5, 0, 1, 2, 9, 10, 11, 6, 7, 8])  # [VERIFY] vs cheetah_state_estimator
+DEFAULT_POSE_POLICY = np.array(
+    [0.1, 0.8, -1.5, -0.1, 0.8, -1.5, 0.1, 1.0, -1.5, -0.1, 1.0, -1.5], dtype=np.float32
+)
+# command_scale, per WTW lcm_agent (obs_scales applied to the raw command vector)
+COMMAND_SCALE = np.array(
+    [2.0, 2.0, 0.25, 2.0, 1, 1, 1, 1, 1, 0.15, 0.3, 0.3, 1.0, 1.0, 1.0], dtype=np.float32
 )
 
-ACTION_SCALE = float(os.environ.get("ACTION_SCALE", "0.25"))   # Isaac Lab Go2 default
-# PD gains: upstream IsaacLab UNITREE_GO2_CFG = 25/0.5; Unitree's unitree_rl_lab = 40/1.0.
-# [VERIFY] use the gains from the SAME repo/env.yaml that produced your policy.
-KP = float(os.environ.get("KP", "25.0"))
-KD = float(os.environ.get("KD", "0.5"))
-STOP_KD = float(os.environ.get("STOP_KD", "3.0"))             # damping-stop kd (kp=0)
-JOINT_DELTA_MAX = float(os.environ.get("JOINT_DELTA_MAX", "1.2"))  # clamp |target-default|
+# Desired motion command (defaults = trot in place). Velocities are clamped.
+CMD_VX = float(np.clip(float(os.environ.get("CMD_VX", "0.0")), -0.6, 0.6))
+CMD_VY = float(np.clip(float(os.environ.get("CMD_VY", "0.0")), -0.6, 0.6))
+CMD_VYAW = float(np.clip(float(os.environ.get("CMD_VYAW", "0.0")), -1.0, 1.0))
+STEP_FREQ = float(os.environ.get("STEP_FREQ", "3.0"))
+FOOTSWING = float(os.environ.get("FOOTSWING", "0.08"))
+# raw 15-dim command: [vx,vy,yaw, body_height, freq, phase,offset,bound,duration,
+#                      footswing, pitch, roll, stance_width, stance_length, aux]
+RAW_COMMAND = np.array(
+    [CMD_VX, CMD_VY, CMD_VYAW, 0.0, STEP_FREQ, 0.5, 0.0, 0.0, 0.5, FOOTSWING,
+     0.0, 0.0, 0.33, 0.40, 0.0], dtype=np.float32)
 
-CONTROL_MODE = os.environ.get("CONTROL_MODE", "lowcmd").lower()  # lowcmd | velocity
-CONTROL_HZ = float(os.environ.get("CONTROL_HZ", "50"))           # Isaac Lab = 50 Hz
-OBS_DIM = int(os.environ.get("OBS_DIM", "48"))
-ACT_DIM = int(os.environ.get("ACT_DIM", "12"))
-USE_BASE_LIN_VEL = os.environ.get("USE_BASE_LIN_VEL", "1") == "1"  # flat=48 uses it; blind=45 doesn't
-WATCHDOG_S = float(os.environ.get("WATCHDOG_S", "0.5"))
-CMD = np.array(
-    [float(os.environ.get("CMD_VX", "0.0")), float(os.environ.get("CMD_VY", "0.0")),
-     float(os.environ.get("CMD_VYAW", "0.0"))], dtype=np.float32)
-MAX_VX = float(os.environ.get("MAX_VX", "0.5"))
-MAX_VY = float(os.environ.get("MAX_VY", "0.3"))
-MAX_VYAW = float(os.environ.get("MAX_VYAW", "0.5"))
-
-POLICY_PATH = os.environ.get("POLICY_PATH", "/policy/policy.onnx")
-POLICY_URL = os.environ.get("POLICY_URL", "").strip()
+POLICY_DIR = os.environ.get("POLICY_DIR", "/policy")
 DDS_ADDR = os.environ.get("GO2_DDS_ADDRESS", "").strip()
 IFACE = os.environ.get("GO2_NETWORK_INTERFACE", "eth0")
 ENABLE_POLICY = os.environ.get("ENABLE_POLICY", "0") == "1"
@@ -76,9 +70,9 @@ ENABLE_LOWCMD = os.environ.get("ENABLE_LOWCMD", "0") == "1"
 
 class PolicyRunner:
     def __init__(self) -> None:
-        self._sess: ort.InferenceSession | None = None
-        self._in_name = ""
-        self._sport = None
+        self._adapt = None
+        self._body = None
+        self._latent_dim = 0
         self._lowcmd_pub = None
         self._lowcmd = None
         self._crc = None
@@ -90,21 +84,29 @@ class PolicyRunner:
         self._wd_gen = 0
         self._running = False
         self._connected = False
-        self._last_action = np.zeros(12, dtype=np.float32)   # Isaac order, raw net output
+        self._obs_history = np.zeros(NUM_OBS * HISTORY, dtype=np.float32)
+        self._actions = np.zeros(12, dtype=np.float32)        # a(t-1), policy order
+        self._last_actions = np.zeros(12, dtype=np.float32)   # a(t-2), policy order
+        self._gait_index = 0.0
         self._status = {"state": "idle", "rate_hz": 0.0, "detail": "", "obs": [], "action": []}
 
-    # ----- policy + connection -------------------------------------------------
+    # ----- load + connect ------------------------------------------------------
 
     def load_policy(self) -> None:
-        if self._sess is not None:
+        if self._body is not None:
             return
-        if POLICY_URL and not os.path.exists(POLICY_PATH):
-            os.makedirs(os.path.dirname(POLICY_PATH) or ".", exist_ok=True)
-            urllib.request.urlretrieve(POLICY_URL, POLICY_PATH)  # noqa: S310
-        if not os.path.exists(POLICY_PATH):
-            raise FileNotFoundError(f"no policy at {POLICY_PATH} (set POLICY_URL or mount one)")
-        self._sess = ort.InferenceSession(POLICY_PATH, providers=["CPUExecutionProvider"])
-        self._in_name = self._sess.get_inputs()[0].name
+        import torch
+
+        self._torch = torch
+        self._adapt = torch.jit.load(f"{POLICY_DIR}/adaptation_module_latest.jit").to("cpu").eval()
+        self._body = torch.jit.load(f"{POLICY_DIR}/body_latest.jit").to("cpu").eval()
+        # Self-check: infer latent dim and validate the obs-history size against the nets.
+        with torch.no_grad():
+            hist = torch.zeros(1, NUM_OBS * HISTORY)
+            latent = self._adapt(hist)
+            self._latent_dim = int(latent.shape[-1])
+            self._body(torch.cat((hist, latent), dim=-1))  # raises if sizes are wrong
+        self._status["detail"] = f"nets ok: obs={NUM_OBS}x{HISTORY}={NUM_OBS*HISTORY}, latent={self._latent_dim}"
 
     def connect(self) -> None:
         if self._connected:
@@ -116,18 +118,9 @@ class PolicyRunner:
         sub = ChannelSubscriber("rt/lowstate", LowState_)
         sub.Init(self._on_lowstate, 10)
         self._subs.append(sub)
-
-        if CONTROL_MODE == "lowcmd":
-            if not ENABLE_LOWCMD:
-                raise RuntimeError("lowcmd mode needs ENABLE_LOWCMD=1 AND sport_mode OFF on the robot")
-            self._init_lowcmd()
-        elif CONTROL_MODE == "velocity":
-            from unitree_sdk2py.go2.sport.sport_client import SportClient
-            self._sport = SportClient()
-            self._sport.SetTimeout(3.0)
-            self._sport.Init()
-        else:
-            raise RuntimeError(f"unknown CONTROL_MODE {CONTROL_MODE!r}")
+        if not ENABLE_LOWCMD:
+            raise RuntimeError("WTW needs ENABLE_LOWCMD=1 AND the robot's sport_mode OFF (low-level mode)")
+        self._init_lowcmd()
         self._connected = True
 
     def _on_lowstate(self, msg) -> None:
@@ -142,56 +135,44 @@ class PolicyRunner:
         except Exception:  # noqa: BLE001
             pass
 
-    # ----- observation (Isaac Lab layout) --------------------------------------
+    # ----- observation (WTW) ---------------------------------------------------
 
-    def build_observation(self) -> np.ndarray:
-        """Isaac Lab Go2 velocity obs, RAW SI units (no legged_gym-style scaling):
-        [base_lin_vel(3), base_ang_vel(3), projected_gravity(3), velocity_command(3),
-         joint_pos_rel(12), joint_vel(12), last_action(12)] in ISAAC joint order.
-        base_lin_vel is privileged in sim — see the note: hard to get in low-level
-        mode (sport_mode off), so it defaults to zeros. Prefer a 'blind' 45-dim policy
-        for real deployment, or wire a state estimator here.
-        """
+    def _single_obs(self) -> np.ndarray:
         with self._state_lock:
             s = dict(self._latest)
         if not s:
-            return np.zeros(OBS_DIM, dtype=np.float32)
-        ang_vel = np.asarray(s["gyro"], dtype=np.float32)
-        proj_g = _projected_gravity(s["quat"])
-        q_isaac = _to_isaac(s["q"])
-        dq_isaac = _to_isaac(s["dq"])
-        joint_pos_rel = q_isaac - DEFAULT_POSE_ISAAC
-        parts = []
-        if USE_BASE_LIN_VEL:
-            parts.append(self._base_lin_vel())   # [VERIFY] zeros unless you add an estimator
-        parts += [ang_vel, proj_g, CMD, joint_pos_rel, dq_isaac, self._last_action]
-        obs = np.concatenate(parts).astype(np.float32)
-        if obs.shape[0] != OBS_DIM:  # pad/trim defensively, but the layout should already match
-            obs = np.concatenate([obs, np.zeros(max(0, OBS_DIM - obs.shape[0]), dtype=np.float32)])[:OBS_DIM]
-        return obs
+            return np.zeros(NUM_OBS, dtype=np.float32)
+        gravity = _projected_gravity(s["quat"])                       # 3  [VERIFY sign]
+        commands = RAW_COMMAND * COMMAND_SCALE                        # 15
+        q_pol = np.asarray(s["q"], dtype=np.float32)[JOINT_IDXS]      # SDK->policy
+        dq_pol = np.asarray(s["dq"], dtype=np.float32)[JOINT_IDXS]
+        dof_pos = (q_pol - DEFAULT_POSE_POLICY)                       # 12 (dof_pos scale = 1.0)
+        dof_vel = dq_pol * DOF_VEL_SCALE                             # 12
+        actions = np.clip(self._actions, -CLIP_ACTIONS, CLIP_ACTIONS)  # 12
+        clock = self._clock_inputs()                                  # 4
+        ob = np.concatenate([gravity, commands, dof_pos, dof_vel, actions,
+                             self._last_actions, clock]).astype(np.float32)
+        if ob.shape[0] != NUM_OBS:  # zero-pad/trim defensively (should match exactly)
+            ob = np.concatenate([ob, np.zeros(max(0, NUM_OBS - ob.shape[0]), dtype=np.float32)])[:NUM_OBS]
+        return ob
 
-    def _base_lin_vel(self) -> np.ndarray:
-        # Not available from rt/lowstate, and rt/sportmodestate is silent in low-level
-        # mode. Returns zeros by default — train/deploy a blind (no-lin-vel) policy, or
-        # plug a state estimator here.
-        return np.zeros(3, dtype=np.float32)
+    def _clock_inputs(self) -> np.ndarray:
+        freq, phase, offset, bound = RAW_COMMAND[4], RAW_COMMAND[5], RAW_COMMAND[6], RAW_COMMAND[7]
+        self._gait_index = (self._gait_index + DT * freq) % 1.0
+        gi = self._gait_index
+        feet = np.array([gi + phase + offset + bound, gi + offset, gi + bound, gi + phase])
+        return np.sin(2 * np.pi * feet).astype(np.float32)  # FL, FR, RL, RR (sin only)
 
-    # ----- action --------------------------------------------------------------
+    # ----- action (WTW -> rt/lowcmd) -------------------------------------------
 
-    def apply_action(self, action: np.ndarray) -> None:
-        if CONTROL_MODE == "lowcmd":
-            # Isaac Lab: target_q = default_pose + action*scale, clamped, then to SDK order.
-            target_isaac = DEFAULT_POSE_ISAAC + action * ACTION_SCALE
-            target_isaac = np.clip(
-                target_isaac, DEFAULT_POSE_ISAAC - JOINT_DELTA_MAX, DEFAULT_POSE_ISAAC + JOINT_DELTA_MAX)
-            self._publish_lowcmd(_to_sdk(target_isaac), kp=KP, kd=KD)
-        else:
-            vx = float(np.clip(action[0], -MAX_VX, MAX_VX))
-            vy = float(np.clip(action[1] if ACT_DIM > 1 else 0.0, -MAX_VY, MAX_VY))
-            vyaw = float(np.clip(action[2] if ACT_DIM > 2 else 0.0, -MAX_VYAW, MAX_VYAW))
-            self._sport.Move(vx, vy, vyaw)
+    def _apply_action(self, action: np.ndarray) -> None:
+        jt = action * ACTION_SCALE                       # policy order
+        jt[[0, 3, 6, 9]] *= HIP_SCALE_REDUCTION          # hips
+        jt = jt + DEFAULT_POSE_POLICY
+        q_sdk = jt[JOINT_IDXS]                            # policy -> SDK
+        self._publish_lowcmd(q_sdk, kp=KP, kd=KD)
 
-    # ----- lowcmd (rt/lowcmd PD publish) ---------------------------------------
+    # ----- lowcmd publish ------------------------------------------------------
 
     def _init_lowcmd(self) -> None:
         from unitree_sdk2py.core.channel import ChannelPublisher
@@ -204,18 +185,18 @@ class PolicyRunner:
         self._lowcmd = unitree_go_msg_dds__LowCmd_()
         self._lowcmd.head[0] = 0xFE
         self._lowcmd.head[1] = 0xEF
-        self._lowcmd.level_flag = 0xFF   # low-level
+        self._lowcmd.level_flag = 0xFF
         self._lowcmd.gpio = 0
         self._crc = CRC()
 
-    def _publish_lowcmd(self, q_sdk: np.ndarray, kp: float, kd: float, dq: float = 0.0) -> None:
+    def _publish_lowcmd(self, q_sdk: np.ndarray, kp: float, kd: float) -> None:
         if self._lowcmd_pub is None:
             return
         for j in range(12):
             mc = self._lowcmd.motor_cmd[j]
-            mc.mode = 0x01  # servo (PMSM)
+            mc.mode = 0x01
             mc.q = float(q_sdk[j])
-            mc.dq = dq
+            mc.dq = 0.0
             mc.kp = kp
             mc.kd = kd
             mc.tau = 0.0
@@ -223,21 +204,38 @@ class PolicyRunner:
         self._lowcmd_pub.Write(self._lowcmd)
 
     def _lowcmd_damping(self) -> None:
-        # Safe stop: zero stiffness + joint damping → the dog folds/settles gently.
-        # (On a stand it just relaxes. Keep it on a stand.)
         with self._state_lock:
             q = self._latest.get("q", [0.0] * 12)
         self._publish_lowcmd(np.asarray(q, dtype=np.float32), kp=0.0, kd=STOP_KD)
 
+    def _calibrate(self) -> None:
+        # Smoothly ramp from the current pose to the default stance before the policy
+        # takes over, so there's no jerk (mirrors WTW's calibration phase).
+        with self._state_lock:
+            q = self._latest.get("q")
+        if not q:
+            return
+        cur = np.asarray(q, dtype=np.float32)[JOINT_IDXS]  # policy order
+        goal = DEFAULT_POSE_POLICY
+        for _ in range(50):  # ~1 s of 0.05-rad steps
+            cur = cur + np.clip(goal - cur, -0.05, 0.05)
+            self._publish_lowcmd(cur[JOINT_IDXS], kp=KP, kd=KD)
+            time.sleep(0.02)
+            if np.max(np.abs(goal - cur)) < 0.01:
+                break
+
     # ----- control loop + safety ----------------------------------------------
 
     def start(self) -> str:
-        if not ENABLE_POLICY:
-            return "blocked: set ENABLE_POLICY=1 to allow the policy to drive the robot"
+        if not (ENABLE_POLICY and ENABLE_LOWCMD):
+            return "blocked: needs ENABLE_POLICY=1 and ENABLE_LOWCMD=1 (and sport_mode OFF)"
         if self._running:
             return "already running"
         self.load_policy()
         self.connect()
+        self._obs_history[:] = 0.0
+        self._gait_index = 0.0
+        self._calibrate()
         self._running = True
         self._loop_thread = threading.Thread(target=self._loop, daemon=True)
         self._loop_thread.start()
@@ -260,22 +258,27 @@ class PolicyRunner:
         return "estopped"
 
     def _loop(self) -> None:
-        period = 1.0 / CONTROL_HZ
+        torch = self._torch
         self._status.update(state="running", detail="")
         try:
             while self._running:
                 t0 = time.monotonic()
-                obs = self.build_observation()
-                action = self._infer(obs)
-                self._last_action = action
-                self.apply_action(action)
+                ob = self._single_obs()
+                self._obs_history = np.concatenate([self._obs_history[NUM_OBS:], ob])
+                with torch.no_grad():
+                    hist = torch.from_numpy(self._obs_history).float().unsqueeze(0)
+                    latent = self._adapt(hist)
+                    action = self._body(torch.cat((hist, latent), dim=-1)).squeeze(0).numpy()
+                self._last_actions = self._actions
+                self._actions = action.astype(np.float32)
+                self._apply_action(self._actions.copy())
                 self._arm_watchdog()
                 self._status.update(
                     rate_hz=round(1.0 / max(time.monotonic() - t0, 1e-6), 1),
-                    obs=[round(float(x), 3) for x in obs[:8]],
-                    action=[round(float(x), 3) for x in action[:8]],
+                    obs=[round(float(x), 3) for x in ob[:8]],
+                    action=[round(float(x), 3) for x in self._actions[:8]],
                 )
-                dt = period - (time.monotonic() - t0)
+                dt = DT - (time.monotonic() - t0)
                 if dt > 0:
                     time.sleep(dt)
         except Exception as exc:  # noqa: BLE001
@@ -285,15 +288,11 @@ class PolicyRunner:
             self._cancel_watchdog()
             self._sync_stop()
 
-    def _infer(self, obs: np.ndarray) -> np.ndarray:
-        out = self._sess.run(None, {self._in_name: obs.reshape(1, -1)})[0]
-        return np.asarray(out, dtype=np.float32).reshape(-1)[:ACT_DIM]
-
     def _arm_watchdog(self) -> None:
         self._cancel_watchdog()
         self._wd_gen += 1
         gen = self._wd_gen
-        t = threading.Timer(WATCHDOG_S, self._sync_stop, kwargs={"gen": gen})
+        t = threading.Timer(max(0.1, 3 * DT), self._sync_stop, kwargs={"gen": gen})
         t.daemon = True
         self._watchdog = t
         t.start()
@@ -308,30 +307,17 @@ class PolicyRunner:
             return
         self._running = False
         try:
-            if CONTROL_MODE == "lowcmd":
-                self._lowcmd_damping()
-            elif self._sport is not None:
-                self._sport.StopMove()
+            self._lowcmd_damping()
         except Exception:  # noqa: BLE001
             pass
 
     def status(self) -> dict:
         return {
-            "interface": "policy", "robot": os.environ.get("ROBOT", "go2"),
-            "mode": CONTROL_MODE, "enabled": ENABLE_POLICY and (ENABLE_LOWCMD or CONTROL_MODE != "lowcmd"),
-            "policy_loaded": self._sess is not None, "obs_dim": OBS_DIM, "act_dim": ACT_DIM,
+            "interface": "policy", "robot": "go2", "policy": "walk-these-ways",
+            "enabled": ENABLE_POLICY and ENABLE_LOWCMD, "policy_loaded": self._body is not None,
+            "latent_dim": self._latent_dim, "cmd": [CMD_VX, CMD_VY, CMD_VYAW],
             **self._status,
         }
-
-
-def _to_isaac(v_sdk) -> np.ndarray:
-    a = np.asarray(v_sdk, dtype=np.float32)
-    return np.array([a[ISAAC_FROM_SDK[i]] for i in range(12)], dtype=np.float32)
-
-
-def _to_sdk(v_isaac) -> np.ndarray:
-    a = np.asarray(v_isaac, dtype=np.float32)
-    return np.array([a[SDK_FROM_ISAAC[j]] for j in range(12)], dtype=np.float32)
 
 
 def _init_dds() -> None:
@@ -352,8 +338,7 @@ def _init_dds() -> None:
 
 
 def _projected_gravity(quat) -> np.ndarray:
-    # gravity (0,0,-1) expressed in the base frame from the IMU quaternion (w,x,y,z).
-    # Upright (w=1) -> [0,0,-1], matching Isaac Lab's projected_gravity.
+    # gravity (0,0,-1) in the base frame from IMU quaternion (w,x,y,z); upright -> [0,0,-1].
     w, x, y, z = (list(quat) + [1, 0, 0, 0])[:4]
     return np.array(
         [-2 * (x * z - w * y), -2 * (y * z + w * x), -(1 - 2 * (x * x + y * y))],

@@ -54,7 +54,7 @@
         },
         {
             "name": "rl-policy-runner",
-            "description": "Run a trained RL policy on a robot: ONNX inference over Unitree DDS at a fixed control rate, with an independent safety watchdog, ENABLE gate, and start/stop/E-STOP web UI (Go2 velocity-control defaults; editable obs/action adapters)",
+            "description": "Run an RL locomotion policy on a Unitree Go2 over Unitree DDS at 50 Hz with an independent safety watchdog, ENABLE gate, and start/stop/E-STOP web UI; ships the pre-trained Walk-These-Ways Go2 gait policy bundled and runnable out of the box",
             "languages": ["python"]
         }
     ],

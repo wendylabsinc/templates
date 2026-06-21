@@ -1,70 +1,71 @@
 # rl-policy-runner
 
 Deploy a trained reinforcement-learning policy onto a robot and run it as a safe,
-managed WendyOS app. This is the **on-robot inference counterpart** to a sim-to-real
-training pipeline (e.g. Isaac Lab / MuJoCo): you train a policy on a GPU box, then
-`wendy run` this template onto the robot's onboard computer to actually drive it.
+managed WendyOS app — the on-robot inference half of a sim-to-real pipeline. **This
+template is wired for the NVIDIA Isaac Lab Unitree Go2 velocity locomotion policy**
+(`Isaac-Velocity-Flat-Unitree-Go2-v0`): it builds the exact Isaac-Lab observation,
+runs your exported ONNX policy at 50 Hz, and applies joint-position targets to the
+Go2 over `rt/lowcmd` — behind an independent safety watchdog and an ENABLE gate.
 
 ```
-[runner]  loads ONNX policy → reads robot DDS state → policy(obs) → clamp → act @ Hz
-   │                                                   (+ independent safety watchdog)
-   └── HTTP control API (start/stop/estop/status)
+[runner]  rt/lowstate → Isaac-Lab obs(48) → policy → target_q = default+act*0.25
+   │       → rt/lowcmd PD @ 50 Hz        (+ independent watchdog → damping stop)
+   └── HTTP control API: /start /stop /estop /status
 [ui]      web dashboard: live status + Start / Stop / ■ E-STOP
 ```
 
 ## What it does with wendy
 
-- **`wendy init python/rl-policy-runner`** — scaffold the project; set the policy
-  URL, obs/action dims, control rate, robot IP/DDS address, control mode.
-- **`wendy run`** — builds the images and deploys them as **containers onto the
-  robot's onboard computer** (no OS reflash) with least-privilege entitlements.
-- On-device, `runner` runs the control loop over Unitree DDS; `ui` serves the
-  dashboard on `WEB_PORT`. Inspect with `wendy device logs`, control via the web UI.
-- **Update the policy** = change `POLICY_URL` and `wendy run` again.
+`wendy init python/rl-policy-runner` → fill vars → edit nothing if your policy is a
+stock Isaac Lab Go2 velocity policy → `wendy run` deploys both services as containers
+onto the Go2's onboard Jetson (no reflash) → drive/inspect via the web UI and
+`wendy device logs`. Swap the policy by changing `POLICY_URL` and `wendy run` again.
 
-wendy handles packaging, deploy, lifecycle, entitlements, and observability — it does
-**not** make an incorrect or obs-mismatched policy work (see below).
+## ⚠️ Safety — this drives a real quadruped
 
-## ⚠️ Safety (this drives a real robot)
+- The policy will not move the robot until you deploy with **`ENABLE_POLICY=1`**,
+  and (for `lowcmd`) **`ENABLE_LOWCMD=1`**, and press **Start**.
+- `lowcmd` mode **requires the Go2's high-level `sport_mode` service to be OFF**
+  (low- and high-level control are mutually exclusive on EDU/EDU+).
+- An **independent `threading.Timer` watchdog** fires a synchronous **damping stop**
+  if the loop stalls or isn't renewed within `WATCHDOG_S`.
+- Joint targets are clamped to `±JOINT_DELTA_MAX` from the default pose every tick.
+- The loop always issues a damping stop on stop/error/disconnect.
+- **First runs on a stand / suspended, with a physical e-stop ready.**
 
-- The policy **will not move the robot** until you both deploy with `ENABLE_POLICY=1`
-  **and** press Start. Default is disabled.
-- An **independent `threading.Timer` watchdog** (its own OS thread) fires a
-  *synchronous* stop if the control loop stalls or isn't renewed within `WATCHDOG_S`.
-- Actions are **clamped** every tick (`MAX_VX/MAX_VY/MAX_VYAW` for velocity mode).
-- The loop **always stops the robot** on stop, error, or disconnect (`try/finally`).
-- **Always test on a stand / suspended, with a physical e-stop ready.**
+## ✅ [VERIFY] before any free-standing run
 
-## You must edit two adapters to match your policy
+The Isaac Lab convention is baked into `runner/controller.py`, but a few values
+*must* be confirmed against **your** exported `env.yaml` and the actual robot — a
+mismatch produces confident, wrong, *moving* output:
 
-The policy only behaves correctly if its observation/action layout matches how it was
-trained. Edit these in `runner/controller.py`:
-
-- **`build_observation()`** — which DDS fields → obs vector, in the exact order and
-  scaling your policy was trained on. The default is an Isaac-Lab-style Go2 layout and
-  is almost certainly not byte-for-byte correct for your policy.
-- **`apply_action()`** — how the policy output maps to robot commands.
-
-**Control modes:**
-- `velocity` (default, safe) — high-level `SportClient`; interprets the first 3 outputs
-  as `[vx, vy, vyaw]`. Works for high-level command policies. `ACT_DIM=3`.
-- `lowcmd` (advanced) — direct joint control for joint-target policies (e.g. Isaac Lab
-  locomotion). Ships as a **stub you complete** (per-joint kp/kd + default pose),
-  requires `ENABLE_LOWCMD=1`, and **needs sport_mode turned OFF** on the robot. Verify
-  on a stand.
+1. **PD gains** — `KP=25.0 / KD=0.5` (upstream IsaacLab). If your policy came from
+   Unitree's `unitree_rl_lab`, it's likely **40.0 / 1.0**. Set `KP`/`KD` to match the
+   repo that produced your checkpoint.
+2. **Obs scaling** — the adapter feeds **raw SI** (Isaac Lab adds no legged_gym-style
+   scales). Grep your `env.yaml` obs terms for any `scale:` and match if present.
+3. **Joint order** — the SDK↔Isaac permutation (`ISAAC_FROM_SDK`/`SDK_FROM_ISAAC`) is
+   derived, not copied. **Twitch-test one joint** (low gains, on a stand) and confirm
+   the expected SDK index moves before trusting all 12.
+4. **`base_lin_vel`** — the flat 48-dim obs includes base linear velocity, which is
+   **privileged in sim and not available from `rt/lowstate`** (and `rt/sportmodestate`
+   is silent in low-level mode). The adapter feeds **zeros** by default
+   (`_base_lin_vel`). For real deployment, prefer a **blind 45-dim policy** (set
+   `USE_BASE_LIN_VEL=0`, `OBS_DIM=45`) or wire a state estimator into `_base_lin_vel`.
 
 ## Deploy
 
 ```sh
-wendy init python/rl-policy-runner     # scaffold into ./<app-id>/
+wendy init python/rl-policy-runner      # scaffold; set POLICY_URL, GO2_IP, GO2_DDS_ADDRESS
 cd <app-id>
-# edit runner/controller.py adapters to match your policy, then:
-wendy run                               # build + deploy to the connected robot
+# confirm the [VERIFY] items above match your policy, then:
+wendy run                                # build + deploy to the Go2
 ```
 
-Open **`http://<device>:<WEB_PORT>`**, confirm status, then Start (with the dog on a
-stand). To actually enable driving, deploy the runner with `ENABLE_POLICY=1` (set it
-in `runner/Dockerfile` or as a deploy env).
+Open `http://<device>:<WEB_PORT>`, confirm *policy loaded* + obs values changing
+(dog on a stand). To allow motion, deploy with `ENABLE_POLICY=1 ENABLE_LOWCMD=1`
+(set in `runner/Dockerfile` or as deploy env) and turn off sport_mode, then Start.
+Set the walk command via `CMD_VX` / `CMD_VY` / `CMD_VYAW` (default 0 = stand/in-place).
 
 ## Variables
 
@@ -72,24 +73,30 @@ in `runner/Dockerfile` or as a deploy env).
 | --- | --- | --- |
 | `APP_ID` | — | Application identifier |
 | `WEB_PORT` | `8080` | Dashboard port |
-| `POLICY_URL` | — | ONNX policy URL (or mount one at `/policy/policy.onnx`) |
-| `OBS_DIM` / `ACT_DIM` | `48` / `12` | Observation / action vector sizes (match training) |
-| `CONTROL_HZ` | `50` | Control-loop rate |
-| `CONTROL_MODE` | `velocity` | `velocity` (SportClient) or `lowcmd` (joint control) |
-| `ROBOT` | `go2` | Target robot for the default adapters |
+| `POLICY_URL` | — | Exported ONNX policy URL (or mount at `/policy/policy.onnx`) |
+| `OBS_DIM` / `ACT_DIM` | `48` / `12` | Isaac Lab flat Go2 (use 45 for a blind policy) |
+| `CONTROL_HZ` | `50` | Isaac Lab control rate |
+| `CONTROL_MODE` | `lowcmd` | `lowcmd` (joint targets) or `velocity` (SportClient) |
+| `ROBOT` | `go2` | Target robot |
 | `GO2_IP` | `192.168.123.161` | Robot controller IP |
-| `GO2_DDS_ADDRESS` | `192.168.123.18` | This device's robot-LAN IP that DDS binds to |
+| `GO2_DDS_ADDRESS` | `192.168.123.18` | This device's robot-LAN IP DDS binds to |
 
-Non-templated safety/runtime envs (set in `runner/Dockerfile` or per-deploy):
-`ENABLE_POLICY` (default 0), `ENABLE_LOWCMD` (0), `MAX_VX/MAX_VY/MAX_VYAW`,
-`WATCHDOG_S`, `ACTION_SCALE`.
+Non-templated tuning/safety env (set in `runner/Dockerfile` or per-deploy):
+`ENABLE_POLICY`/`ENABLE_LOWCMD` (default 0), `KP`/`KD`/`STOP_KD`, `ACTION_SCALE`
+(0.25), `JOINT_DELTA_MAX` (1.2), `USE_BASE_LIN_VEL`, `CMD_VX/VY/VYAW`, `WATCHDOG_S`,
+`MAX_VX/VY/VYAW` (velocity mode).
+
+## To adapt to a different policy
+
+Edit the named constants + the two adapters in `runner/controller.py`:
+`DEFAULT_POSE_ISAAC`, `ISAAC_FROM_SDK`/`SDK_FROM_ISAAC`, `build_observation`,
+`apply_action`. For a velocity-command policy, set `CONTROL_MODE=velocity` and
+interpret the action as `[vx, vy, vyaw]` (SportClient, sport_mode stays on).
 
 ## Notes
 
-- Inference is **CPU ONNX Runtime** by default — fine for small locomotion MLPs at
-  50 Hz. For larger policies on a GPU device, add a `gpu` entitlement and an ONNX
-  Runtime GPU/TensorRT provider.
-- The `runner` image builds **CycloneDDS + unitree_sdk2_python from source**; build for
-  the device arch (`linux/arm64` on a Go2 Orin — wendy multibuild handles this).
-- On the Go2 EDU/EDU+, low-level control requires the high-level `sport_mode` service to
-  be OFF; the two are mutually exclusive.
+- Inference is **CPU ONNX Runtime** (fine for a locomotion MLP at 50 Hz).
+- The `runner` image builds **CycloneDDS 0.10.5 + unitree_sdk2_python from source**;
+  build for the device arch (`linux/arm64` on the Go2 Orin — wendy multibuild handles it).
+- Convention sourced from isaac-sim/IsaacLab (`UNITREE_GO2_CFG`, velocity env cfg) and
+  the Unitree SDK LegID layout; see `runner/controller.py` comments.

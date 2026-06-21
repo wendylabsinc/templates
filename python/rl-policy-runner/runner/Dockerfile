@@ -42,6 +42,11 @@ ENV ROBOT={{.ROBOT}} \
     POLICY_PATH=/policy/policy.onnx \
     GO2_IP={{.GO2_IP}} \
     GO2_DDS_ADDRESS={{.GO2_DDS_ADDRESS}} \
+    USE_BASE_LIN_VEL=1 \
+    ACTION_SCALE=0.25 \
+    KP=25.0 KD=0.5 STOP_KD=3.0 \
+    JOINT_DELTA_MAX=1.2 \
+    CMD_VX=0.0 CMD_VY=0.0 CMD_VYAW=0.0 \
     MAX_VX=0.5 MAX_VY=0.3 MAX_VYAW=0.5 \
     WATCHDOG_S=0.5 \
     ENABLE_POLICY=0 \

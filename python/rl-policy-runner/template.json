@@ -50,10 +50,10 @@
         },
         {
             "name": "CONTROL_MODE",
-            "description": "How actions reach the robot: 'velocity' (high-level SportClient, safe default) or 'lowcmd' (direct joint control — advanced, needs sport_mode off + adapter work)",
+            "description": "How actions reach the robot: 'lowcmd' (direct joint position targets — for Isaac Lab locomotion policies; needs sport_mode OFF) or 'velocity' (high-level SportClient, for velocity-command policies)",
             "type": "string",
-            "default": "velocity",
-            "prompt": "Control mode (velocity/lowcmd)"
+            "default": "lowcmd",
+            "prompt": "Control mode (lowcmd/velocity)"
         },
         {
             "name": "ROBOT",

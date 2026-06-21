@@ -1,0 +1,19 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "services": {
+        "runner": {
+            "context": "./runner",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "ui": {
+            "context": "./ui",
+            "dependsOn": ["runner"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    }
+}

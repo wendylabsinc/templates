@@ -1,0 +1,62 @@
+<!-- Policy runner dashboard: live status + start / stop / E-STOP. -->
+<html>
+<head>
+  <title>rl-policy-runner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family: system-ui, sans-serif; background: #111; color: #eee; margin: 0; padding: 1.5rem; }
+    h1 { font-size: 1.2rem; }
+    .state { font-size: 2rem; font-weight: 700; padding: .5rem 1rem; border-radius: .5rem; display: inline-block; }
+    .running { background: #1a7f37; } .idle, .stopped { background: #555; }
+    .error, .estop, .unreachable { background: #b62324; }
+    .grid { display: grid; grid-template-columns: max-content 1fr; gap: .25rem 1rem; margin: 1rem 0; }
+    button { font-size: 1rem; padding: .6rem 1.2rem; margin-right: .5rem; border: 0; border-radius: .4rem; cursor: pointer; color: #fff; }
+    #start { background: #1a7f37; } #stop { background: #555; }
+    #estop { background: #b62324; font-weight: 700; }
+    code { color: #9cf; }
+  </style>
+</head>
+<body>
+  <h1>RL Policy Runner</h1>
+  <div><span id="state" class="state idle">…</span></div>
+  <div class="grid">
+    <div>mode</div><div id="mode">–</div>
+    <div>rate</div><div id="rate">–</div>
+    <div>enabled</div><div id="enabled">–</div>
+    <div>policy</div><div id="policy">–</div>
+    <div>obs[:8]</div><div><code id="obs">–</code></div>
+    <div>action[:8]</div><div><code id="action">–</code></div>
+    <div>detail</div><div id="detail">–</div>
+  </div>
+  <div>
+    <button id="start" onclick="act('start')">Start</button>
+    <button id="stop" onclick="act('stop')">Stop</button>
+    <button id="estop" onclick="act('estop')">■ E-STOP</button>
+  </div>
+  <p style="color:#888;margin-top:1rem">Policy will not drive the robot unless it was deployed with <code>ENABLE_POLICY=1</code>. Test on a stand, e-stop ready.</p>
+  <script>
+    async function refresh() {
+      try {
+        const s = await (await fetch('/api/status')).json();
+        const st = s.state || 'idle';
+        const el = document.getElementById('state');
+        el.textContent = st.toUpperCase();
+        el.className = 'state ' + st;
+        document.getElementById('mode').textContent = s.mode || '–';
+        document.getElementById('rate').textContent = (s.rate_hz ?? '–') + ' Hz';
+        document.getElementById('enabled').textContent = s.enabled ? 'yes' : 'NO (ENABLE_POLICY=0)';
+        document.getElementById('policy').textContent = s.policy_loaded ? 'loaded' : 'not loaded';
+        document.getElementById('obs').textContent = JSON.stringify(s.obs || []);
+        document.getElementById('action').textContent = JSON.stringify(s.action || []);
+        document.getElementById('detail').textContent = s.detail || '';
+      } catch (e) {}
+    }
+    async function act(a) {
+      if (a === 'start' && !confirm('Start the policy? The robot may move. Stand/e-stop ready?')) return;
+      try { const r = await (await fetch('/api/' + a, {method: 'POST'})).json(); if (r.result) document.getElementById('detail').textContent = r.result; } catch (e) {}
+      setTimeout(refresh, 300);
+    }
+    setInterval(refresh, 1000); refresh();
+  </script>
+</body>
+</html>

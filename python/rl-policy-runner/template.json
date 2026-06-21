@@ -1,0 +1,80 @@
+{
+    "name": "rl-policy-runner",
+    "description": "Run a trained RL policy on a robot: loads an ONNX policy, builds observations from the robot's DDS state, runs inference at a fixed control rate, and applies clamped actions — with an independent safety watchdog, an ENABLE gate, and a start/stop/E-STOP web UI. Defaults target a Unitree Go2 (high-level velocity control); edit the observation/action adapters to match your policy.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "WEB_PORT",
+            "description": "Port for the runner dashboard (start/stop/E-STOP + live status)",
+            "type": "integer",
+            "default": 8080,
+            "prompt": "Dashboard port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "POLICY_URL",
+            "description": "URL to the trained ONNX policy (downloaded on first start). Leave blank to mount one at /policy/policy.onnx instead.",
+            "type": "string",
+            "default": "",
+            "prompt": "Policy ONNX URL (optional)"
+        },
+        {
+            "name": "OBS_DIM",
+            "description": "Observation vector size your policy expects (must match training)",
+            "type": "integer",
+            "default": 48,
+            "prompt": "Observation dim",
+            "validate": { "min": 1, "max": 4096 }
+        },
+        {
+            "name": "ACT_DIM",
+            "description": "Action vector size your policy outputs",
+            "type": "integer",
+            "default": 12,
+            "prompt": "Action dim",
+            "validate": { "min": 1, "max": 256 }
+        },
+        {
+            "name": "CONTROL_HZ",
+            "description": "Control-loop rate in Hz",
+            "type": "integer",
+            "default": 50,
+            "prompt": "Control rate (Hz)",
+            "validate": { "min": 1, "max": 1000 }
+        },
+        {
+            "name": "CONTROL_MODE",
+            "description": "How actions reach the robot: 'velocity' (high-level SportClient, safe default) or 'lowcmd' (direct joint control — advanced, needs sport_mode off + adapter work)",
+            "type": "string",
+            "default": "velocity",
+            "prompt": "Control mode (velocity/lowcmd)"
+        },
+        {
+            "name": "ROBOT",
+            "description": "Target robot for the default adapters (go2 or g1)",
+            "type": "string",
+            "default": "go2",
+            "prompt": "Robot (go2/g1)"
+        },
+        {
+            "name": "GO2_IP",
+            "description": "Robot controller IP on the robot LAN",
+            "type": "string",
+            "default": "192.168.123.161",
+            "prompt": "Robot IP"
+        },
+        {
+            "name": "GO2_DDS_ADDRESS",
+            "description": "This device's own IP on the robot LAN that CycloneDDS binds to (the onboard Jetson is normally 192.168.123.18). Must be non-empty.",
+            "type": "string",
+            "default": "192.168.123.18",
+            "prompt": "DDS bind address"
+        }
+    ]
+}

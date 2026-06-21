@@ -51,6 +51,11 @@
             "name": "go2-rc",
             "description": "Remote-control the Unitree Go2 EDU from a browser: a 3-service app group (motion API + camera stream + teleop web UI)",
             "languages": ["python"]
+        },
+        {
+            "name": "rl-policy-runner",
+            "description": "Run a trained RL policy on a robot: ONNX inference over Unitree DDS at a fixed control rate, with an independent safety watchdog, ENABLE gate, and start/stop/E-STOP web UI (Go2 velocity-control defaults; editable obs/action adapters)",
+            "languages": ["python"]
         }
     ],
     "languages": [

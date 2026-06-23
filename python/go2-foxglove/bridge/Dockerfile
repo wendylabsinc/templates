@@ -29,10 +29,11 @@ RUN pip3 install --no-cache-dir --upgrade pip \
     && pip3 install --no-cache-dir -r requirements.txt \
     && pip3 install --no-cache-dir \
         "git+https://github.com/unitreerobotics/unitree_sdk2_python.git@${UNITREE_SDK2_PYTHON_REF}" \
-    && SDKDIR="$(python3 -c 'import os,unitree_sdk2py;print(os.path.dirname(unitree_sdk2py.__file__))')" \
+    && SDKDIR=$(python3 -c "import importlib.util as u; print(u.find_spec('unitree_sdk2py').submodule_search_locations[0])") \
     && mkdir -p "$SDKDIR/b2" && touch "$SDKDIR/b2/__init__.py"
-# Stub the missing b2/__init__.py (unitree_sdk2_python issues #93/#73); path is
-# derived from the installed package so it works wherever pip lands it.
+# Stub the missing b2/__init__.py (unitree_sdk2_python issues #93/#73). Locate the
+# package with find_spec (NOT `import unitree_sdk2py`) — importing it fails with a
+# circular-import error precisely because b2/__init__.py doesn't exist yet.
 
 COPY pointcloud2.py app.py cyclonedds.xml ./
 

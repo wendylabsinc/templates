@@ -87,6 +87,25 @@ _ROS_TO_FOX = {1: _T.Int8, 2: _T.Uint8, 3: _T.Int16, 4: _T.Uint16,
 
 _state = {}  # merged latest lowstate + sportmodestate fields for the plots
 
+# Diagnostics, exposed at GET /diag on the ingest port — container logs are
+# unreliable here, so this is how we see what's actually flowing.
+_diag = {
+    "unitree_init": "pending",
+    "counts": {"lidar": 0, "lowstate": 0, "sport": 0, "uwb": 0, "camera": 0},
+    "errors": [],
+}
+
+
+def _bump(k):
+    _diag["counts"][k] = _diag["counts"].get(k, 0) + 1
+
+
+def _err(where, e):
+    msg = f"{where}: {type(e).__name__}: {e}"
+    if msg not in _diag["errors"]:
+        _diag["errors"].append(msg)
+    print("DIAG-ERR", msg, flush=True)
+
 
 def _now():
     t = time.time()
@@ -110,6 +129,7 @@ async def frame(request: Request):
     if jpg:
         _safe(lambda: camera_ch.log(
             CompressedImage(timestamp=_now(), frame_id="camera", format="jpeg", data=jpg)))
+        _bump("camera")
     return Response(status_code=204)
 
 
@@ -118,11 +138,20 @@ def healthz():
     return {"ok": True}
 
 
+@api.get("/diag")
+def diag():
+    return _diag
+
+
 # ── DDS: point cloud (direct cyclonedds; PointCloud2 isn't a unitree msg) ────
 def _lidar_loop():
-    qos = Qos(Policy.Reliability.BestEffort, Policy.History.KeepLast(2))  # Go2 LiDAR is BEST_EFFORT
-    dp = DomainParticipant(DDS_DOMAIN)
-    reader = DataReader(Subscriber(dp), Topic(dp, LIDAR_TOPIC, PointCloud2_, qos=qos), qos=qos)
+    try:
+        qos = Qos(Policy.Reliability.BestEffort, Policy.History.KeepLast(2))  # Go2 LiDAR is BEST_EFFORT
+        dp = DomainParticipant(DDS_DOMAIN)
+        reader = DataReader(Subscriber(dp), Topic(dp, LIDAR_TOPIC, PointCloud2_, qos=qos), qos=qos)
+    except Exception as e:  # noqa: BLE001
+        _err("lidar_setup", e)
+        return
     while True:
         try:
             for msg in reader.take_iter(timeout=1_000_000_000):
@@ -138,28 +167,37 @@ def _lidar_loop():
                     fields=fl,
                     data=bytes(m.data),
                 )))
-        except Exception:  # noqa: BLE001
-            log.exception("lidar reader error; retrying")
+                _bump("lidar")
+        except Exception as e:  # noqa: BLE001
+            _err("lidar_read", e)
             time.sleep(0.5)
 
 
 # ── DDS: lowstate / sportmodestate / uwb via unitree_sdk2py ─────────────────
 def _on_lowstate(msg):
-    imu = msg.imu_state
-    _state.update(soc=int(msg.bms_state.soc), voltage=float(msg.power_v),
-                  rpy=[round(float(v), 4) for v in imu.rpy],
-                  gyro=[round(float(v), 4) for v in imu.gyroscope],
-                  foot_force=[int(f) for f in msg.foot_force])
+    _bump("lowstate")
+    try:
+        imu = msg.imu_state
+        _state.update(soc=int(msg.bms_state.soc), voltage=float(msg.power_v),
+                      rpy=[round(float(v), 4) for v in imu.rpy],
+                      gyro=[round(float(v), 4) for v in imu.gyroscope],
+                      foot_force=[int(f) for f in msg.foot_force])
+    except Exception as e:  # noqa: BLE001
+        _err("lowstate_parse", e); return
     _safe(lambda: state_ch.log(dict(_state)))
 
 
 def _on_sport(msg):
-    pos = [float(v) for v in msg.position[:3]]
-    q = msg.imu_state.quaternion  # [w, x, y, z]
-    _state.update(position=[round(p, 4) for p in pos],
-                  velocity=[round(float(v), 4) for v in msg.velocity[:3]])
+    _bump("sport")
+    try:
+        pos = [float(v) for v in msg.position[:3]]
+        q = msg.imu_state.quaternion  # [w, x, y, z]
+        _state.update(position=[round(p, 4) for p in pos],
+                      velocity=[round(float(v), 4) for v in msg.velocity[:3]])
+        fox_q = Quaternion(x=q[1], y=q[2], z=q[3], w=q[0])
+    except Exception as e:  # noqa: BLE001
+        _err("sport_parse", e); return
     ts = _now()
-    fox_q = Quaternion(x=q[1], y=q[2], z=q[3], w=q[0])
     _safe(lambda: pose_ch.log(PoseInFrame(timestamp=ts, frame_id="odom",
                                           pose=Pose(position=Vector3(x=pos[0], y=pos[1], z=pos[2]),
                                                     orientation=fox_q))))
@@ -171,34 +209,48 @@ def _on_sport(msg):
 
 
 def _on_uwb(msg):
-    _safe(lambda: uwb_ch.log({"seen": bool(msg.is_seen), "dist": round(float(msg.dist), 3),
-                              "yaw_est": round(float(getattr(msg, "yaw_est", 0.0)), 4)}))
+    _bump("uwb")
+    try:
+        d = {"seen": bool(msg.is_seen), "dist": round(float(msg.dist), 3),
+             "yaw_est": round(float(getattr(msg, "yaw_est", 0.0)), 4)}
+    except Exception as e:  # noqa: BLE001
+        _err("uwb_parse", e); return
+    _safe(lambda: uwb_ch.log(d))
 
 
 def _start_unitree_subs():
-    from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
-    from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_, SportModeState_, UwbState_
-    ChannelFactoryInitialize(0)  # honours CYCLONEDDS_URI from the Dockerfile
-    # Keep references so the subscribers aren't GC'd.
+    # Each step is isolated so one failure doesn't blank the others, and the
+    # result lands in _diag (visible at GET /diag).
+    try:
+        from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
+        from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_, SportModeState_, UwbState_
+    except Exception as e:  # noqa: BLE001
+        _diag["unitree_init"] = "import_failed"; _err("sdk_import", e); return
+    try:
+        ChannelFactoryInitialize(0)  # honours CYCLONEDDS_URI from the Dockerfile
+    except Exception as e:  # noqa: BLE001
+        _diag["unitree_init"] = "factory_failed"; _err("factory_init", e); return
     global _subs
-    _subs = [
-        ChannelSubscriber("rt/lowstate", LowState_),
-        ChannelSubscriber("rt/sportmodestate", SportModeState_),
-        ChannelSubscriber("rt/uwbstate", UwbState_),
-    ]
-    _subs[0].Init(_on_lowstate, 10)
-    _subs[1].Init(_on_sport, 10)
-    _subs[2].Init(_on_uwb, 10)
-    log.info("subscribed to rt/lowstate, rt/sportmodestate, rt/uwbstate")
+    _subs = []
+    for topic, typ, cb in (("rt/lowstate", LowState_, _on_lowstate),
+                           ("rt/sportmodestate", SportModeState_, _on_sport),
+                           ("rt/uwbstate", UwbState_, _on_uwb)):
+        try:
+            s = ChannelSubscriber(topic, typ)
+            s.Init(cb, 10)
+            _subs.append(s)
+        except Exception as e:  # noqa: BLE001
+            _err(f"sub_{topic}", e)
+    _diag["unitree_init"] = f"ok ({len(_subs)}/3 subscribed)"
+    print("DIAG", _diag["unitree_init"], flush=True)
 
 
 def main():
+    # Init the SDK factory FIRST, then the direct-cyclonedds LiDAR participant —
+    # in case the dual DDS stack is order-sensitive in one process.
+    _start_unitree_subs()
     threading.Thread(target=_lidar_loop, name="lidar", daemon=True).start()
-    try:
-        _start_unitree_subs()
-    except Exception:  # noqa: BLE001 — DDS state still streams if the SDK subs fail
-        log.exception("unitree subscriber init failed (lowstate/sport/uwb tiles will be empty)")
-    log.info("Foxglove WebSocket: ws://<device>:%d  · camera ingest on :%d", FOXGLOVE_PORT, INGEST_PORT)
+    print(f"DIAG bridge up: foxglove :{FOXGLOVE_PORT}, ingest+diag :{INGEST_PORT}", flush=True)
     uvicorn.run(api, host="0.0.0.0", port=INGEST_PORT, log_level="warning")
 
 

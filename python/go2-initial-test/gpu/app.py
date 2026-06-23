@@ -106,9 +106,15 @@ def _run_all():
         _results[k] = fn()
 
 
+async def _to_thread(fn):
+    # py3.8 (JetPack-5 dustynv base) has no asyncio.to_thread; run_in_executor
+    # works on 3.8+ and keeps the blocking torch/TensorRT probes off the loop.
+    return await asyncio.get_event_loop().run_in_executor(None, fn)
+
+
 @app.on_event("startup")
 async def _startup():
-    asyncio.create_task(asyncio.to_thread(_run_all))
+    asyncio.create_task(_to_thread(_run_all))
 
 
 @app.get("/status")
@@ -126,7 +132,7 @@ async def run(request: Request):
     fn = _DISPATCH.get(key)
     if fn is None:
         return {"ok": False, "error": f"unknown interface {key}"}
-    _results[key] = await asyncio.to_thread(fn)
+    _results[key] = await _to_thread(fn)
     return {"ok": _results[key]["status"] == "pass", "result": _results[key]}
 
 

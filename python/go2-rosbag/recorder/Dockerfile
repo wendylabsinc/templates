@@ -45,9 +45,9 @@ RUN chmod +x /entrypoint.sh
 # Go2 default. AUTO_RECORD=1 starts recording immediately on launch.
 ENV ROS_DOMAIN_ID=0 \
     RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
-    GO2_IP=192.168.123.161 \
+    GO2_IP={{.GO2_IP}} \
     AUTO_RECORD=0 \
-    PORT=7000
+    PORT={{.PORT}}
 
-EXPOSE 7000
+EXPOSE {{.PORT}}
 CMD ["/entrypoint.sh"]

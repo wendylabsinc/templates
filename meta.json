@@ -66,6 +66,11 @@
             "name": "rc-car",
             "description": "Remote-control a Yahboom ROSMASTER R2 (Ackerman) robot car from a browser: a 3-service app group (Rosmaster motion + UVC camera + teleop web UI)",
             "languages": ["python"]
+        },
+        {
+            "name": "go2-rosbag",
+            "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
+            "languages": ["python"]
         }
     ],
     "languages": [

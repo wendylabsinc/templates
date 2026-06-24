@@ -1,0 +1,21 @@
+{
+    "name": "rc-car",
+    "description": "Remote-control a Yahboom ROSMASTER R2 (Ackerman) robot car from a browser: a 3-service app group (Rosmaster motion API + UVC camera stream + teleop web UI).",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "RC_PORT",
+            "description": "Port for the teleop web UI — open http://<device>:<port> in a browser to drive the car",
+            "type": "integer",
+            "default": 3500,
+            "prompt": "Teleop UI port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

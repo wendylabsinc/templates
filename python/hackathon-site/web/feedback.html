@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ask a question / report a bug — Wendy Hackathon</title>
+<style>
+  :root{--bg:#0c0e12;--panel:#14171d;--ink:#e7ebf0;--muted:#9aa6b2;--line:#262c36;
+    --amber:#ffb429;--teal:#2dd4bf;--teal-dim:#14b8a6;--bad:#ff6b6b;--ok:#2dd4bf;}
+  *{box-sizing:border-box;}
+  body{margin:0;min-height:100vh;background:
+      radial-gradient(900px 480px at 50% -10%,rgba(45,212,191,.10),transparent 60%),var(--bg);
+    color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    line-height:1.6;display:flex;align-items:flex-start;justify-content:center;padding:36px 20px;}
+  .card{width:100%;max-width:560px;background:var(--panel);border:1px solid var(--line);
+    border-radius:18px;padding:30px 30px 26px;}
+  .backlink{display:inline-block;margin-bottom:14px;font-size:13px;color:var(--muted);text-decoration:none;}
+  .backlink:hover{color:var(--teal);}
+  .kicker{display:inline-block;font-size:11px;letter-spacing:.26em;text-transform:uppercase;
+    color:var(--amber);margin-bottom:8px;}
+  h1{margin:0 0 6px;font-size:26px;font-weight:800;letter-spacing:-.01em;}
+  .lede{margin:0 0 22px;color:var(--muted);font-size:15px;}
+  label{display:block;font-size:13px;font-weight:600;color:#cdd5de;margin:16px 0 7px;}
+  .seg{display:flex;gap:10px;}
+  .seg label{flex:1;margin:0;cursor:pointer;}
+  .seg input{position:absolute;opacity:0;pointer-events:none;}
+  .seg span{display:block;text-align:center;padding:12px;border:1px solid var(--line);
+    border-radius:11px;background:#0c0e12;font-weight:700;transition:.12s;}
+  .seg input:checked + span{border-color:var(--teal);background:rgba(45,212,191,.12);color:#dffbf5;}
+  input[type=text],textarea{width:100%;background:#0c0e12;border:1px solid var(--line);
+    color:var(--ink);border-radius:11px;padding:12px 14px;font-size:15px;font-family:inherit;}
+  textarea{min-height:130px;resize:vertical;}
+  input:focus,textarea:focus{outline:none;border-color:var(--teal);}
+  .hint{color:#6b7682;font-size:12px;margin-top:6px;}
+  button{margin-top:22px;width:100%;border:none;border-radius:12px;padding:15px;font-size:16px;
+    font-weight:800;cursor:pointer;color:#0c0e12;
+    background:linear-gradient(92deg,var(--amber),#ffce6b);}
+  button:disabled{opacity:.55;cursor:not-allowed;}
+  #msg{margin-top:16px;padding:13px 15px;border-radius:11px;font-weight:600;display:none;}
+  #msg.ok{display:block;background:rgba(45,212,191,.12);border:1px solid rgba(45,212,191,.4);color:#dffbf5;}
+  #msg.bad{display:block;background:rgba(255,107,107,.12);border:1px solid rgba(255,107,107,.4);color:#ffd9d9;}
+  .powered{margin-top:22px;text-align:center;font-size:11px;letter-spacing:.18em;
+    text-transform:uppercase;color:#6b7682;}
+</style>
+</head>
+<body>
+  <div class="card">
+    <a class="backlink" href="/">← Hackathon home</a>
+    <div class="kicker">Wendy Hackathon</div>
+    <h1>Ask a question / report a bug</h1>
+    <p class="lede">Stuck, confused, or found something broken? Send it here and an organizer will see it.</p>
+
+    <form id="form">
+      <label>What is it?</label>
+      <div class="seg">
+        <label><input type="radio" name="type" value="question" checked><span>❓ Question</span></label>
+        <label><input type="radio" name="type" value="bug"><span>🐛 Bug report</span></label>
+      </div>
+
+      <label for="team">Team name <span style="color:#6b7682;font-weight:400;">(optional)</span></label>
+      <input type="text" id="team" maxlength="80" placeholder="e.g. Team Robodogs" autocomplete="organization">
+
+      <label for="name">Your name <span style="color:#6b7682;font-weight:400;">(optional, so we can find you)</span></label>
+      <input type="text" id="name" maxlength="80" placeholder="e.g. Alex" autocomplete="name">
+
+      <label for="message">Details</label>
+      <textarea id="message" maxlength="4000" placeholder="What do you need help with, or what went wrong? Include the robot name / app if relevant." required></textarea>
+      <div class="hint">Be specific — error messages, what you expected, what happened.</div>
+
+      <button type="submit" id="submit">Send</button>
+      <div id="msg"></div>
+    </form>
+    <div class="powered">Powered by WendyOS</div>
+  </div>
+
+<script>
+  var form = document.getElementById("form");
+  var btn = document.getElementById("submit");
+  var msg = document.getElementById("msg");
+
+  function show(kind, text){ msg.className = kind; msg.textContent = text; }
+
+  form.addEventListener("submit", async function(e){
+    e.preventDefault();
+    var message = document.getElementById("message").value.trim();
+    if(!message){ show("bad", "Please add some details first."); return; }
+    var body = {
+      type: form.querySelector('input[name="type"]:checked').value,
+      team: document.getElementById("team").value.trim(),
+      name: document.getElementById("name").value.trim(),
+      message: message,
+    };
+    btn.disabled = true; show("", ""); msg.className = "";
+    try{
+      var r = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if(r.ok){
+        show("ok", "✅ Sent — thank you! An organizer will take a look.");
+        form.reset();
+      } else {
+        var t = await r.text();
+        show("bad", "Couldn't send (" + r.status + "). " + t.slice(0,160));
+      }
+    } catch(err){
+      show("bad", "Network error — are you still on the Wendy Hackathon WiFi?");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

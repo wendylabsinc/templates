@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wendy Cloud — Event Onboarding</title>
+<style>
+  :root{
+    --bg:#0c0e12; --panel:#14171d; --ink:#e7ebf0; --muted:#9aa6b2; --line:#262c36;
+    --amber:#ffb429; --amber-dim:#c9871a; --teal:#2dd4bf; --teal-dim:#14b8a6;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.65;-webkit-font-smoothing:antialiased;}
+  a{color:var(--teal);}
+
+  .hero{position:relative;overflow:hidden;padding:64px 24px 44px;text-align:center;
+    background:
+      radial-gradient(1000px 460px at 80% -10%, rgba(45,212,191,.10), transparent 60%),
+      radial-gradient(800px 460px at 10% 0%, rgba(255,180,41,.12), transparent 55%),
+      linear-gradient(180deg,#0e1117,#0c0e12);
+    border-bottom:1px solid var(--line);}
+  .backlink{position:relative;display:inline-block;margin-bottom:18px;font-size:13px;
+    color:var(--muted);text-decoration:none;letter-spacing:.02em;}
+  .backlink:hover{color:var(--teal);}
+  .kicker{position:relative;display:inline-block;font-size:12px;letter-spacing:.28em;
+    text-transform:uppercase;color:var(--amber);border:1px solid rgba(255,180,41,.35);
+    background:rgba(255,180,41,.06);padding:6px 14px;border-radius:999px;margin-bottom:20px;}
+  .hero h1{position:relative;margin:0 auto;max-width:900px;font-size:clamp(28px,5vw,46px);
+    line-height:1.1;font-weight:800;letter-spacing:-.02em;
+    background:linear-gradient(92deg,#fff 30%,var(--amber) 72%,var(--teal));
+    -webkit-background-clip:text;background-clip:text;
+    -webkit-text-fill-color:transparent;color:transparent;}
+  .hero .sub{position:relative;margin:16px auto 0;max-width:660px;color:var(--muted);
+    font-size:clamp(14px,2.2vw,17px);}
+
+  main{max-width:820px;margin:0 auto;padding:8px 22px 40px;}
+
+  .note{margin:28px 0 4px;border:1px solid rgba(45,212,191,.35);border-left:5px solid var(--teal);
+    background:linear-gradient(180deg,rgba(45,212,191,.10),rgba(45,212,191,.03));
+    border-radius:12px;padding:16px 20px;color:#dbe6ea;font-size:15px;}
+  .note code{background:rgba(255,255,255,.06);}
+
+  section{margin-top:26px;background:var(--panel);border:1px solid var(--line);
+    border-radius:16px;padding:24px 28px;}
+  section h2{margin:0 0 6px;font-size:clamp(19px,3.2vw,24px);font-weight:700;
+    letter-spacing:-.01em;display:flex;align-items:baseline;gap:12px;}
+  .step-no{flex:none;display:inline-flex;align-items:center;justify-content:center;
+    width:30px;height:30px;border-radius:9px;font-size:15px;font-weight:800;color:#0c0e12;
+    background:linear-gradient(180deg,var(--amber),var(--amber-dim));
+    box-shadow:0 0 14px rgba(255,180,41,.45);transform:translateY(2px);}
+  section.teal .step-no{background:linear-gradient(180deg,var(--teal),var(--teal-dim));
+    box-shadow:0 0 14px rgba(45,212,191,.45);}
+  section h2.plain::before{content:"";width:10px;height:22px;border-radius:3px;
+    background:linear-gradient(180deg,var(--teal),var(--teal-dim));
+    box-shadow:0 0 14px rgba(45,212,191,.5);}
+  section h2.plain{align-items:center;gap:12px;}
+
+  p{margin:0 0 12px;color:#cdd5de;} p:last-child{margin-bottom:0;}
+  strong{color:#fff;}
+
+  ol,ul{margin:8px 0 0;padding-left:0;list-style:none;counter-reset:step;}
+  ol li{position:relative;padding:7px 0 7px 34px;color:#cdd5de;
+    border-bottom:1px solid rgba(255,255,255,.04);counter-increment:step;}
+  ol li:last-child{border-bottom:none;}
+  ol li::before{content:counter(step);position:absolute;left:0;top:8px;
+    width:22px;height:22px;border-radius:50%;font-size:12px;font-weight:700;
+    display:flex;align-items:center;justify-content:center;color:#0c0e12;
+    background:var(--teal);}
+  ul.dash li{position:relative;padding:7px 0 7px 22px;color:#cdd5de;
+    border-bottom:1px solid rgba(255,255,255,.04);}
+  ul.dash li:last-child{border-bottom:none;}
+  ul.dash li::before{content:"";position:absolute;left:4px;top:15px;width:8px;height:8px;
+    border-radius:50%;background:var(--amber);box-shadow:0 0 8px rgba(255,180,41,.6);}
+  li b{color:#fff;}
+
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    font-size:13px;}
+  p code,li code{background:rgba(255,255,255,.07);border:1px solid var(--line);
+    border-radius:5px;padding:1px 6px;color:#cfe9e3;white-space:nowrap;}
+  pre{margin:14px 0 4px;background:#090b0e;border:1px solid var(--line);border-radius:10px;
+    padding:14px 16px;overflow-x:auto;}
+  pre code{color:#cfe9e3;background:none;border:none;padding:0;white-space:pre;line-height:1.6;}
+  .sub-h{margin:18px 0 0;font-weight:700;color:#fff;font-size:15px;}
+
+  footer{max-width:820px;margin:18px auto 60px;padding:24px 22px 0;text-align:center;
+    color:var(--muted);font-size:14px;border-top:1px solid var(--line);}
+  footer .powered{margin-top:10px;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#6b7682;}
+
+  @media(max-width:560px){section{padding:20px 18px;} .hero{padding:48px 18px 36px;}}
+</style>
+</head>
+<body>
+
+  <header class="hero">
+    <a class="backlink" href="/">← Hackathon home</a>
+    <div><span class="kicker">Wendy Cloud</span></div>
+    <h1>Event Onboarding</h1>
+    <p class="sub">Zero to running an app on one of the event robots. By the end you'll see the
+    event robots in the dashboard and be able to deploy and run an app on them from your terminal.</p>
+  </header>
+
+  <main>
+
+    <div class="note">
+      The signup site <code>cloud.wendy.sh</code> redirects to the canonical host
+      <strong>cloud.wendy.dev</strong> — either link works.
+    </div>
+
+    <section class="teal">
+      <h2><span class="step-no">1</span> Create your account</h2>
+      <ol>
+        <li>Go to <a href="https://cloud.wendy.dev" target="_blank" rel="noopener">https://cloud.wendy.dev</a>.</li>
+        <li>Sign up with <b>Google</b> or <b>email + password</b>.</li>
+        <li>Complete email verification if you're prompted.</li>
+      </ol>
+      <p style="margin-top:14px;">You're signed in now, but you won't see any robots yet — that's expected.</p>
+    </section>
+
+    <section class="teal">
+      <h2><span class="step-no">2</span> Get added to the event organization</h2>
+      <ol>
+        <li>Send the organizer the <b>exact email address</b> you signed up with.</li>
+        <li>They'll move your account into the event organization.</li>
+        <li>Once they confirm, <b>reload the dashboard</b> (or sign out and back in) so the
+        organization appears — the organization list is loaded at login.</li>
+      </ol>
+    </section>
+
+    <section class="teal">
+      <h2><span class="step-no">3</span> Verify you can see the event robots</h2>
+      <ol>
+        <li>In the dashboard, open the <b>organization switcher</b> (left sidebar) and select
+        the <b>event organization</b>.</li>
+        <li>Open <b>Assets</b> to see the enrolled robots, or <b>Video Streams</b> to watch
+        their camera feeds.</li>
+        <li>If the robots are listed, you're set. (If not, see Troubleshooting.)</li>
+      </ol>
+    </section>
+
+    <section class="teal">
+      <h2><span class="step-no">4</span> Install and authenticate the CLI</h2>
+      <p>The <code>wendy</code> CLI is how you deploy and run apps on the robots.</p>
+
+      <p class="sub-h">Install (macOS or Linux with Homebrew):</p>
+      <pre><code>brew install wendylabsinc/tap/wendy
+wendy --version   # confirm it installed</code></pre>
+      <p style="margin-top:10px;">Other platforms: download a build from
+      <a href="https://github.com/wendylabsinc/wendy-agent/releases" target="_blank" rel="noopener">github.com/wendylabsinc/wendy-agent/releases</a>.</p>
+
+      <p class="sub-h">Authenticate against Wendy Cloud:</p>
+      <pre><code>wendy auth login</code></pre>
+      <p style="margin-top:10px;">This opens your browser. Log in with the <b>same account</b>
+      from Step 1, approve the request, and return to the terminal — the CLI generates and
+      saves its certificates automatically.</p>
+
+      <p class="sub-h">Confirm it worked and list your robots:</p>
+      <pre><code>wendy auth status      # who you're logged in as + your organization
+wendy cloud discover   # the enrolled robots you can access</code></pre>
+      <p style="margin-top:10px;">New to the CLI? <code>wendy tour</code> is a short guided walkthrough.</p>
+    </section>
+
+    <section class="teal">
+      <h2><span class="step-no">5</span> Run an app on an event robot</h2>
+      <p>From a Wendy project directory (a folder with a <code>wendy.json</code> — scaffold one
+      with <code>wendy init</code>, or use the sample project the organizer provides):</p>
+      <pre><code>wendy run</code></pre>
+      <ul class="dash" style="margin-top:12px;">
+        <li>It builds your app and shows an <b>interactive picker</b> of the robots you can
+        access — choose the event robot.</li>
+        <li>To target a specific robot and skip the picker: <code>wendy run --device &lt;robot-name&gt;</code>.</li>
+        <li>Handy flags: <code>--detach</code> (don't stream logs back),
+        <code>--build-type docker|swift|python</code>, <code>-y</code> (auto-accept prompts).</li>
+      </ul>
+      <div class="note" style="margin-top:18px;">
+        <code>wendy cloud run</code> still works but is deprecated; use <code>wendy run</code>.
+      </div>
+    </section>
+
+    <section>
+      <h2 class="plain">Troubleshooting</h2>
+      <ul class="dash">
+        <li><b>The event organization doesn't appear after you're added:</b> hard-refresh, or
+        sign out and back in.</li>
+        <li><b>The CLI says you're not authenticated, or points at the wrong place:</b> re-run
+        <code>wendy auth login</code> (you can force the host with
+        <code>--cloud https://cloud.wendy.dev</code>), then check <code>wendy auth status</code>.</li>
+        <li><b>No robots in the picker:</b> make sure Step 3 works first — CLI access mirrors
+        your dashboard organization membership. If you have more than one cloud login,
+        <code>wendy run</code> may ask you to pass <code>--cloud-grpc &lt;endpoint&gt;</code>.</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>Questions? Ask the event organizer.</p>
+    <div class="powered">Powered by WendyOS</div>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{.EVENT_TITLE}}</title>
+<style>
+  :root{
+    --bg:#0c0e12;
+    --panel:#14171d;
+    --panel-2:#191d25;
+    --ink:#e7ebf0;
+    --muted:#9aa6b2;
+    --line:#262c36;
+    --amber:#ffb429;
+    --amber-dim:#c9871a;
+    --teal:#2dd4bf;
+    --teal-dim:#14b8a6;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--teal);}
+
+  /* Prize banner — "hackathon within the hackathon" */
+  .prize-banner{position:relative;overflow:hidden;
+    background:linear-gradient(100deg,rgba(255,180,41,.15),rgba(45,212,191,.13));
+    border-bottom:1px solid rgba(255,180,41,.28);}
+  .prize-banner::after{content:"";position:absolute;top:0;bottom:0;left:-60%;width:45%;
+    background:linear-gradient(100deg,transparent,rgba(255,255,255,.10),transparent);
+    transform:skewX(-18deg);animation:prizeShine 6.5s ease-in-out infinite;}
+  @keyframes prizeShine{0%{left:-60%;}55%{left:130%;}100%{left:130%;}}
+  .prize-inner{position:relative;max-width:920px;margin:0 auto;display:flex;align-items:center;
+    justify-content:center;gap:18px;padding:13px 22px;}
+  .prize-trophy{font-size:32px;line-height:1;flex:none;
+    filter:drop-shadow(0 0 10px rgba(255,180,41,.55));}
+  .prize-text{display:flex;flex-direction:column;align-items:center;gap:1px;text-align:center;}
+  .prize-tag{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--amber);font-weight:800;}
+  .prize-text .line{font-size:15px;color:#fff;font-weight:700;letter-spacing:-.01em;}
+  .prize-win{font-size:13.5px;color:#cdd5de;}
+  .prize-win b{color:var(--teal);}
+  @media(max-width:560px){.prize-inner{gap:13px;padding:12px 16px;}
+    .prize-trophy{font-size:26px;}.prize-text .line{font-size:13.5px;}.prize-win{font-size:12.5px;}}
+
+  /* Hero */
+  .hero{
+    position:relative;
+    overflow:hidden;
+    padding:88px 24px 72px;
+    text-align:center;
+    background:
+      radial-gradient(1200px 500px at 80% -10%, rgba(45,212,191,.10), transparent 60%),
+      radial-gradient(900px 500px at 10% 0%, rgba(255,180,41,.12), transparent 55%),
+      linear-gradient(180deg,#0e1117,#0c0e12);
+    border-bottom:1px solid var(--line);
+  }
+  .hero::before{
+    content:"";
+    position:absolute;inset:0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+    background-size:42px 42px;
+    -webkit-mask-image:radial-gradient(circle at 50% 20%,#000 0%,transparent 75%);
+            mask-image:radial-gradient(circle at 50% 20%,#000 0%,transparent 75%);
+    pointer-events:none;
+  }
+  .kicker{
+    position:relative;
+    display:inline-block;
+    font-size:12px;
+    letter-spacing:.28em;
+    text-transform:uppercase;
+    color:var(--amber);
+    border:1px solid rgba(255,180,41,.35);
+    background:rgba(255,180,41,.06);
+    padding:6px 14px;
+    border-radius:999px;
+    margin-bottom:22px;
+  }
+  .hero h1{
+    position:relative;
+    margin:0 auto;
+    max-width:980px;
+    font-size:clamp(30px,6vw,58px);
+    line-height:1.08;
+    font-weight:800;
+    letter-spacing:-.02em;
+    background:linear-gradient(92deg,#fff 30%,var(--amber) 70%,var(--teal));
+    -webkit-background-clip:text;background-clip:text;
+    -webkit-text-fill-color:transparent;color:transparent;
+  }
+  .hero .sub{
+    position:relative;
+    margin:18px auto 0;
+    max-width:680px;
+    color:var(--muted);
+    font-size:clamp(15px,2.4vw,18px);
+  }
+
+  /* Layout */
+  main{max-width:860px;margin:0 auto;padding:8px 22px 40px;}
+  section{
+    margin-top:30px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:16px;
+    padding:26px 28px;
+  }
+  section h2{
+    margin:0 0 14px;
+    font-size:clamp(20px,3.4vw,26px);
+    font-weight:700;
+    letter-spacing:-.01em;
+    display:flex;align-items:center;gap:12px;
+  }
+  section h2::before{
+    content:"";
+    width:10px;height:24px;border-radius:3px;
+    background:linear-gradient(180deg,var(--amber),var(--amber-dim));
+    box-shadow:0 0 14px rgba(255,180,41,.5);
+    flex:none;
+  }
+  section.teal h2::before{
+    background:linear-gradient(180deg,var(--teal),var(--teal-dim));
+    box-shadow:0 0 14px rgba(45,212,191,.5);
+  }
+  p{margin:0 0 14px;color:#cdd5de;}
+  p:last-child{margin-bottom:0;}
+  strong{color:#fff;}
+
+  /* Callout / TL;DR */
+  .callout{
+    margin:30px 0 4px;
+    border:1px solid rgba(45,212,191,.35);
+    border-left:5px solid var(--teal);
+    background:linear-gradient(180deg,rgba(45,212,191,.10),rgba(45,212,191,.03));
+    border-radius:14px;
+    padding:22px 26px;
+  }
+  .callout .tag{
+    display:inline-block;
+    font-size:12px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--teal);font-weight:700;margin-bottom:8px;
+  }
+  .callout p{color:#dbe6ea;font-size:17px;margin:0;}
+
+  /* Lists */
+  ul{margin:6px 0 0;padding:0;list-style:none;}
+  ul li{
+    position:relative;
+    padding:8px 0 8px 30px;
+    border-bottom:1px solid rgba(255,255,255,.04);
+    color:#cdd5de;
+  }
+  ul li:last-child{border-bottom:none;}
+  ul li::before{
+    content:"";
+    position:absolute;left:6px;top:16px;
+    width:8px;height:8px;border-radius:50%;
+    background:var(--amber);
+    box-shadow:0 0 8px rgba(255,180,41,.6);
+  }
+  section.teal ul li::before{background:var(--teal);box-shadow:0 0 8px rgba(45,212,191,.6);}
+  ul li b{color:#fff;}
+
+  /* Button */
+  .btn-wrap{text-align:center;margin-top:8px;}
+  .btn{
+    display:inline-block;
+    margin-top:6px;
+    padding:14px 30px;
+    font-size:16px;font-weight:700;letter-spacing:.01em;
+    color:#0c0e12;
+    text-decoration:none;
+    background:linear-gradient(92deg,var(--amber),#ffce6b);
+    border-radius:12px;
+    box-shadow:0 8px 30px rgba(255,180,41,.28);
+    transition:transform .12s ease, box-shadow .12s ease;
+  }
+  .btn:hover{transform:translateY(-2px);box-shadow:0 12px 38px rgba(255,180,41,.4);}
+  .btn.teal{background:linear-gradient(92deg,var(--teal),#7af0e0);box-shadow:0 8px 30px rgba(45,212,191,.3);}
+  .btn.teal:hover{box-shadow:0 12px 38px rgba(45,212,191,.45);}
+  .hero-cta{position:relative;margin-top:28px;display:flex;gap:14px;justify-content:center;flex-wrap:wrap;}
+
+  footer{
+    max-width:860px;margin:18px auto 60px;padding:24px 22px 0;
+    text-align:center;color:var(--muted);font-size:14px;
+    border-top:1px solid var(--line);
+  }
+  footer .powered{margin-top:10px;font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:#6b7682;}
+
+  @media(max-width:560px){
+    section{padding:20px 18px;}
+    .hero{padding:64px 18px 52px;}
+  }
+</style>
+</head>
+<body>
+
+  <div class="prize-banner">
+    <div class="prize-inner">
+      <div class="prize-trophy">🏆</div>
+      <div class="prize-text">
+        <span class="prize-tag">Hackathon within the hackathon</span>
+        <span class="line">Best issues, PRs &amp; feature requests across the Wendy repos win</span>
+        <span class="prize-win">🎁 Top contributor takes home <b>{{.PRIZE}}</b>.</span>
+      </div>
+    </div>
+  </div>
+
+  <header class="hero">
+    <span class="kicker">WendyOS · Physical AI</span>
+    <h1>{{.EVENT_TITLE}}</h1>
+    <p class="sub">Turn a quadruped from a sensor on a fixed route into a teammate that reads real instruments and reports back.</p>
+    <div class="hero-cta">
+      <a class="btn teal" href="{{.TIMESLOTS_URL}}" target="_blank" rel="noopener">📅 Book a timeslot →</a>
+      <a class="btn" href="/feedback.html">💬 Question / report a bug</a>
+    </div>
+  </header>
+
+  <main>
+
+    <div class="callout">
+      <span class="tag">TL;DR</span>
+      <p>Big industrial sites need robots for safety, security, detection and reporting. Today's robots are mostly &ldquo;glorified sensors&rdquo; on fixed routes. Your challenge: using a Unitree robot dog plus edge AI, make it read real industrial instruments and report back like a teammate &mdash; robust, low-maintenance, and operator-friendly. We share a small fleet of dogs; you book hands-on deployment slots to test and demo.</p>
+    </div>
+
+    <section>
+      <h2>The framing</h2>
+      <p>Across the world's largest industrial sites &mdash; power plants, oil &amp; gas facilities, heavy infrastructure &mdash; the same needs recur: <strong>safety, security, detection, and reporting</strong>. Inspecting equipment, spotting leaks and anomalies, reading instruments, and reporting back, around the clock, often in places that are hot, remote, or unsafe for people.</p>
+      <p>Robots should be perfect for this. But most today are <strong>glorified sensors</strong>: pricey quadrupeds walking pre-programmed routes like a camera on legs. They're disconnected from the operators who run the site, painful to set up, and fragile the moment reality differs from the script.</p>
+      <p>This hackathon is about closing that gap: moving robots from &ldquo;sensor on a fixed route&rdquo; to <strong>companions and enablers</strong> that work alongside operators, and that people actually want to work with.</p>
+    </section>
+
+    <section class="teal">
+      <h2>The goal(s)</h2>
+      <p><strong>Primary:</strong> Make a robot dog navigate autonomously a defined area, understand instructions, read real industrial instruments, detect hazardous situations, and report back.</p>
+      <p style="margin-top:18px;"><strong>What we value:</strong></p>
+      <ul>
+        <li><b>Useful</b> &mdash; does real operator work.</li>
+        <li><b>Robust</b> &mdash; the systems stay operational.</li>
+        <li><b>Low &ldquo;petting&rdquo;</b> &mdash; minimal hand-holding; it should mostly just work without an engineer per task.</li>
+        <li><b>Trainable</b> &mdash; easy for operators to teach, adjust, and improve for their specific tasks (open ended).</li>
+        <li><b>Wanted</b> &mdash; interacting with it feels like working with a capable teammate.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Hardware</h2>
+      <ul>
+        <li><b>Robot platform:</b> Unitree quadruped.</li>
+        <li><b>The inspection scene:</b> custom-made track in the premises with TBD industrial equipment.</li>
+        <li><b>Compute:</b> Jetson on top of the Go2.</li>
+        <li><b>Fleet size:</b> start with 1 robot &mdash; feel free to make your own fleet solution.</li>
+      </ul>
+    </section>
+
+    <section class="teal">
+      <h2>Software</h2>
+      <ul>
+        <li><b>WendyOS:</b> to deploy your apps into the dogs (will be explained).</li>
+        <li><b>Bring your own:</b> your vision/AI models and frameworks &mdash; you're free to use any stack.</li>
+      </ul>
+    </section>
+
+    <div class="btn-wrap">
+      <a class="btn" href="https://wendy.dev/" target="_blank" rel="noopener">For more info → wendy.dev</a>
+    </div>
+
+  </main>
+
+  <footer>
+    <p>More specific goals, Q&amp;A and details will follow &mdash; stay tuned.</p>
+    <div class="powered">Powered by WendyOS</div>
+  </footer>
+
+</body>
+</html>

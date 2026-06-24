@@ -1,0 +1,25 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "services": {
+        "web": {
+            "context": "./web",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "mdns": {
+            "context": "./mdns",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "feedback": {
+            "context": "./feedback",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "feedback", "path": "/app/data" }
+            ]
+        }
+    }
+}

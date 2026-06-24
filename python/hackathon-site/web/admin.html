@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Feedback inbox (organizer) — Wendy Hackathon</title>
+<style>
+  :root{--bg:#0c0e12;--panel:#14171d;--ink:#e7ebf0;--muted:#9aa6b2;--line:#262c36;
+    --amber:#ffb429;--teal:#2dd4bf;--bug:#ff8a5c;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    line-height:1.55;padding:28px 18px;}
+  .wrap{max-width:820px;margin:0 auto;}
+  h1{font-size:22px;font-weight:800;margin:0 0 4px;}
+  .lede{color:var(--muted);font-size:14px;margin:0 0 18px;}
+  .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:18px;}
+  input,select{background:#14171d;border:1px solid var(--line);color:var(--ink);
+    border-radius:10px;padding:10px 12px;font-size:14px;}
+  button{background:linear-gradient(92deg,var(--amber),#ffce6b);color:#0c0e12;border:none;
+    border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;}
+  .count{color:var(--muted);font-size:13px;margin-left:auto;}
+  .item{background:var(--panel);border:1px solid var(--line);border-radius:13px;
+    padding:15px 17px;margin-bottom:12px;}
+  .meta{display:flex;gap:10px;align-items:center;font-size:12px;color:var(--muted);margin-bottom:7px;}
+  .tag{font-weight:800;text-transform:uppercase;letter-spacing:.08em;padding:2px 9px;border-radius:999px;font-size:11px;}
+  .tag.question{background:rgba(45,212,191,.15);color:#9ff0e3;}
+  .tag.bug{background:rgba(255,138,92,.16);color:#ffc3a6;}
+  .who{font-weight:700;color:#e7ebf0;}
+  .body{white-space:pre-wrap;word-break:break-word;color:#dde4ec;}
+  .empty{color:var(--muted);text-align:center;padding:40px;}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>📨 Feedback inbox</h1>
+    <p class="lede">Organizer view — questions &amp; bug reports submitted from the hackathon page.</p>
+    <div class="bar">
+      <input type="password" id="token" placeholder="admin token" size="20">
+      <select id="filter">
+        <option value="all">All</option>
+        <option value="question">Questions</option>
+        <option value="bug">Bugs</option>
+      </select>
+      <button id="load">Load</button>
+      <span class="count" id="count"></span>
+    </div>
+    <div id="list"></div>
+  </div>
+
+<script>
+  var tokenEl = document.getElementById("token");
+  var listEl = document.getElementById("list");
+  var countEl = document.getElementById("count");
+  var filterEl = document.getElementById("filter");
+  var all = [];
+
+  // Token can be passed as ?token=... to skip typing it.
+  var qp = new URLSearchParams(location.search).get("token");
+  if(qp) tokenEl.value = qp;
+
+  function esc(s){ return (s||"").replace(/[&<>]/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]; }); }
+
+  function render(){
+    var f = filterEl.value;
+    var items = all.filter(function(x){ return f==="all" || x.type===f; });
+    countEl.textContent = items.length + " shown / " + all.length + " total";
+    if(!items.length){ listEl.innerHTML = '<div class="empty">Nothing yet.</div>'; return; }
+    listEl.innerHTML = items.map(function(x){
+      var who = x.team
+        ? esc(x.team) + (x.name ? ' · ' + esc(x.name) : '')
+        : (x.name ? esc(x.name) : 'anonymous');
+      return '<div class="item"><div class="meta">' +
+        '<span class="tag '+x.type+'">'+(x.type==="bug"?"🐛 bug":"❓ question")+'</span>' +
+        '<span class="who">'+who+'</span>' +
+        '<span>'+esc(x.ts)+'</span></div>' +
+        '<div class="body">'+esc(x.message)+'</div></div>';
+    }).join("");
+  }
+
+  async function load(){
+    var token = tokenEl.value.trim();
+    if(!token){ listEl.innerHTML = '<div class="empty">Enter the admin token.</div>'; return; }
+    try{
+      var r = await fetch("/api/feedback?token=" + encodeURIComponent(token));
+      if(r.status === 403){ listEl.innerHTML = '<div class="empty">Wrong token.</div>'; return; }
+      if(!r.ok){ listEl.innerHTML = '<div class="empty">Error '+r.status+'.</div>'; return; }
+      var data = await r.json();
+      all = data.items || [];
+      render();
+    } catch(e){
+      listEl.innerHTML = '<div class="empty">Network error.</div>';
+    }
+  }
+
+  document.getElementById("load").addEventListener("click", load);
+  filterEl.addEventListener("change", render);
+  tokenEl.addEventListener("keydown", function(e){ if(e.key==="Enter") load(); });
+  if(qp) load();
+  // Auto-refresh every 20s while the page is open.
+  setInterval(function(){ if(tokenEl.value.trim()) load(); }, 20000);
+</script>
+</body>
+</html>

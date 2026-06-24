@@ -1,0 +1,55 @@
+{
+    "name": "hackathon-site",
+    "description": "Self-hosted hackathon landing page for a WendyOS/Go2 event. A static info site (prize banner, 'Book a timeslot' + 'Question / report a bug' buttons, Wendy Cloud onboarding guide, scannable QR), an mDNS responder so people reach it by a short .local name, and a feedback inbox API with an organizer view — all served on-device and discoverable on the LAN.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "EVENT_TITLE",
+            "description": "Hero title shown on the landing page (also the browser tab title)",
+            "type": "string",
+            "default": "Robot Dog Hackathon",
+            "prompt": "Event title"
+        },
+        {
+            "name": "TIMESLOTS_URL",
+            "description": "Link for the 'Book a timeslot' button — your scheduling / invite URL",
+            "type": "string",
+            "default": "https://hackathon.wendy.dev",
+            "prompt": "Timeslots / booking URL"
+        },
+        {
+            "name": "PRIZE",
+            "description": "Prize text shown in the 'hackathon within the hackathon' banner",
+            "type": "string",
+            "default": "a Jetson Orin Nano with NVMe SSD",
+            "prompt": "Prize"
+        },
+        {
+            "name": "QR_URL",
+            "description": "URL the QR code encodes (the address people open). Use the device's IP for universal phone support — .local names don't resolve on Android/Chrome.",
+            "type": "string",
+            "default": "http://hackathon.local",
+            "prompt": "QR target URL"
+        },
+        {
+            "name": "MDNS_ALIASES",
+            "description": "Comma-separated short names to advertise over mDNS (e.g. 'hackathon' -> http://hackathon.local)",
+            "type": "string",
+            "default": "hackathon",
+            "prompt": "mDNS alias(es)"
+        },
+        {
+            "name": "ADMIN_TOKEN",
+            "description": "Token to view the feedback inbox at /admin.html. CHANGE THIS — anyone with it can read submissions.",
+            "type": "string",
+            "default": "change-me",
+            "prompt": "Feedback admin token"
+        }
+    ]
+}

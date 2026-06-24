@@ -61,6 +61,11 @@
             "name": "go2-foxglove",
             "description": "Stream a Unitree Go2 into Foxglove: LiDAR point cloud, pose+TF, body state and UWB over one WebSocket, plus the front camera (WebRTC). Ships a ready-made Foxglove layout.",
             "languages": ["python"]
+        },
+        {
+            "name": "hackathon-site",
+            "description": "Self-hosted hackathon landing page for a WendyOS/Go2 event: static info site (prize banner, book-a-timeslot + question/report-a-bug buttons, Wendy Cloud onboarding, scannable QR), an mDNS short-name responder, and a feedback inbox API — served on-device and discoverable on the LAN.",
+            "languages": ["python"]
         }
     ],
     "languages": [

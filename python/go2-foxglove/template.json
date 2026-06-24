@@ -1,5 +1,6 @@
 {
     "name": "go2-foxglove",
+    "platform": "linux",
     "description": "Stream a Unitree Go2's live data into Foxglove: LiDAR point cloud, pose + TF, body state (IMU/battery/foot/joints) and UWB over one Foxglove WebSocket, plus the front camera (WebRTC, forwarded into the same connection). Ships a ready-made Foxglove layout. A lighter cousin of go2-watchtower.",
     "variables": [
         {

@@ -56,6 +56,11 @@
             "name": "go2-initial-test",
             "description": "Pre-hackathon hardware self-test for the Unitree Go2: one tiny app per hardware interface (camera, LiDAR, mic, speaker, IMU, foot contact, battery, motion, GPU, Bluetooth, cloud) plus a dashboard UI showing a live pass/fail go/no-go board",
             "languages": ["python"]
+        },
+        {
+            "name": "go2-foxglove",
+            "description": "Stream a Unitree Go2 into Foxglove: LiDAR point cloud, pose+TF, body state and UWB over one WebSocket, plus the front camera (WebRTC). Ships a ready-made Foxglove layout.",
+            "languages": ["python"]
         }
     ],
     "languages": [

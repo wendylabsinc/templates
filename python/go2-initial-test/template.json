@@ -1,0 +1,42 @@
+{
+    "name": "go2-initial-test",
+    "description": "Pre-hackathon hardware self-test for the Unitree Go2: one app per hardware interface (camera, LiDAR, mic, speaker, IMU, foot contact, ultrasonic, battery, motion, LEDs, gimbal, GPU, cloud) plus a dashboard UI that shows a live pass/fail go/no-go board. Motion is manual-trigger only.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "UI_PORT",
+            "description": "Port for the test dashboard — open http://<device>:<port> to see the pass/fail board",
+            "type": "integer",
+            "default": 3600,
+            "prompt": "Dashboard port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "GO2_IP",
+            "description": "Go2 robot controller IP on the robot LAN — the WebRTC camera/audio target, and the address the DDS services route to in order to auto-detect this host's own bind IP at startup (so there's no separate GO2_DDS_ADDRESS prompt; set GO2_DDS_ADDRESS at runtime only to override).",
+            "type": "string",
+            "default": "192.168.123.161",
+            "prompt": "Go2 IP"
+        },
+        {
+            "name": "GPU_BASE_IMAGE",
+            "description": "Base image for the GPU test — must match the Go2's JetPack. Default targets JetPack 6 / L4T r36 (Orin). For a JetPack 5 Go2 use e.g. dustynv/pytorch:2.1-r35.4.1.",
+            "type": "string",
+            "default": "dustynv/pytorch:2.7-r36.4.0-cu128-24.04",
+            "prompt": "GPU base image (match the Go2's JetPack)"
+        },
+        {
+            "name": "CLOUD_HEALTH_URL",
+            "description": "Wendy Cloud endpoint the cloud tile pings for reachability (a plain GET; gRPC 415/401/403 counts as reachable). Override to point at a different environment.",
+            "type": "string",
+            "default": "https://wendy-cloud-services-114319063177.us-central1.run.app",
+            "prompt": "Wendy Cloud health URL"
+        }
+    ]
+}

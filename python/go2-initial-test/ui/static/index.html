@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Go2 — Hardware Self-Test</title>
+<style>
+  :root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--fg:#e6edf3;--mut:#8b949e;
+        --pass:#3fb950;--fail:#f85149;--pend:#8b949e;--manual:#58a6ff;--na:#6e7681;--warn:#d29922}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,sans-serif}
+  .wrap{max-width:1100px;margin:0 auto;padding:24px 18px 60px}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+  h1{font-size:20px;margin:0}
+  .verdict{font-size:14px;font-weight:700;padding:6px 14px;border-radius:20px}
+  .v-pass{background:rgba(63,185,80,.15);color:var(--pass)}
+  .v-fail{background:rgba(248,81,73,.15);color:var(--fail)}
+  .v-pending{background:rgba(139,148,158,.15);color:var(--pend)}
+  .counts{color:var(--mut);font-size:13px;margin-left:auto}
+  .counts b{color:var(--fg)}
+  .group{margin-top:22px}
+  .group h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0 0 10px;border-bottom:1px solid var(--bd);padding-bottom:6px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  .tile{background:var(--card);border:1px solid var(--bd);border-left-width:4px;border-radius:10px;padding:13px 14px}
+  .tile.pass{border-left-color:var(--pass)} .tile.fail{border-left-color:var(--fail)}
+  .tile.pending{border-left-color:var(--pend)} .tile.manual{border-left-color:var(--manual)}
+  .tile.na{border-left-color:var(--na);opacity:.7}
+  .tile .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .tile .name{font-weight:600;font-size:14px}
+  .badge{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:2px 8px;border-radius:12px}
+  .b-pass{background:rgba(63,185,80,.16);color:var(--pass)} .b-fail{background:rgba(248,81,73,.16);color:var(--fail)}
+  .b-pending{background:rgba(139,148,158,.16);color:var(--pend)} .b-manual{background:rgba(88,166,255,.16);color:var(--manual)}
+  .b-na{background:rgba(110,118,129,.16);color:var(--na)}
+  .detail{color:var(--mut);font-size:12.5px;margin-top:7px;line-height:1.45;min-height:18px}
+  .risk{color:var(--warn);font-size:11.5px;margin-top:6px}
+  .actions{margin-top:10px}
+  button{font:inherit;font-size:12px;border:1px solid var(--bd);background:#21262d;color:var(--fg);
+         border-radius:7px;padding:5px 11px;cursor:pointer}
+  button:hover{border-color:var(--mut)}
+  button.walk{background:rgba(210,153,34,.14);border-color:var(--warn);color:var(--warn);font-weight:600}
+  button.danger{background:rgba(248,81,73,.14);border-color:var(--err);color:var(--err);font-weight:700}
+  .tile.dangerzone{border-left-color:var(--err)}
+  .ts{color:var(--mut);font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🐕 Go2 — Hardware Self-Test</h1>
+    <span id="verdict" class="verdict v-pending">CHECKING…</span>
+    <span id="manualchip" class="verdict v-pending"></span>
+    <span class="counts" id="counts"></span>
+  </header>
+  <div id="board"></div>
+  <p class="ts" id="ts"></p>
+</div>
+
+<script>
+const BADGE = {pass:"b-pass",fail:"b-fail",pending:"b-pending",manual:"b-manual",na:"b-na"};
+
+async function run(key, label){
+  const tile = document.querySelector(`[data-key="${key}"]`);
+  const meta = (window.__meta || {})[key] || {};
+  if (meta.danger){
+    if(!confirm("⚠ DANGER: “"+label+"” makes the dog perform an acrobatic move (flip/jump).\nClear a LARGE, soft area and keep people well back.\n\nContinue?")) return;
+    if(!confirm("Are you ABSOLUTELY sure? This can damage the robot or injure people.")) return;
+  } else if (key === "motion"){
+    if(!confirm("Run the WALK test? The robot moves ~0.5 m forward and back.\nMake sure the area around the Go2 is clear.")) return;
+  } else if (key === "posture"){
+    if(!confirm("Run the posture/gait sequence? The dog will stand, shift its body, and sit. Keep the area clear.")) return;
+  }
+  if (tile) tile.querySelectorAll("button").forEach(b => { b.disabled = true; b.textContent = "running…"; });
+  try { const r = await fetch(`/api/run/${key}`, {method:"POST"}); if(!r.ok) alert("Run failed: HTTP "+r.status); }
+  catch(e){ alert("Run failed: "+e); }
+  setTimeout(refresh, 800);
+}
+
+function tileHTML(t){
+  const st = t.status || "pending";
+  const manual = t.manual && (st === "pending" || st === "manual");
+  const btnLabel = t.danger ? "⚠ Run acrobatics" : (t.key === "motion" ? "Run walk test" : (manual ? "Run test" : "Re-run"));
+  const btnCls = t.danger ? "danger" : (t.key === "motion" ? "walk" : "");
+  const showBtn = st !== "na";
+  return `<div class="tile ${st}${t.danger ? ' dangerzone' : ''}" data-key="${t.key}">
+    <div class="top"><span class="name">${t.label}</span>
+      <span class="badge ${BADGE[st]||"b-pending"}">${st}</span></div>
+    <div class="detail">${t.detail ? esc(t.detail) : ""}</div>
+    ${t.risk ? `<div class="risk">⚠ ${esc(t.risk)}</div>` : ""}
+    ${showBtn ? `<div class="actions"><button class="${btnCls}" onclick="run('${t.key}','${esc(t.label)}')">${btnLabel}</button></div>` : ""}
+  </div>`;
+}
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+async function refresh(){
+  let d; try { d = await (await fetch("/api/status")).json(); } catch(e){ return; }
+  window.__meta = {};
+  d.tiles.forEach(t => { window.__meta[t.key] = {danger: !!t.danger, manual: !!t.manual}; });
+  const v = document.getElementById("verdict");
+  const a = d.automated || {pass:0,fail:0,pending:0,total:0};
+  // Show the count that matches the verdict. (Bug fix: it used to always print
+  // automated pass/total — e.g. "4/16" — which next to "ISSUES FOUND" read like a
+  // failure ratio when it was actually the pass count. Counts are over AUTOMATED
+  // tiles only: total = tiles that aren't manual and aren't n/a; the full
+  // pass/fail/pending/manual/na split is on the line below.)
+  let cls, txt;
+  if (d.overall === "fail")        { cls = "v-fail";    txt = `ISSUES FOUND — ${a.fail} of ${a.total} failed`; }
+  else if (d.overall === "pending"){ cls = "v-pending"; txt = `AUTOMATED: RUNNING… — ${a.pending}/${a.total} pending`; }
+  else                             { cls = "v-pass";    txt = `AUTOMATED: ALL GO — ${a.pass}/${a.total} passed`; }
+  v.className = "verdict " + cls; v.textContent = txt;
+  const mc = document.getElementById("manualchip");
+  const m = d.manual || {pending:0,total:0};
+  if (m.pending > 0){ mc.className = "verdict v-pending"; mc.textContent = `MANUAL: ${m.pending}/${m.total} to run`; }
+  else { mc.className = "verdict v-pass"; mc.textContent = `MANUAL: all ${m.total} run`; }
+  const s = d.summary;
+  document.getElementById("counts").innerHTML =
+    `<b>${s.pass}</b> pass · <b>${s.fail}</b> fail · <b>${s.pending}</b> pending · <b>${s.manual}</b> manual · <b>${s.na}</b> n/a`;
+
+  const groups = {};
+  d.tiles.forEach(t => { (groups[t.group] = groups[t.group] || []).push(t); });
+  document.getElementById("board").innerHTML = Object.entries(groups).map(([g,tiles]) =>
+    `<div class="group"><h2>${esc(g)}</h2><div class="grid">${tiles.map(tileHTML).join("")}</div></div>`
+  ).join("");
+  document.getElementById("ts").textContent = "updated " + new Date().toLocaleTimeString();
+}
+
+refresh();
+setInterval(refresh, 4000);  // > server fan-out timeout, so requests don't pile up
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+    "appId": "sh.wendy.go2.rosbag",
+    "version": "0.1.0",
+    "services": {
+        "recorder": {
+            "context": "./recorder",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "rosbags", "path": "/data" }
+            ]
+        }
+    }
+}

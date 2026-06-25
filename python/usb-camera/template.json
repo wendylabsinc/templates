@@ -1,0 +1,57 @@
+{
+    "name": "usb-camera",
+    "description": "Stream a USB / UVC RGB webcam as MJPEG over HTTP — plug-and-play, no WebRTC and no AES key. Captures /dev/video* with OpenCV (V4L2) and serves a live viewer page plus a raw MJPEG endpoint. The /stream/color path is a drop-in replacement for go2-rc's camera proxy, so it works as the Go2 camera source without the encrypted WebRTC handshake.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port — open http://<device>:<port> to view the feed",
+            "type": "integer",
+            "default": 8000,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "VIDEO_DEVICE",
+            "description": "V4L2 device for the webcam (e.g. /dev/video0, or an index like 0). Run `v4l2-ctl --list-devices` on the host if unsure.",
+            "type": "string",
+            "default": "/dev/video0",
+            "prompt": "Video device"
+        },
+        {
+            "name": "WIDTH",
+            "description": "Capture width in pixels",
+            "type": "integer",
+            "default": 1280,
+            "prompt": "Width"
+        },
+        {
+            "name": "HEIGHT",
+            "description": "Capture height in pixels",
+            "type": "integer",
+            "default": 720,
+            "prompt": "Height"
+        },
+        {
+            "name": "FPS",
+            "description": "Target capture frame rate",
+            "type": "integer",
+            "default": 30,
+            "prompt": "FPS"
+        },
+        {
+            "name": "JPEG_QUALITY",
+            "description": "MJPEG JPEG quality (1-100; lower = less bandwidth)",
+            "type": "integer",
+            "default": 80,
+            "prompt": "JPEG quality",
+            "validate": { "min": 1, "max": 100 }
+        }
+    ]
+}

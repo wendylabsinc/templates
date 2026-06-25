@@ -71,6 +71,11 @@
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
             "languages": ["python"]
+        },
+        {
+            "name": "usb-camera",
+            "description": "Stream a USB/UVC RGB webcam as MJPEG over HTTP — plug-and-play, no WebRTC/AES. Live viewer page + /stream endpoint (drop-in for go2-rc's camera proxy).",
+            "languages": ["python"]
         }
     ],
     "languages": [

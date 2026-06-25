@@ -112,6 +112,7 @@ struct MacMLXLLMApp {
         print("MLX_OPENAI_BASE_URL=http://\(options.mlxHost):\(options.mlxPort)/v1")
         print("OPEN_WEBUI_URL=http://\(ProcessInfo.processInfo.hostName):\(options.webuiPort)")
         print("OPEN_WEBUI_DATA_DIR=\(runtime.openWebUIDataURL.path)")
+        print("HUGGINGFACE_HUB_CACHE=\(runtime.huggingFaceHubCacheURL.path)")
         print("The MLX API is bound to localhost and protected with an app-generated API key.")
 
         try await app.runService()
@@ -191,21 +192,34 @@ struct RuntimeLayout: Sendable {
     var uvToolsURL: URL { rootURL.appendingPathComponent("uv-tools", isDirectory: true) }
     var uvToolBinURL: URL { binURL }
     var uvPythonURL: URL { rootURL.appendingPathComponent("uv-python", isDirectory: true) }
-    var huggingFaceURL: URL { cacheURL.appendingPathComponent("huggingface", isDirectory: true) }
+    var huggingFaceHomeURL: URL {
+        if let value = ProcessInfo.processInfo.environment["HF_HOME"], !value.isEmpty {
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".cache", isDirectory: true)
+            .appendingPathComponent("huggingface", isDirectory: true)
+    }
+    var huggingFaceHubCacheURL: URL {
+        if let value = ProcessInfo.processInfo.environment["HF_HUB_CACHE"], !value.isEmpty {
+            return URL(fileURLWithPath: value, isDirectory: true)
+        }
+        return huggingFaceHomeURL.appendingPathComponent("hub", isDirectory: true)
+    }
     var openWebUIDataURL: URL { rootURL.appendingPathComponent("open-webui-data", isDirectory: true) }
     var openWebUIVersionURL: URL { rootURL.appendingPathComponent("open-webui.version") }
     var apiKeyURL: URL { secretsURL.appendingPathComponent("mlx-api-key") }
     var openWebUIExecutableURL: URL { uvToolBinURL.appendingPathComponent("open-webui") }
 
     func createDirectories() throws {
-        for url in [rootURL, binURL, cacheURL, homeURL, logsURL, secretsURL, uvToolsURL, uvToolBinURL, uvPythonURL, huggingFaceURL, openWebUIDataURL] {
+        for url in [rootURL, binURL, cacheURL, homeURL, logsURL, secretsURL, uvToolsURL, uvToolBinURL, uvPythonURL, huggingFaceHomeURL, huggingFaceHubCacheURL, openWebUIDataURL] {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
     }
 
     func applyEnvironmentToCurrentProcess() {
-        setenv("HF_HOME", huggingFaceURL.path, 1)
-        setenv("HF_HUB_CACHE", huggingFaceURL.path, 1)
+        setenv("HF_HOME", huggingFaceHomeURL.path, 1)
+        setenv("HF_HUB_CACHE", huggingFaceHubCacheURL.path, 1)
         setenv("TOKENIZERS_PARALLELISM", "false", 1)
     }
 
@@ -281,8 +295,8 @@ struct OpenWebUISupervisor: Sendable {
         env["OPENAI_API_BASE_URL"] = "http://\(options.mlxHost):\(options.mlxPort)/v1"
         env["OPENAI_API_BASE_URLS"] = "http://\(options.mlxHost):\(options.mlxPort)/v1"
         env["OPENAI_API_KEYS"] = apiKey
-        env["HF_HOME"] = runtime.huggingFaceURL.path
-        env["HF_HUB_CACHE"] = runtime.huggingFaceURL.path
+        env["HF_HOME"] = runtime.huggingFaceHomeURL.path
+        env["HF_HUB_CACHE"] = runtime.huggingFaceHubCacheURL.path
 
         let process = Process()
         process.executableURL = runtime.openWebUIExecutableURL
@@ -488,6 +502,56 @@ func unauthorizedResponseIfNeeded(request: Request, apiKey: String) throws -> Re
     return nil
 }
 
+final class ModelDownloadProgressLogger: @unchecked Sendable {
+    private let modelID: String
+    private let lock = NSLock()
+    private var lastPercent = -1
+    private var lastReportedAt = Date.distantPast
+
+    init(modelID: String) {
+        self.modelID = modelID
+    }
+
+    func log(_ progress: Progress) {
+        let total = progress.totalUnitCount
+        let completed = progress.completedUnitCount
+        let now = Date()
+        let message: String?
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        if total > 0 {
+            let clampedCompleted = min(max(completed, 0), total)
+            let percent = min(100, max(0, Int((Double(clampedCompleted) / Double(total) * 100).rounded(.down))))
+            let elapsed = now.timeIntervalSince(lastReportedAt)
+            guard percent > lastPercent || elapsed >= 10 else {
+                return
+            }
+
+            lastPercent = max(lastPercent, percent)
+            lastReportedAt = now
+            let completedText = ByteCountFormatter.string(fromByteCount: clampedCompleted, countStyle: .file)
+            let totalText = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+            message = "Hugging Face download \(modelID): \(lastPercent)% (\(completedText) / \(totalText))"
+        } else {
+            let elapsed = now.timeIntervalSince(lastReportedAt)
+            guard elapsed >= 10 else {
+                return
+            }
+
+            lastReportedAt = now
+            let completedText = ByteCountFormatter.string(fromByteCount: max(completed, 0), countStyle: .file)
+            message = "Hugging Face download \(modelID): \(completedText) downloaded"
+        }
+
+        if let message {
+            print(message)
+            fflush(stdout)
+        }
+    }
+}
+
 actor MLXLLMService {
     private let modelID: String
     private let defaultMaxTokens: Int
@@ -546,8 +610,12 @@ actor MLXLLMService {
         }
 
         print("Preparing MLX model \(modelID). The first run may download weights from Hugging Face before Open WebUI is marked ready...")
+        let progressLogger = ModelDownloadProgressLogger(modelID: modelID)
         let loaded = try await #huggingFaceLoadModelContainer(
-            configuration: ModelConfiguration(id: modelID)
+            configuration: ModelConfiguration(id: modelID),
+            progressHandler: { progress in
+                progressLogger.log(progress)
+            }
         )
         container = loaded
         print("MLX model ready: \(modelID)")

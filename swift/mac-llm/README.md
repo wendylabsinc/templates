@@ -22,15 +22,21 @@ On startup the supervisor:
 5. starts Open WebUI on `0.0.0.0:{{.PORT}}`
 6. configures Open WebUI to talk to the private MLX API with an app-generated API key
 
-Persistent runtime data is stored on the target Mac under:
+App-local runtime data is stored on the target Mac under:
 
 ```text
 ~/Library/Application Support/{{.APP_ID}}/
 ```
 
-Model weights are downloaded during app startup into the app cache, before Open
-WebUI is marked ready. Do not commit model weights, Open WebUI data, `.build/`,
-or `.xcode/` artifacts.
+Model weights use the user-wide Hugging Face cache, honoring `HF_HUB_CACHE` /
+`HF_HOME` when set and otherwise defaulting to:
+
+```text
+~/.cache/huggingface/hub/
+```
+
+Models are downloaded during app startup, before Open WebUI is marked ready. Do
+not commit model weights, Open WebUI data, `.build/`, or `.xcode/` artifacts.
 
 ## Run on a headless Mac agent
 
@@ -127,4 +133,5 @@ brew install uv
 
 No Hugging Face CLI is required. The Swift app links the Hugging Face client
 library at build time. For private or gated models, pass `HF_TOKEN` in the app
-environment on the target Mac.
+environment on the target Mac. To use a custom shared model cache, set
+`HF_HUB_CACHE` or `HF_HOME` before launching the app.

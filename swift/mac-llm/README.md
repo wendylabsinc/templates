@@ -91,14 +91,31 @@ Useful options in `wendy.json`:
 
 Use MLX-format models from Hugging Face, commonly under `mlx-community/`.
 Smaller 4-bit models are best for initial validation; larger models benefit from
-Macs with more unified memory.
+newer Apple Silicon and more unified memory.
 
-Examples:
+Model downloads can take a long time. Large models are downloaded into the
+shared Hugging Face cache, so future apps can reuse them.
 
-- `mlx-community/SmolLM-135M-Instruct-4bit` — very small smoke-test model
-- `mlx-community/Llama-3.2-1B-Instruct-4bit` — lightweight default
-- `mlx-community/Qwen2.5-3B-Instruct-4bit` — better quality, more memory
-- `mlx-community/Qwen2.5-7B-Instruct-4bit` — larger model for higher-memory Macs
+| Model | Approx download | Recommended hardware | UX expectation |
+|---|---:|---|---|
+| `mlx-community/SmolLM-135M-Instruct-4bit` | ~100–200 MB | Any Apple Silicon Mac | Smoke test only; quality is toy-level |
+| `mlx-community/Llama-3.2-1B-Instruct-4bit` | ~700 MB–1 GB | Any Apple Silicon Mac, 8 GB+ | Very fast, modest quality |
+| `mlx-community/Qwen2.5-3B-Instruct-4bit` | ~1.8–2 GB | M1/M2/M3/M4/M5, 16 GB+ | Best practical default; responsive on baseline Apple Silicon |
+| `mlx-community/Qwen2.5-7B-Instruct-4bit` | ~4–5 GB | Newer/faster Apple Silicon, 24 GB+ preferred | Better quality, but too slow for good interactivity on M1 / 16 GB |
+| `mlx-community/Qwen2.5-14B-Instruct-4bit` | ~8–10 GB | 32 GB+ unified memory | High-quality demo; smooth on higher-memory Macs |
+| `mlx-community/Qwen2.5-32B-Instruct-4bit` | ~18–20 GB | 64 GB+ unified memory | Excellent quality; smooth on high-end Apple Silicon with 64 GB |
+| `mlx-community/Qwen2.5-72B-Instruct-4bit` | ~40–50 GB | 64 GB+ unified memory, experimental | Best quality in this list, but slower; tolerable rather than smooth on 64 GB high-end Macs |
+
+Recommended presets:
+
+- **Broad default:** `mlx-community/Qwen2.5-3B-Instruct-4bit`
+- **Baseline 16 GB Apple Silicon:** `mlx-community/Qwen2.5-3B-Instruct-4bit`
+- **Better quality on newer / larger-memory Macs:** `mlx-community/Qwen2.5-7B-Instruct-4bit`
+- **High-quality demo:** `mlx-community/Qwen2.5-14B-Instruct-4bit`
+- **High-end smooth demo:** `mlx-community/Qwen2.5-32B-Instruct-4bit`
+- **Showcase / stress test:** `mlx-community/Qwen2.5-72B-Instruct-4bit`
+
+For interactive demos, `--default-max-tokens 256` is a good starting point.
 
 ## Local development
 

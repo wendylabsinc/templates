@@ -44,6 +44,14 @@ point rc's `CAMERA_UPSTREAM_URL` at this service, e.g.
 | `FPS` | `30` | target frame rate |
 | `JPEG_QUALITY` | `80` | MJPEG quality (1–100) |
 
+## Low latency
+
+- The capture keeps only the **newest** frame (`CAP_PROP_BUFFERSIZE=1`) so you
+  never see stale buffered frames (~100–200ms saved).
+- Over a constrained/long link (e.g. a remote tunnel), drop the **bitrate** so
+  frames don't queue: a good low-latency profile is
+  `--var WIDTH=640 --var HEIGHT=480 --var FPS=20 --var JPEG_QUALITY=55`.
+
 ## Notes
 
 - Most UVC webcams need **MJPG** for high res/fps; the app requests it. If a

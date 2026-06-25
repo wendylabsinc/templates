@@ -46,6 +46,12 @@ def _open_capture():
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
     cap.set(cv2.CAP_PROP_FPS, FPS)
+    # Keep only the newest frame in the driver buffer — otherwise OpenCV hands
+    # back queued (stale) frames and adds ~100-200ms of latency.
+    try:
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    except Exception:  # noqa: BLE001
+        pass
     return cap
 
 

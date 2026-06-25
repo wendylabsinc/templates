@@ -1,0 +1,36 @@
+{
+    "name": "go2-foxglove",
+    "platform": "linux",
+    "description": "Stream a Unitree Go2's live data into Foxglove: LiDAR point cloud, pose + TF, body state (IMU/battery/foot/joints) and UWB over one Foxglove WebSocket, plus the front camera (WebRTC, forwarded into the same connection). Ships a ready-made Foxglove layout. A lighter cousin of go2-watchtower.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "FOXGLOVE_PORT",
+            "description": "Port for the Foxglove WebSocket — open Foxglove → Open Connection → ws://<device>:<port>",
+            "type": "integer",
+            "default": 8765,
+            "prompt": "Foxglove WebSocket port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "GO2_IP",
+            "description": "Go2 robot IP on the robot LAN (WebRTC camera)",
+            "type": "string",
+            "default": "192.168.123.161",
+            "prompt": "Go2 IP"
+        },
+        {
+            "name": "GO2_DDS_ADDRESS",
+            "description": "THIS device's OWN IP on the robot network — the address DDS binds to so the Go2 can talk back. On the Go2's onboard Jetson it's usually 192.168.123.18; on an external Jetson bridged to the robot LAN it's that machine's 192.168.123.x. Binding by IP (not interface name) avoids the multi-homed eth0/eth1 problem where DDS advertises the wrong subnet.",
+            "type": "string",
+            "default": "192.168.123.18",
+            "prompt": "This device's IP on the Go2 network"
+        }
+    ]
+}

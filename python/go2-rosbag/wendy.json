@@ -1,0 +1,13 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "services": {
+        "recorder": {
+            "context": "./recorder",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "rosbags", "path": "/data" }
+            ]
+        }
+    }
+}

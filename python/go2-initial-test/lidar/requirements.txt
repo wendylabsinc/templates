@@ -1,0 +1,4 @@
+fastapi>=0.115
+uvicorn[standard]>=0.32
+# 0.10.x only — must match the CycloneDDS C library built in the Dockerfile.
+cyclonedds==0.10.5

@@ -53,6 +53,31 @@
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]
+        },
+        {
+            "name": "go2-rc",
+            "description": "Remote-control the Unitree Go2 EDU from a browser: a 3-service app group (motion API + camera stream + teleop web UI)",
+            "languages": ["python"]
+        },
+        {
+            "name": "go2-initial-test",
+            "description": "Pre-hackathon hardware self-test for the Unitree Go2: one tiny app per hardware interface (camera, LiDAR, mic, speaker, IMU, foot contact, battery, motion, GPU, Bluetooth, cloud) plus a dashboard UI showing a live pass/fail go/no-go board",
+            "languages": ["python"]
+        },
+        {
+            "name": "go2-foxglove",
+            "description": "Stream a Unitree Go2 into Foxglove: LiDAR point cloud, pose+TF, body state and UWB over one WebSocket, plus the front camera (WebRTC). Ships a ready-made Foxglove layout.",
+            "languages": ["python"]
+        },
+        {
+            "name": "rc-car",
+            "description": "Remote-control a Yahboom ROSMASTER R2 (Ackerman) robot car from a browser: a 3-service app group (Rosmaster motion + UVC camera + teleop web UI)",
+            "languages": ["python"]
+        },
+        {
+            "name": "go2-rosbag",
+            "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
+            "languages": ["python"]
         }
     ],
     "languages": [

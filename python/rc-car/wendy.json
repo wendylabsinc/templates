@@ -1,0 +1,39 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "services": {
+        "motion": {
+            "context": "./motion",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "serial", "device": "ttyUSB0" },
+                { "type": "serial", "device": "ttyUSB1" },
+                { "type": "serial", "device": "ttyUSB2" }
+            ]
+        },
+        "camera": {
+            "context": "./camera",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "camera" },
+                { "type": "usb" }
+            ]
+        },
+        "rc": {
+            "context": "./rc",
+            "dependsOn": ["motion", "camera"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "joystick": {
+            "context": "./joystick",
+            "dependsOn": ["motion"],
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "input" },
+                { "type": "bluetooth" }
+            ]
+        }
+    }
+}

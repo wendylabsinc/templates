@@ -1,0 +1,29 @@
+{
+    "name": "go2-rosbag",
+    "platform": "linux",
+    "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser. Discovers every topic the robot exposes (rt/lowstate, rt/sportmodestate, rt/utlidar/*, rt/api/*, ...) with full Unitree message typesupport and records all of them into a bag that opens directly in Foxglove and plays with `ros2 bag play`. CycloneDDS auto-binds to the interface that reaches the Go2.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Port for the recorder web UI — open http://<device>:<port> to list topics and start/stop recording",
+            "type": "integer",
+            "default": 7000,
+            "prompt": "Recorder web UI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "GO2_IP",
+            "description": "Any address on the Go2's internal DDS network — used only to pick the network interface CycloneDDS binds to so discovery finds the robot's topics",
+            "type": "string",
+            "default": "192.168.123.161",
+            "prompt": "Go2 IP"
+        }
+    ]
+}

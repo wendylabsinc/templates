@@ -1,0 +1,19 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "services": {
+        "bridge": {
+            "context": "./bridge",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "camera": {
+            "context": "./camera",
+            "dependsOn": ["bridge"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    }
+}

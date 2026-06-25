@@ -29,7 +29,7 @@
             "name": "MODEL_ID",
             "description": "Hugging Face MLX model ID to load on the Mac agent",
             "type": "string",
-            "default": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+            "default": "mlx-community/Qwen2.5-3B-Instruct-4bit",
             "prompt": "MLX model ID"
         },
         {
@@ -43,7 +43,7 @@
             "name": "MAX_TOKENS",
             "description": "Default maximum generated tokens per chat completion",
             "type": "integer",
-            "default": 512,
+            "default": 256,
             "prompt": "Default max tokens",
             "validate": { "min": 1, "max": 8192 }
         }

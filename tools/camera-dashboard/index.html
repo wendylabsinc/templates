@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Camera Wall — WendyOS</title>
+<style>
+  :root{
+    --bg:#0c0e12; --panel:#14171d; --panel2:#191d25; --ink:#e7ebf0;
+    --muted:#9aa6b2; --line:#262c36; --amber:#ffb429; --teal:#2dd4bf;
+    --ok:#2dd4bf; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    display:flex;flex-direction:column;height:100vh;overflow:hidden;}
+
+  /* Top bar */
+  .topbar{display:none;align-items:center;gap:14px;padding:12px 18px;
+    border-bottom:1px solid var(--line);background:linear-gradient(180deg,#0e1117,#0c0e12);flex:none;}
+  .topbar h1{font-size:16px;font-weight:800;margin:0;letter-spacing:-.01em;}
+  .topbar .tag{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--amber);
+    border:1px solid rgba(255,180,41,.35);border-radius:999px;padding:3px 10px;}
+  .topbar .spacer{flex:1;}
+  .topbar .count{color:var(--muted);font-size:13px;}
+  .btn{border:none;border-radius:9px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;
+    background:linear-gradient(92deg,var(--teal),#7af0e0);color:#0c0e12;}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted);}
+
+  /* Layout */
+  .stage{flex:1;display:flex;min-height:0;}
+  .rail{width:236px;flex:none;overflow-y:auto;padding:10px;border-right:1px solid var(--line);
+    background:var(--panel);display:flex;flex-direction:column;gap:8px;}
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;padding:16px;gap:12px;}
+
+  /* Thumbnails */
+  /* Thumbnails flex to share the rail height — up to ~6 fit without scrolling,
+     and scale larger when there are fewer. min-height keeps them usable; more
+     than ~7-8 cameras starts scrolling. */
+  .thumb{position:relative;border:2px solid var(--line);border-radius:12px;overflow:hidden;
+    cursor:pointer;background:#000;transition:border-color .12s;flex:1 1 0;min-height:84px;}
+  .thumb.sel{border-color:var(--teal);box-shadow:0 0 0 1px rgba(45,212,191,.4);}
+  .thumb img{width:100%;height:100%;object-fit:cover;display:block;}
+  .thumb .ph{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    color:#5a636e;font-size:12px;text-align:center;padding:6px;}
+  .thumb .lbl{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;gap:6px;z-index:2;
+    padding:6px 8px;background:linear-gradient(0deg,rgba(0,0,0,.8),transparent);font-size:12px;font-weight:600;}
+  /* Selected thumb's live <img> is moved into the big view, so mask the now-empty thumb. */
+  .thumb.inmain::after{content:"▶ in main view";position:absolute;inset:0;display:flex;
+    align-items:center;justify-content:center;background:#0c0e12;color:var(--muted);font-size:12px;z-index:1;}
+  .dot{width:8px;height:8px;border-radius:50%;background:#555;flex:none;}
+  .dot.ok{background:var(--ok);box-shadow:0 0 6px var(--ok);}
+  .dot.bad{background:var(--bad);}
+  .thumb .x{position:absolute;top:5px;right:5px;width:20px;height:20px;border-radius:50%;border:none;
+    background:rgba(0,0,0,.55);color:#fff;font-size:13px;line-height:1;cursor:pointer;display:none;}
+  .thumb:hover .x{display:block;}
+
+  /* Main view */
+  .viewer{flex:1;min-height:0;background:#000;border:1px solid var(--line);
+    border-radius:16px;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;}
+
+  /* Right panel — embeds another app (any URL/port) next to the camera. */
+  .rightpanel{flex:1;min-width:0;display:flex;flex-direction:column;border-left:1px solid var(--line);}
+  .rp-head{display:flex;gap:8px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line);background:var(--panel);}
+  .rp-head input{flex:1;background:#0c0e12;border:1px solid var(--line);color:var(--ink);border-radius:8px;padding:8px 10px;font-size:13px;}
+  .rp-head button{background:linear-gradient(92deg,var(--teal),#7af0e0);color:#0c0e12;border:none;border-radius:8px;padding:8px 12px;font-weight:700;font-size:13px;cursor:pointer;}
+  .rightpanel iframe{flex:1;border:0;width:100%;background:#000;}
+  #rp-ph{flex:1;display:flex;align-items:center;justify-content:center;color:#5a636e;font-size:14px;text-align:center;padding:20px;}
+  .viewer img{max-width:100%;max-height:100%;object-fit:contain;display:block;}
+  .viewer .ph{color:#5a636e;font-size:15px;text-align:center;padding:20px;}
+  .viewer .ov{position:absolute;left:14px;top:12px;display:flex;align-items:center;gap:10px;
+    background:rgba(12,14,18,.7);border:1px solid var(--line);border-radius:999px;padding:7px 14px;font-size:14px;}
+  .viewer .ov b{font-weight:700;}
+  .viewer .meta{color:var(--muted);font-size:12px;}
+  .viewer .full{position:absolute;right:14px;top:12px;}
+
+  /* Add dialog */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50;}
+  .modal.open{display:flex;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:24px;width:380px;max-width:92vw;}
+  .card h2{margin:0 0 14px;font-size:17px;}
+  .card label{display:block;font-size:12px;color:var(--muted);margin:12px 0 6px;font-weight:600;}
+  .card input{width:100%;background:#0c0e12;border:1px solid var(--line);color:var(--ink);
+    border-radius:9px;padding:10px 12px;font-size:14px;}
+  .card .row{display:flex;gap:10px;margin-top:20px;justify-content:flex-end;}
+  .hint{color:#6b7682;font-size:12px;margin-top:6px;}
+  .empty{color:var(--muted);text-align:center;font-size:13px;padding:24px 10px;}
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>📹 Camera Wall</h1>
+    <span class="tag">WendyOS</span>
+    <span class="spacer"></span>
+    <span class="count" id="count"></span>
+    <button class="btn ghost" onclick="resetDefaults()">Reset</button>
+    <button class="btn" onclick="openAdd()">+ Add camera</button>
+  </div>
+
+  <div class="stage">
+    <div class="rail" id="rail"></div>
+    <div class="main">
+      <div class="viewer" id="viewer">
+        <div class="ph">Select a camera</div>
+      </div>
+    </div>
+    <div class="rightpanel">
+      <div class="rp-head">
+        <input id="rpurl" type="text" placeholder="http://localhost:PORT — another app to embed">
+        <button onclick="loadRight()">Load</button>
+      </div>
+      <iframe id="rightframe" referrerpolicy="no-referrer" style="display:none"></iframe>
+      <div id="rp-ph">Enter a URL above to embed another app here.</div>
+    </div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="card">
+      <h2>Add a camera</h2>
+      <label>Name</label>
+      <input id="m-name" placeholder="Camera 05">
+      <label>Base URL</label>
+      <input id="m-url" placeholder="http://localhost:8092">
+      <div class="hint">The camera's usb-camera base URL — e.g. a cloud-tunnel port
+        (<code>http://localhost:8092</code>) or a device address
+        (<code>http://192.168.0.40:8000</code>). The app appends <code>/stream</code> and <code>/health</code>.</div>
+      <div class="row">
+        <button class="btn ghost" onclick="closeAdd()">Cancel</button>
+        <button class="btn" onclick="addCam()">Add</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  // Default cameras = the cloud-tunnel ports we set up (one per camera).
+  // Edit here, or use "+ Add camera" (persists in your browser).
+  const DEFAULTS = [
+    { name: "Camera 01", url: "http://localhost:8088" },
+    { name: "Camera 02", url: "http://localhost:8089" },
+    { name: "Camera 03", url: "http://localhost:8090" },
+    { name: "Camera 04", url: "http://localhost:8091" },
+    { name: "Camera 05", url: "http://localhost:8092" },
+    { name: "Camera 06", url: "http://localhost:8093" },
+  ];
+
+  const LS_KEY = "wendy.cameraWall.v1";
+  let cams = load();
+  let selected = cams.length ? 0 : -1;
+
+  function load(){
+    let s = null;
+    try{ const v = JSON.parse(localStorage.getItem(LS_KEY)); if(Array.isArray(v)) s = v; }catch(e){}
+    if(!s) return DEFAULTS.slice();
+    // Merge in any new default cameras not already in the saved list (by URL),
+    // so newly-deployed cameras appear on reload without needing "Reset".
+    const norm = u => u.replace(/\/+$/,"");
+    const have = new Set(s.map(c=>norm(c.url)));
+    DEFAULTS.forEach(d=>{ if(!have.has(norm(d.url))) s.push(d); });
+    return s;
+  }
+  function save(){ localStorage.setItem(LS_KEY, JSON.stringify(cams)); }
+  function resetDefaults(){ cams = DEFAULTS.slice(); selected = 0; save(); render(); }
+
+  // Cache-bust each (re)load so an offline→online camera actually reconnects.
+  function streamURL(c){ return c.url.replace(/\/+$/,"") + "/stream?t=" + Date.now(); }
+
+  // --- Render ---
+  // Every camera has ONE persistent <img> (id feed-i) that streams continuously.
+  // Switching the big view MOVES that live <img> into the viewer (a DOM move
+  // keeps the MJPEG connection alive → instant, no reconnect). Status is driven
+  // by the <img> load/error (no fetch → works cross-origin, no CORS needed).
+  function render(){
+    document.getElementById("count").textContent = cams.length + " camera" + (cams.length===1?"":"s");
+    const rail = document.getElementById("rail"), viewer = document.getElementById("viewer");
+    if(!cams.length){
+      rail.innerHTML = '<div class="empty">No cameras.<br>Click “+ Add camera”.</div>';
+      viewer.innerHTML = '<div class="ph">No cameras</div>';
+      return;
+    }
+    if(selected<0 || selected>=cams.length) selected = 0;
+    rail.innerHTML = cams.map((c,i)=>`
+      <div class="thumb ${i===selected?'sel inmain':''}" id="thumb-${i}" onclick="select(${i})">
+        <img class="feed" id="feed-${i}" src="${streamURL(c)}" onload="setLive(${i},true)" onerror="setLive(${i},false)">
+        <div class="ph" id="ph-${i}" style="display:none">offline · retrying…</div>
+        <button class="x" title="remove" onclick="event.stopPropagation();removeCam(${i})">×</button>
+        <div class="lbl"><span class="dot" id="dot-${i}"></span>${esc(c.name)}</div>
+      </div>`).join("");
+    viewer.innerHTML = `
+      <div class="ph" id="vph" style="display:none">offline · retrying…</div>
+      <div class="ov"><span class="dot" id="vdot"></span><b id="vname"></b><span class="meta" id="vmeta"></span></div>
+      <button class="btn ghost full" onclick="goFull()">⛶ Fullscreen</button>`;
+    mountSelected();
+  }
+
+  function mountSelected(){
+    const f = document.getElementById("feed-"+selected), viewer = document.getElementById("viewer");
+    if(f) viewer.insertBefore(f, viewer.firstChild);     // move the live stream into the big view
+    const nm = document.getElementById("vname"); if(nm) nm.textContent = cams[selected].name;
+    syncViewerStatus();
+  }
+
+  function select(i){
+    if(i===selected || i<0 || i>=cams.length) return;
+    const pf = document.getElementById("feed-"+selected), pt = document.getElementById("thumb-"+selected);
+    if(pf && pt){ pt.insertBefore(pf, pt.firstChild); pt.classList.remove("sel","inmain"); } // return prev feed
+    selected = i; save();
+    const t = document.getElementById("thumb-"+i); if(t) t.classList.add("sel","inmain");
+    mountSelected();
+  }
+
+  // --- Status from <img> events (feed may live in a thumb or the viewer) ---
+  function setLive(i, ok){
+    const dot=document.getElementById("dot-"+i), ph=document.getElementById("ph-"+i),
+          f=document.getElementById("feed-"+i);
+    if(dot) dot.className = "dot " + (ok?"ok":"bad");
+    if(ph) ph.style.display = ok ? "none":"flex";
+    if(f) f.dataset.bad = ok ? "0":"1";
+    if(i===selected) syncViewerStatus();
+  }
+  function syncViewerStatus(){
+    const f=document.getElementById("feed-"+selected);
+    const ok = f && f.dataset.bad!=="1";
+    const vdot=document.getElementById("vdot"), vmeta=document.getElementById("vmeta"), vph=document.getElementById("vph");
+    if(vdot) vdot.className="dot "+(ok?"ok":"bad");
+    if(vmeta) vmeta.textContent = ok ? "· live" : "· offline";
+    if(vph) vph.style.display = ok ? "none" : "flex";
+  }
+
+  // Reload only offline feeds (don't disturb live streams).
+  function retryOffline(){
+    cams.forEach((c,i)=>{ const f=document.getElementById("feed-"+i);
+      if(f && f.dataset.bad==="1") f.src = streamURL(c); });
+  }
+
+  // --- Add / remove ---
+  function openAdd(){ document.getElementById("modal").classList.add("open");
+    document.getElementById("m-name").value=""; document.getElementById("m-url").value="";
+    document.getElementById("m-name").focus(); }
+  function closeAdd(){ document.getElementById("modal").classList.remove("open"); }
+  function addCam(){
+    const name=document.getElementById("m-name").value.trim()||("Camera "+(cams.length+1));
+    let url=document.getElementById("m-url").value.trim();
+    if(!url){ alert("Enter a base URL"); return; }
+    if(!/^https?:\/\//.test(url)) url="http://"+url;
+    cams.push({name,url}); selected=cams.length-1; save(); closeAdd(); render();
+  }
+  function removeCam(i){ cams.splice(i,1); if(selected>=cams.length) selected=cams.length-1; save(); render(); }
+
+  function goFull(){ const v=document.getElementById("viewer"); (v.requestFullscreen||v.webkitRequestFullscreen).call(v); }
+  function esc(s){ return (s||"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+  // keyboard: up/down to switch cameras
+  document.addEventListener("keydown",e=>{
+    if(!cams.length) return;
+    if(e.key==="ArrowDown"||e.key==="ArrowRight"){ select((selected+1)%cams.length); }
+    if(e.key==="ArrowUp"||e.key==="ArrowLeft"){ select((selected-1+cams.length)%cams.length); }
+  });
+
+  // --- Right panel: embed another app by URL/port (persisted) ---
+  const RP_KEY = "wendy.cameraWall.rightUrl";
+  function loadRight(){
+    let u = document.getElementById("rpurl").value.trim();
+    if(u && !/^https?:\/\//.test(u)) u = "http://" + u;
+    localStorage.setItem(RP_KEY, u);
+    const f = document.getElementById("rightframe"), ph = document.getElementById("rp-ph");
+    if(u){ f.src = u; f.style.display = "block"; ph.style.display = "none"; }
+    else { f.src = "about:blank"; f.style.display = "none"; ph.style.display = "flex"; }
+  }
+  (function initRight(){
+    const saved = localStorage.getItem(RP_KEY) || "";
+    document.getElementById("rpurl").value = saved;
+    if(saved){ const f=document.getElementById("rightframe"),ph=document.getElementById("rp-ph");
+      f.src=saved; f.style.display="block"; ph.style.display="none"; }
+  })();
+
+  render();
+  setInterval(retryOffline, 8000);
+</script>
+</body>
+</html>

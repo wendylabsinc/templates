@@ -17,10 +17,11 @@ On startup the supervisor:
 
 1. applies `Brewfile.wendy` on the target Mac, installing `uv`
 2. installs pinned Open WebUI (`{{.OPEN_WEBUI_VERSION}}`) app-locally with `uv`
-3. downloads/loads the configured MLX model with the Swift Hugging Face client
-4. starts a private MLX OpenAI-compatible API on `127.0.0.1:{{.MLX_PORT}}`
-5. starts Open WebUI on `0.0.0.0:{{.PORT}}`
-6. configures Open WebUI to talk to the private MLX API with an app-generated API key
+3. prefetches the configured MLX model with Hugging Face's Python CLI via `uv`
+4. loads the cached model with the Swift Hugging Face / MLX client
+5. starts a private MLX OpenAI-compatible API on `127.0.0.1:{{.MLX_PORT}}`
+6. starts Open WebUI on `0.0.0.0:{{.PORT}}`
+7. configures Open WebUI to talk to the private MLX API with an app-generated API key
 
 App-local runtime data is stored on the target Mac under:
 
@@ -35,8 +36,10 @@ Model weights use the user-wide Hugging Face cache, honoring `HF_HUB_CACHE` /
 ~/.cache/huggingface/hub/
 ```
 
-Models are downloaded during app startup, before Open WebUI is marked ready. Do
-not commit model weights, Open WebUI data, `.build/`, or `.xcode/` artifacts.
+Models are downloaded during app startup with Hugging Face's Python CLI before
+Open WebUI is marked ready. The Swift MLX backend then loads the model from the
+shared cache. Do not commit model weights, Open WebUI data, `.build/`, or
+`.xcode/` artifacts.
 
 ## Run on a headless Mac agent
 
@@ -48,8 +51,8 @@ wendy run --device <mac-agent-name>
 ```
 
 The first run can take a few minutes while Homebrew installs `uv`, `uv` installs
-Open WebUI, and the Swift MLX backend downloads/loads the configured model from
-Hugging Face.
+Open WebUI, and the app downloads/loads the configured model from Hugging Face.
+Large models can take much longer depending on network speed.
 
 When startup completes, open:
 
@@ -148,7 +151,8 @@ This still requires `uv` on your development Mac:
 brew install uv
 ```
 
-No Hugging Face CLI is required. The Swift app links the Hugging Face client
-library at build time. For private or gated models, pass `HF_TOKEN` in the app
+The app runs Hugging Face's Python CLI through `uv` to prefetch model weights,
+then uses the Swift Hugging Face client library at runtime to load the cached
+model for MLX. For private or gated models, pass `HF_TOKEN` in the app
 environment on the target Mac. To use a custom shared model cache, set
 `HF_HUB_CACHE` or `HF_HOME` before launching the app.

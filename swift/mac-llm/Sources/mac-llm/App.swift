@@ -93,6 +93,7 @@ struct MacMLXLLMApp {
         let service = MLXLLMService(modelID: options.model, defaultMaxTokens: options.defaultMaxTokens)
 
         try openWebUI.ensureInstalled()
+        try openWebUI.prefetchModel()
         try await service.prepare()
 
         let openWebUIProcess = try openWebUI.start()
@@ -276,6 +277,33 @@ struct OpenWebUISupervisor: Sendable {
             prefix: "uv"
         )
         try options.openWebUIVersion.write(to: runtime.openWebUIVersionURL, atomically: true, encoding: .utf8)
+    }
+
+    func prefetchModel() throws {
+        let uv = try findUVExecutable()
+        var env = runtime.uvEnvironment()
+        env["HF_HOME"] = runtime.huggingFaceHomeURL.path
+        env["HF_HUB_CACHE"] = runtime.huggingFaceHubCacheURL.path
+        print("Prefetching Hugging Face model \(options.model) with hf. This may take a long time on first run...")
+        do {
+            try runCommand(
+                executable: uv,
+                arguments: [
+                    "tool", "run",
+                    "--from", "huggingface_hub",
+                    "--python", "3.11",
+                    "hf", "download", options.model,
+                ],
+                environment: env,
+                prefix: "hf"
+            )
+        } catch {
+            throw RuntimeError("""
+                Hugging Face model prefetch failed for \(options.model): \(error). \
+                Check network connectivity and HF_TOKEN for private/gated models, then rerun; \
+                completed files remain in \(runtime.huggingFaceHubCacheURL.path).
+                """)
+        }
     }
 
     func start() throws -> RunningProcess {

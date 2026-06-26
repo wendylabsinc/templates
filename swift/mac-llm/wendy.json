@@ -1,0 +1,24 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "language": "swift",
+    "platform": "darwin",
+    "xcode": {
+        "scheme": "MacLLM"
+    },
+    "run": {
+        "args": [
+            "--webui-host", "0.0.0.0",
+            "--webui-port", "{{.PORT}}",
+            "--mlx-host", "127.0.0.1",
+            "--mlx-port", "{{.MLX_PORT}}",
+            "--model", "{{.MODEL_ID}}",
+            "--open-webui-version", "{{.OPEN_WEBUI_VERSION}}",
+            "--default-max-tokens", "{{.MAX_TOKENS}}"
+        ]
+    },
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 300
+    }
+}

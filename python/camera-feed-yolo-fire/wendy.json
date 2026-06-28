@@ -1,0 +1,26 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "camera"
+        },
+        {
+            "type": "gpu"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 180
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

@@ -50,6 +50,11 @@
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },
         {
+            "name": "camera-feed-yolo-fire",
+            "description": "Live camera feed with YOLOv8 fire/smoke detection (generic CPU or Jetson GPU)",
+            "languages": ["python"]
+        },
+        {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]

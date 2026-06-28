@@ -14,6 +14,7 @@ Exposes a tiny web UI + JSON API on PORT (default 7000, host networking).
   GET  /download?bag=NAME&fmt=mcap|tar
 """
 import os
+import re
 import signal
 import subprocess
 import time
@@ -37,27 +38,74 @@ def _dir_size(p: Path) -> int:
     return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
 
 
+_TOPIC_RE = re.compile(r"^\s*\*\s+(\S+)\s+\[([^\]]+)\]")
+_COUNT_RE = re.compile(r"(\d+)\s+(?:publisher|subscriber)")
+
+
 def list_topics() -> dict:
+    """Every topic on the DDS graph, with publisher/subscriber counts so the
+    UI can show whether a topic is actually usable.
+
+    `ros2 topic list -v` splits into "Published topics:" (≥1 publisher) and
+    "Subscribed topics:" (≥1 subscriber). We merge them and classify:
+      live     — has publisher(s): real data flowing (recordable)
+      service  — no publisher but something subscribes: a callable endpoint
+                 (e.g. /api/*/request). Listening != hardware guaranteed.
+      idle     — advertised only.
+    """
     try:
         out = subprocess.run(
-            ["ros2", "topic", "list", "-t"],
-            capture_output=True, text=True, timeout=20,
+            ["ros2", "topic", "list", "-v"],
+            capture_output=True, text=True, timeout=25,
         )
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e), "topics": []}
-    topics = []
+
+    info: dict = {}
+    section = None
     for line in out.stdout.splitlines():
-        line = line.strip()
-        if not line:
+        s = line.strip().lower()
+        if s.startswith("published topics"):
+            section = "pubs"
             continue
-        # "/topic [pkg/msg/Type]"
-        if " [" in line and line.endswith("]"):
-            name, typ = line.split(" [", 1)
-            topics.append({"name": name.strip(), "type": typ[:-1]})
-        else:
-            topics.append({"name": line, "type": ""})
-    topics.sort(key=lambda t: t["name"])
-    return {"ok": True, "count": len(topics), "topics": topics}
+        if s.startswith("subscribed topics"):
+            section = "subs"
+            continue
+        m = _TOPIC_RE.match(line)
+        if not m or section is None:
+            continue
+        name, typ = m.group(1), m.group(2)
+        cm = _COUNT_RE.search(line)
+        cnt = int(cm.group(1)) if cm else 1
+        rec = info.setdefault(name, {"name": name, "type": typ, "pubs": 0, "subs": 0})
+        if not rec["type"]:
+            rec["type"] = typ
+        rec[section] = cnt
+
+    # Fallback to the plain list if -v gave us nothing (older distros).
+    if not info:
+        try:
+            plain = subprocess.run(["ros2", "topic", "list", "-t"],
+                                   capture_output=True, text=True, timeout=20)
+            for line in plain.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if " [" in line and line.endswith("]"):
+                    name, typ = line.split(" [", 1)
+                    info[name] = {"name": name, "type": typ[:-1], "pubs": 0, "subs": 0}
+                else:
+                    info[line] = {"name": line, "type": "", "pubs": 0, "subs": 0}
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": str(e), "topics": []}
+
+    topics = []
+    for name in sorted(info):
+        r = info[name]
+        r["status"] = "live" if r["pubs"] > 0 else ("service" if r["subs"] > 0 else "idle")
+        topics.append(r)
+    live = sum(1 for t in topics if t["status"] == "live")
+    return {"ok": True, "count": len(topics), "live": live, "topics": topics}
 
 
 def is_recording() -> bool:
@@ -191,6 +239,13 @@ PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
   .bag .nm{font-family:ui-monospace,Menlo,monospace;}
   .bag .sz{color:var(--muted);}
   .links{margin-left:auto;display:flex;gap:10px;}
+  td.av{white-space:nowrap;width:1%;padding-right:12px;}
+  .b{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;}
+  .b.live{background:rgba(45,212,191,.16);color:#9ff0e3;}
+  .b.service{background:rgba(255,180,41,.16);color:#ffd591;}
+  .b.idle{background:rgba(255,255,255,.06);color:#9aa6b2;}
+  .cnt{color:var(--muted);font-size:11px;margin-left:7px;}
+  .legend{font-size:12px;color:var(--muted);margin:0 0 12px;line-height:2;}
 </style></head><body><div class="wrap">
   <h1>🐕 Go2 Topic Recorder</h1>
   <p class="sub">Every DDS topic the Go2 exposes — list them and record an mcap rosbag (opens directly in Foxglove).</p>
@@ -203,6 +258,11 @@ PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 
   <div class="card">
     <h2>Topics <span class="count" id="tcount"></span> <a href="#" onclick="loadTopics();return false" style="margin-left:auto;font-size:13px;">↻ refresh</a></h2>
+    <div class="legend">
+      <span class="b live">● live</span> publishing data — recordable &nbsp;·&nbsp;
+      <span class="b service">○ service</span> endpoint listening — callable (e.g. <code>/api/*/request</code>); doesn't guarantee the hardware is attached &nbsp;·&nbsp;
+      <span class="b idle">idle</span> advertised only
+    </div>
     <table id="topics"><tbody><tr><td>loading…</td></tr></tbody></table>
   </div>
 
@@ -215,9 +275,14 @@ PAGE = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
   async function j(u,m){const r=await fetch(u,{method:m||"GET"});return r.json();}
   async function loadTopics(){
     const d=await j("/api/topics");
-    document.getElementById("tcount").textContent=d.ok?("· "+d.count+" topics"):("· error: "+(d.error||""));
-    document.getElementById("topics").innerHTML="<tbody>"+(d.topics||[]).map(t=>
-      "<tr><td class='t'>"+t.name+"</td><td class='ty'>"+(t.type||"")+"</td></tr>").join("")+"</tbody>";
+    document.getElementById("tcount").textContent=d.ok?("· "+d.count+" topics · "+(d.live||0)+" live"):("· error: "+(d.error||""));
+    document.getElementById("topics").innerHTML="<tbody>"+(d.topics||[]).map(t=>{
+      const lbl=t.status==="live"?"● live":(t.status==="service"?"○ service":"idle");
+      const cnt=t.status==="live"?(t.pubs+" pub"):(t.subs>0?(t.subs+" sub"):"");
+      return "<tr><td class='av'><span class='b "+t.status+"'>"+lbl+"</span>"+
+        (cnt?"<span class='cnt'>"+cnt+"</span>":"")+"</td>"+
+        "<td class='t'>"+t.name+"</td><td class='ty'>"+(t.type||"")+"</td></tr>";
+    }).join("")+"</tbody>";
   }
   async function loadBags(){
     const d=await j("/api/bags");

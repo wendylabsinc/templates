@@ -142,6 +142,9 @@ if __name__ == "__main__":
         # so the MCP port is never exposed on the LAN.
         mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
         mcp.settings.port = int(os.environ.get("MCP_PORT", "8000"))
+        # WendyOS's MCP proxy connects to the endpoint at the root path, so serve
+        # the streamable-HTTP endpoint at "/" (FastMCP defaults to "/mcp").
+        mcp.settings.streamable_http_path = os.environ.get("MCP_PATH", "/")
         mcp.run(transport="streamable-http")
     else:
         mcp.run()

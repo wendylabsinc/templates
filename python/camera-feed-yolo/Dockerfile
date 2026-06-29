@@ -42,19 +42,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     v4l-utils \
     libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
-# Web stack + cv/numpy, then the THIN TensorRT bindings (no bundled ~1.5GB libs) and
-# cuda-python — they link the INJECTED libnvinfer.so.10 / CUDA 13.2 at runtime.
+# Web stack + cv/numpy, then the FULL TensorRT 10.16.1 (bindings + libs) and
+# cuda-python. We bundle tensorrt-cu13-libs (not just bindings) because the engine
+# is BUILT on-device and that needs libnvinfer_builder_resource_sm*.so, which the
+# injected runtime stack does NOT provide. Pin all three to the same 10.16.1 and let
+# the wheel's RPATH load them consistently (the injected runtime is 10.16.2 — a
+# version skew that breaks the builder); rely on the injected CUDA 13.2 + driver only.
 RUN pip install --no-cache-dir --break-system-packages \
         fastapi "uvicorn[standard]" opencv-python-headless numpy && \
     pip install --no-cache-dir --break-system-packages --extra-index-url https://pypi.nvidia.com --no-deps \
-        tensorrt-cu13==10.16.1.11 tensorrt-cu13-bindings==10.16.1.11 && \
+        tensorrt-cu13==10.16.1.11 tensorrt-cu13-bindings==10.16.1.11 tensorrt-cu13-libs==10.16.1.11 && \
     pip install --no-cache-dir --break-system-packages cuda-python==13.2.0
-# Tell app.py to use the TensorRT path; expose the injected libs to the loader.
+# Tell app.py to use the TensorRT path; expose only the injected CUDA runtime to the
+# loader (NOT /usr/lib — keep the injected libnvinfer 10.16.2 from shadowing pip's 10.16.1).
 ENV YOLO_BACKEND=trt \
     YOLO_IMGSZ=640 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=all \
-    LD_LIBRARY_PATH=/usr/lib:/usr/local/cuda-13.2/lib:/usr/local/cuda-13.2/lib64
+    LD_LIBRARY_PATH=/usr/local/cuda-13.2/lib:/usr/local/cuda-13.2/lib64
 
 # ── Generic CPU base (Raspberry Pi, x86, or any non-accelerated device) ──────
 FROM python:3.11-slim-bookworm AS base-generic

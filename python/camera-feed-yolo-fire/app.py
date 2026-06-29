@@ -33,7 +33,10 @@ except Exception:
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from ultralytics import YOLO
+try:
+    from ultralytics import YOLO  # CPU path only; absent in the TensorRT (GPU) image
+except Exception:
+    YOLO = None  # type: ignore
 
 _log_buffer = collections.deque(maxlen=200)
 _last_v4l_target_log: tuple[str, tuple[str, ...]] | None = None
@@ -76,6 +79,11 @@ def _has_cuda() -> bool:
         return False
     if os.environ.get("WENDY_GPU_VENDOR", "").lower() not in ("", "nvidia"):
         return False
+    # Path-B (JetPack 7.2 Orin): TensorRT GPU with no torch in the image. The jetson
+    # build sets YOLO_BACKEND=trt — trust it instead of probing torch (not installed).
+    # See JETSON_JP7_GPU.md / WDY-1752.
+    if os.environ.get("YOLO_BACKEND", "").lower() == "trt":
+        return True
     try:
         import torch
         return torch.cuda.is_available()
@@ -98,6 +106,10 @@ def _is_rpi() -> bool:
 
 _HAS_CUDA = _has_cuda()
 IS_RPI = _is_rpi()
+# Use the injected TensorRT runtime (Path-B) rather than torch/Ultralytics for inference.
+_USE_TRT = os.environ.get("YOLO_BACKEND", "").lower() == "trt"
+# Square net-input size the .onnx was exported at; the TRT engine is built for this.
+_TRT_IMGSZ = int(os.environ.get("YOLO_IMGSZ", "320"))
 
 if not _HAS_CUDA:
     # Stops ONNX Runtime from probing CUDA providers on CPU-only devices.
@@ -116,26 +128,35 @@ logger.info("Platform: %s (device=%s, gpu=%s), CUDA: %s, capture: %s, max infere
             _HAS_CUDA,
             "opencv" if _FORCE_OPENCV else "gstreamer", _MAX_INFERENCE_FPS, _INFERENCE_IMGSZ)
 
-_model: YOLO | None = None
+_model = None
 _model_lock = threading.Lock()
 
 
-def _get_model() -> YOLO:
+def _get_model():
     global _model
     if _model is not None:
         return _model
     with _model_lock:
         if _model is not None:
             return _model
-        # Custom fire/smoke model baked into the image. Prefer an exported
-        # fire.onnx if present, else the fire.pt weights. FIRE_MODEL overrides.
-        model_path = os.environ.get("FIRE_MODEL", "")
-        if not model_path:
-            model_path = "fire.onnx" if Path("fire.onnx").exists() else "fire.pt"
-        logger.info("Loading fire detection model %s (CUDA: %s)...", model_path, _HAS_CUDA)
-        m = YOLO(model_path)
-        logger.info("Fire model ready — classes: %s, backend: %s",
-                    ", ".join(m.names.values()), model_path)
+        if _USE_TRT:
+            # GPU: raw TensorRT on the injected CUDA 13.2 / TRT 10.16 stack (no torch).
+            from trt_yolo import TRTYolo  # lazy: pulls cuda-python/tensorrt (jetson image only)
+            engine_path = os.environ.get("YOLO_ENGINE_PATH", "/app/fire.engine")
+            logger.info("Loading fire model via TensorRT (engine cache: %s)...", engine_path)
+            m = TRTYolo("fire.onnx", engine_path, imgsz=_TRT_IMGSZ)
+            logger.info("Fire model (TensorRT) ready — classes: %s", ", ".join(m.names))
+        else:
+            # CPU (or non-Jetson GPU): Ultralytics with the custom fire model.
+            if YOLO is None:
+                raise RuntimeError("ultralytics unavailable and YOLO_BACKEND != trt")
+            model_path = os.environ.get("FIRE_MODEL", "")
+            if not model_path:
+                model_path = "fire.pt" if Path("fire.pt").exists() else "fire.onnx"
+            logger.info("Loading fire detection model %s (CUDA: %s)...", model_path, _HAS_CUDA)
+            m = YOLO(model_path)
+            logger.info("Fire model ready — classes: %s, backend: %s",
+                        ", ".join(m.names.values()), model_path)
         _model = m
         return _model
 
@@ -716,23 +737,31 @@ class YOLOCamera:
             h, w = frame.shape[:2]
 
             t0 = time.monotonic()
-            results = model.predict(frame, conf=conf, imgsz=_INFERENCE_IMGSZ, verbose=False)
-            inference_ms = (time.monotonic() - t0) * 1000
-            last_inference = time.monotonic()
-
-            boxes_out: list[dict] = []
-            classes: dict[str, int] = {}
-            for box in results[0].boxes:
-                xyxy = box.xyxy[0].tolist() if hasattr(box.xyxy, 'tolist') else list(box.xyxy[0])
-                cls_id = int(box.cls)
-                c = float(box.conf)
-                cls_name = model.names[cls_id]
-                boxes_out.append({
-                    "x1": float(xyxy[0]), "y1": float(xyxy[1]),
-                    "x2": float(xyxy[2]), "y2": float(xyxy[3]),
-                    "conf": c, "cls": cls_id, "name": cls_name,
-                })
-                classes[cls_name] = classes.get(cls_name, 0) + 1
+            if _USE_TRT:
+                # TRT detect() already returns {x1,y1,x2,y2,conf,cls,name} dicts.
+                boxes_out = model.detect(frame, conf=conf)
+                inference_ms = (time.monotonic() - t0) * 1000
+                last_inference = time.monotonic()
+                classes: dict[str, int] = {}
+                for b in boxes_out:
+                    classes[b["name"]] = classes.get(b["name"], 0) + 1
+            else:
+                results = model.predict(frame, conf=conf, imgsz=_INFERENCE_IMGSZ, verbose=False)
+                inference_ms = (time.monotonic() - t0) * 1000
+                last_inference = time.monotonic()
+                boxes_out = []
+                classes = {}
+                for box in results[0].boxes:
+                    xyxy = box.xyxy[0].tolist() if hasattr(box.xyxy, 'tolist') else list(box.xyxy[0])
+                    cls_id = int(box.cls)
+                    c = float(box.conf)
+                    cls_name = model.names[cls_id]
+                    boxes_out.append({
+                        "x1": float(xyxy[0]), "y1": float(xyxy[1]),
+                        "x2": float(xyxy[2]), "y2": float(xyxy[3]),
+                        "conf": c, "cls": cls_id, "name": cls_name,
+                    })
+                    classes[cls_name] = classes.get(cls_name, 0) + 1
 
             meta_dict = {
                 "detections": len(boxes_out),

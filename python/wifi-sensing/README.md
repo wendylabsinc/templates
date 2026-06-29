@@ -82,6 +82,41 @@ wendy run
 `persist` volume at `/data` (calibration baseline). The dashboard opens
 automatically via the `postStart` hook.
 
+## Query it with an LLM (MCP)
+
+`mcp/server.py` is an [MCP](https://modelcontextprotocol.io) server that exposes
+the live sensing data as LLM-callable tools, so you can ask "is anyone home?",
+"who's moving?", "what's the breathing rate?", "which sensors are online?".
+
+Tools: `home_status`, `presence`, `vitals`, `sensors`, `raw_frame`. It reads a
+sensing WebSocket (`SENSING_WS`, default `ws://localhost:3001/ws/sensing`) and
+normalizes either this app's stream **or** a ruview stream into one shape.
+
+```bash
+pip install -r requirements-mcp.txt
+
+# stdio (for Claude Desktop / Claude Code):
+SENSING_WS=ws://<device>:3001/ws/sensing python mcp/server.py
+# remote / in-container streamable-HTTP on :8000/mcp:
+python mcp/server.py --http
+```
+
+Add to **Claude Code**:
+```bash
+claude mcp add wifi-sensing -e SENSING_WS=ws://<device>:3001/ws/sensing \
+  -- python /path/to/wifi-sensing/mcp/server.py
+```
+Or **Claude Desktop** (`claude_desktop_config.json`):
+```json
+{ "mcpServers": { "wifi-sensing": {
+    "command": "python",
+    "args": ["/path/to/wifi-sensing/mcp/server.py"],
+    "env": { "SENSING_WS": "ws://<device>:3001/ws/sensing" } } } }
+```
+
+The `network` entitlement in `wendy.json` already covers the MCP server reaching
+the stream (and being reachable in `--http` mode).
+
 ## Limitations & seams
 
 v1 uses CSI **amplitude** only and classical DSP — it is honest about what runs

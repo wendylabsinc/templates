@@ -1,0 +1,72 @@
+{
+    "name": "camera-fleet",
+    "description": "Multi-device camera fleet: a USB/MJPEG camera component deployed to every device in a named group (edge tier) + a self-populating camera-wall dashboard (central tier) that auto-discovers all of them. Demonstrates the fleet 'central + edge' topology — placement manifest + cross-device service discovery (WDY-1755). No hardcoded camera URLs or ports.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier (reverse-DNS, e.g. sh.wendy.examples.camerafleet)",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "CAMERA_GROUP",
+            "description": "Named device group the camera (edge) component is deployed to. Define it once with your devices; the dashboard discovers every member automatically.",
+            "type": "string",
+            "default": "cameras",
+            "prompt": "Camera device group"
+        },
+        {
+            "name": "CAMERA_PORT",
+            "description": "HTTP port each camera serves its MJPEG stream on",
+            "type": "integer",
+            "default": 8000,
+            "prompt": "Camera port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "DASHBOARD_PORT",
+            "description": "HTTP port the central dashboard serves on — open http://<central>:<port>",
+            "type": "integer",
+            "default": 9000,
+            "prompt": "Dashboard port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "VIDEO_DEVICE",
+            "description": "V4L2 device for the webcam on each edge device (e.g. /dev/video0, or an index like 0). Run `v4l2-ctl --list-devices` on a host if unsure.",
+            "type": "string",
+            "default": "/dev/video0",
+            "prompt": "Video device"
+        },
+        {
+            "name": "WIDTH",
+            "description": "Capture width in pixels",
+            "type": "integer",
+            "default": 1280,
+            "prompt": "Capture width"
+        },
+        {
+            "name": "HEIGHT",
+            "description": "Capture height in pixels",
+            "type": "integer",
+            "default": 720,
+            "prompt": "Capture height"
+        },
+        {
+            "name": "FPS",
+            "description": "Capture frame rate",
+            "type": "integer",
+            "default": 30,
+            "prompt": "Frames per second"
+        },
+        {
+            "name": "JPEG_QUALITY",
+            "description": "MJPEG JPEG quality 1-100 (lower = less bandwidth/latency)",
+            "type": "integer",
+            "default": 80,
+            "prompt": "JPEG quality",
+            "validate": { "min": 1, "max": 100 }
+        }
+    ]
+}

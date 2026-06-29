@@ -894,7 +894,10 @@ async def debug_info():
         content={
             "mode": "yolo-mjpeg-ws",
             "model": "fire",
-            "classes": list(model.names.values()) if model else [],
+            "classes": (
+                [] if model is None
+                else (list(model.names.values()) if hasattr(model.names, "values") else list(model.names))
+            ),
             "cuda": _HAS_CUDA,
             "is_rpi": IS_RPI,
             "max_inference_fps": _MAX_INFERENCE_FPS,

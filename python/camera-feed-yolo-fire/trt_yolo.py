@@ -157,7 +157,27 @@ class TRTYolo:
 
     def _postprocess(self, out, orig_hw, r, dx, dy, conf):
         o = out[0]
-        if o.shape[0] < o.shape[1]:  # (84, 8400) -> (8400, 84)
+        H0, W0 = orig_hw
+        # End2end / NMS-included export: (N, 6) rows = [x1,y1,x2,y2,score,cls] in
+        # letterboxed pixel coords, NMS already applied. fire.pt exports this shape
+        # (e.g. (300, 6)); raw YOLOv8 is (4+nc, anchors) and is handled below.
+        if o.ndim == 2 and o.shape[-1] == 6 and o.shape[0] >= o.shape[1]:
+            dets = []
+            for row in o:
+                score = float(row[4])
+                if score <= conf:
+                    continue
+                cid = int(row[5])
+                dets.append({
+                    "x1": float(np.clip((row[0] - dx) / r, 0, W0)),
+                    "y1": float(np.clip((row[1] - dy) / r, 0, H0)),
+                    "x2": float(np.clip((row[2] - dx) / r, 0, W0)),
+                    "y2": float(np.clip((row[3] - dy) / r, 0, H0)),
+                    "conf": score, "cls": cid,
+                    "name": self.names[cid] if cid < len(self.names) else str(cid),
+                })
+            return dets
+        if o.shape[0] < o.shape[1]:  # (4+nc, anchors) -> (anchors, 4+nc)
             o = o.transpose(1, 0)
         boxes_xywh, scores_all = o[:, :4], o[:, 4:]
         class_ids = np.argmax(scores_all, axis=1)

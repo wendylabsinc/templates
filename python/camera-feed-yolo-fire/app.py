@@ -900,7 +900,10 @@ async def debug_info():
             "max_inference_fps": _MAX_INFERENCE_FPS,
             "inference_imgsz": _INFERENCE_IMGSZ,
             "capture_backend": camera._capture_mode,
-            "device": str(model.device) if model else "not loaded",
+            "device": (
+                "not loaded" if model is None
+                else ("cuda (tensorrt)" if _USE_TRT else str(getattr(model, "device", "unknown")))
+            ),
             "confidence": camera._confidence,
             "cameras": cameras,
             "pipeline_state": camera.pipeline.get_state(0)[1].value_nick if camera.pipeline else None,

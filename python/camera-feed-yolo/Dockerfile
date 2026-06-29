@@ -21,8 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir ultralytics
 WORKDIR /export
-# Static 640x640 input; the TRT engine is built for this size (YOLO_IMGSZ).
-RUN yolo export model=yolov8n.pt format=onnx imgsz=640 && \
+# Static 320x320 input; the TRT engine is built for this size (YOLO_IMGSZ). 320 keeps
+# the on-device engine build cheap (memory+time) so it finishes + caches before any
+# restart, and is plenty for a webcam demo. Bump to 640 if you need more accuracy.
+RUN yolo export model=yolov8n.pt format=onnx imgsz=320 && \
     [ -s /export/yolov8n.onnx ]
 
 # ── NVIDIA Jetson base (Path-B: injected CUDA 13.2 + TensorRT 10.16, no torch) ──
@@ -56,7 +58,7 @@ RUN pip install --no-cache-dir --break-system-packages \
 # Tell app.py to use the TensorRT path; expose only the injected CUDA runtime to the
 # loader (NOT /usr/lib — keep the injected libnvinfer 10.16.2 from shadowing pip's 10.16.1).
 ENV YOLO_BACKEND=trt \
-    YOLO_IMGSZ=640 \
+    YOLO_IMGSZ=320 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=all \
     LD_LIBRARY_PATH=/usr/local/cuda-13.2/lib:/usr/local/cuda-13.2/lib64

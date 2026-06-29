@@ -124,7 +124,10 @@ class TRTYolo:
                 errs = "; ".join(str(parser.get_error(i)) for i in range(parser.num_errors))
                 raise RuntimeError(f"ONNX parse failed: {errs}")
         config = builder.create_builder_config()
-        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 30)
+        # Keep the build cheap: the Orin Nano shares 8GB CPU/GPU RAM, and a large
+        # workspace makes the (FP16) build spike memory and get OOM-restarted before
+        # it can finish + cache. 256MB is plenty for yolov8n.
+        config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, 1 << 28)
         if fp16 and builder.platform_has_fast_fp16:
             config.set_flag(trt.BuilderFlag.FP16)
             logger.info("FP16 enabled")

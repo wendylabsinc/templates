@@ -1,0 +1,73 @@
+# syntax=docker/dockerfile:1.6
+#
+# ROCm/MIGraphX build for AMD GPUs.
+
+ARG ROCM_ONNXRUNTIME_IMAGE=rocm/onnxruntime:rocm7.2.4_ub24.04_ort1.23_torch2.10.0
+ARG ROCM_TARGETPLATFORM=linux/amd64
+
+FROM python:3.11-slim-bookworm AS model-export
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxcb1 libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir ultralytics onnx
+WORKDIR /export
+RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=True, dynamic=False)" \
+ && [ -s /export/yolov8n.onnx ] \
+ && [ "$(stat -c %s /export/yolov8n.onnx)" -gt 5000000 ]
+
+FROM --platform=${ROCM_TARGETPLATFORM} ${ROCM_ONNXRUNTIME_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates pkg-config gnupg \
+    binutils libc6-dev libcurl4 libedit2 libgcc-13-dev libpython3-dev \
+    libsqlite3-0 libstdc++-13-dev libxml2 libz3-dev \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    v4l-utils libturbojpeg0-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG SWIFT_VERSION_BUILD={{.SWIFT_VERSION}}
+RUN curl -fsSL "https://download.swift.org/swift-${SWIFT_VERSION_BUILD}-release/ubuntu2404/swift-${SWIFT_VERSION_BUILD}-RELEASE/swift-${SWIFT_VERSION_BUILD}-RELEASE-ubuntu24.04.tar.gz" \
+      -o /tmp/swift.tgz \
+ && tar -xzf /tmp/swift.tgz -C /usr/local --strip-components=1 \
+ && rm /tmp/swift.tgz
+
+RUN LIB=$(find / -name "libonnxruntime.so*" 2>/dev/null | grep -v __pycache__ | sort -r | head -1) \
+ && [ -n "$LIB" ] || (echo "libonnxruntime.so not found" >&2 && exit 1) \
+ && ln -sf "$LIB" /usr/local/lib/libonnxruntime.so \
+ && HDR=$(find / -name "onnxruntime_c_api.h" 2>/dev/null | head -1) \
+ && [ -n "$HDR" ] || (echo "onnxruntime_c_api.h not found" >&2 && exit 1) \
+ && cp "$(dirname "$HDR")"/*.h /usr/local/include/ \
+ && mkdir -p /usr/local/lib/pkgconfig \
+ && printf 'prefix=/usr/local\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: libonnxruntime\nDescription: ONNX Runtime\nVersion: 1.23.0\nLibs: -L${libdir} -lonnxruntime\nCflags: -I${includedir}\n' > /usr/local/lib/pkgconfig/libonnxruntime.pc \
+ && ldconfig
+
+ARG WENDY_PLATFORM=rocm
+ARG WENDY_DEVICE_TYPE=""
+ARG WENDY_HAS_GPU=true
+ARG WENDY_GPU_VENDOR=amd
+ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
+    WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE} \
+    WENDY_HAS_GPU=${WENDY_HAS_GPU} \
+    WENDY_GPU_VENDOR=${WENDY_GPU_VENDOR}
+
+WORKDIR /app
+COPY Package.swift ./
+COPY Sources Sources
+RUN swift build -c release \
+ && cp ".build/release/{{.APP_ID}}" /usr/local/bin/{{.APP_ID}} \
+ && rm -rf .build
+
+COPY --from=model-export /export/yolov8n.onnx ./yolov8n.onnx
+COPY index.html ./
+COPY assets/ ./assets/
+
+EXPOSE {{.PORT}}
+
+CMD ["{{.APP_ID}}"]

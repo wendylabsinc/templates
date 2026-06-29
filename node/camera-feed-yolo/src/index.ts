@@ -36,6 +36,10 @@ function envTruthy(name: string): boolean {
   return v === "true" || v === "1" || v === "yes";
 }
 
+function gpuVendor(): string {
+  return (process.env.WENDY_GPU_VENDOR ?? "").trim().toLowerCase();
+}
+
 function isRpi(): boolean {
   const dev = process.env.WENDY_DEVICE_TYPE ?? "";
   if (dev.startsWith("raspberrypi")) return true;
@@ -48,12 +52,15 @@ function isRpi(): boolean {
 }
 
 const USE_GPU = envTruthy("WENDY_HAS_GPU");
+const GPU_VENDOR = gpuVendor();
+const ACCELERATOR = !USE_GPU ? "cpu" : GPU_VENDOR === "amd" || GPU_VENDOR === "rocm" ? "rocm" : "cuda";
 const IS_RPI = isRpi();
-const USE_PASSTHROUGH = !USE_GPU || IS_RPI;
+const USE_JETSON_CAMERA_PIPELINE = USE_GPU && process.env.WENDY_PLATFORM === "nvidia-jetson";
+const USE_PASSTHROUGH = !USE_JETSON_CAMERA_PIPELINE || IS_RPI;
 const MIN_INTERVAL_MS = 1000 / (USE_GPU ? 15 : 3);
 
 console.log(
-  `[startup] platform=${process.env.WENDY_PLATFORM ?? "unknown"}, has_gpu=${USE_GPU}, is_rpi=${IS_RPI}, capture=${USE_PASSTHROUGH ? "passthrough" : "decode-encode"}`,
+  `[startup] platform=${process.env.WENDY_PLATFORM ?? "unknown"}, accelerator=${ACCELERATOR}, is_rpi=${IS_RPI}, capture=${USE_PASSTHROUGH ? "passthrough" : "decode-encode"}`,
 );
 
 // ---------------------------------------------------------------------------
@@ -245,12 +252,25 @@ class YoloEngine {
   private outputName = "output0";
 
   async load(): Promise<void> {
-    const providers = USE_GPU ? ["cuda", "cpu"] : ["cpu"];
-    console.log(`[yolo] loading model (providers=${providers.join(",")})`);
-    this.session = await ort.InferenceSession.create(MODEL_PATH, {
-      executionProviders: providers,
-      graphOptimizationLevel: "all",
-    });
+    const providerAttempts =
+      ACCELERATOR === "rocm" ? [["migraphx", "cpu"], ["rocm", "cpu"], ["cpu"]] :
+      ACCELERATOR === "cuda" ? [["cuda", "cpu"], ["cpu"]] :
+      [["cpu"]];
+    let lastError: unknown = null;
+    for (const providers of providerAttempts) {
+      try {
+        console.log(`[yolo] loading model (providers=${providers.join(",")})`);
+        this.session = await ort.InferenceSession.create(MODEL_PATH, {
+          executionProviders: providers as any,
+          graphOptimizationLevel: "all",
+        });
+        break;
+      } catch (err) {
+        lastError = err;
+        console.warn(`[yolo] provider attempt failed (${providers.join(",")}): ${err}`);
+      }
+    }
+    if (!this.session) throw lastError ?? new Error("failed to create ONNX Runtime session");
     if (this.session.inputNames.length) this.inputName = this.session.inputNames[0];
     if (this.session.outputNames.length) this.outputName = this.session.outputNames[0];
   }

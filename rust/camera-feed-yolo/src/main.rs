@@ -11,7 +11,7 @@ use axum::{
 use gstreamer::prelude::*;
 use gstreamer_app::AppSink;
 use ndarray::{Array, Axis};
-use ort::execution_providers::{CPUExecutionProvider, CUDAExecutionProvider};
+use ort::execution_providers::{CPUExecutionProvider, CUDAExecutionProvider, MIGraphXExecutionProvider};
 use ort::session::{builder::GraphOptimizationLevel, Session};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -23,6 +23,27 @@ use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, watch};
 
 const INDEX_HTML: &str = include_str!("../index.html");
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Accelerator {
+    Cpu,
+    Cuda,
+    Rocm,
+}
+
+impl Accelerator {
+    fn as_str(self) -> &'static str {
+        match self {
+            Accelerator::Cpu => "cpu",
+            Accelerator::Cuda => "cuda",
+            Accelerator::Rocm => "rocm",
+        }
+    }
+
+    fn is_gpu(self) -> bool {
+        self != Accelerator::Cpu
+    }
+}
 
 const COCO_NAMES: [&str; 80] = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
@@ -197,17 +218,27 @@ struct YoloEngine {
 }
 
 impl YoloEngine {
-    fn new(use_gpu: bool) -> ort::Result<Self> {
+    fn new(accelerator: Accelerator) -> ort::Result<Self> {
         let mut builder = Session::builder()?;
-        if use_gpu {
-            builder = builder.with_execution_providers([
-                CUDAExecutionProvider::default().build(),
-                CPUExecutionProvider::default().build(),
-            ])?;
-            println!("[yolo] requesting CUDA execution provider");
-        } else {
-            builder = builder.with_execution_providers([CPUExecutionProvider::default().build()])?;
-            println!("[yolo] using CPU execution provider");
+        match accelerator {
+            Accelerator::Cuda => {
+                builder = builder.with_execution_providers([
+                    CUDAExecutionProvider::default().build(),
+                    CPUExecutionProvider::default().build(),
+                ])?;
+                println!("[yolo] requesting CUDA execution provider");
+            }
+            Accelerator::Rocm => {
+                builder = builder.with_execution_providers([
+                    MIGraphXExecutionProvider::default().build(),
+                    CPUExecutionProvider::default().build(),
+                ])?;
+                println!("[yolo] requesting MIGraphX execution provider");
+            }
+            Accelerator::Cpu => {
+                builder = builder.with_execution_providers([CPUExecutionProvider::default().build()])?;
+                println!("[yolo] using CPU execution provider");
+            }
         }
         let session = builder
             .with_optimization_level(GraphOptimizationLevel::Level3)?
@@ -660,6 +691,28 @@ fn env_truthy(name: &str) -> bool {
     )
 }
 
+fn env_lower(name: &str) -> String {
+    std::env::var(name)
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase()
+}
+
+fn selected_accelerator() -> Accelerator {
+    if !env_truthy("WENDY_HAS_GPU") {
+        return Accelerator::Cpu;
+    }
+    match env_lower("WENDY_GPU_VENDOR").as_str() {
+        "amd" | "rocm" => Accelerator::Rocm,
+        "" | "nvidia" => Accelerator::Cuda,
+        _ => Accelerator::Cpu,
+    }
+}
+
+fn is_jetson_platform() -> bool {
+    env_lower("WENDY_PLATFORM") == "nvidia-jetson"
+}
+
 fn is_rpi() -> bool {
     let dev = std::env::var("WENDY_DEVICE_TYPE").unwrap_or_default();
     if dev.starts_with("raspberrypi") {
@@ -677,14 +730,15 @@ fn is_rpi() -> bool {
 async fn main() {
     gstreamer::init().expect("Failed to initialize GStreamer");
 
-    let use_gpu = env_truthy("WENDY_HAS_GPU");
+    let accelerator = selected_accelerator();
+    let use_gpu = accelerator.is_gpu();
     let rpi = is_rpi();
-    let use_passthrough = !use_gpu || rpi;
+    let use_passthrough = !(use_gpu && is_jetson_platform()) || rpi;
 
     println!(
-        "[startup] platform={}, has_gpu={}, is_rpi={}, capture={}",
+        "[startup] platform={}, accelerator={}, is_rpi={}, capture={}",
         std::env::var("WENDY_PLATFORM").unwrap_or_else(|_| "unknown".into()),
-        use_gpu,
+        accelerator.as_str(),
         rpi,
         if use_passthrough { "passthrough" } else { "decode-encode" },
     );
@@ -700,7 +754,7 @@ async fn main() {
         confidence: Arc::new(RwLock::new(0.25)),
     };
 
-    let engine = match YoloEngine::new(use_gpu) {
+    let engine = match YoloEngine::new(accelerator) {
         Ok(e) => e,
         Err(err) => {
             eprintln!("[yolo] failed to load model: {err}");

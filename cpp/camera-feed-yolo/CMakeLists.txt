@@ -9,7 +9,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-app-1.0)
 pkg_check_modules(TURBOJPEG REQUIRED libturbojpeg)
 
-# ONNX Runtime is installed under /usr/local by both Dockerfile bases.
+# ONNX Runtime is installed under /usr/local by the Dockerfile variants.
 find_path(ONNXRUNTIME_INCLUDE_DIR
     NAMES onnxruntime/core/session/onnxruntime_cxx_api.h onnxruntime_cxx_api.h
     PATHS /usr/local/include /usr/include

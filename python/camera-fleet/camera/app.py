@@ -16,6 +16,7 @@ All config via env (set by the Dockerfile from template vars):
 import os
 import threading
 import time
+from contextlib import asynccontextmanager
 
 import cv2
 import uvicorn
@@ -29,7 +30,15 @@ HEIGHT = int(os.environ.get("HEIGHT", "720"))
 FPS = int(os.environ.get("FPS", "30"))
 QUALITY = int(os.environ.get("JPEG_QUALITY", "80"))
 
-app = FastAPI(title="usb-camera")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Start the capture thread on startup (replaces the deprecated
+    # @app.on_event("startup") hook).
+    threading.Thread(target=_capture_loop, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="usb-camera", lifespan=lifespan)
 
 # Shared latest-frame state between the capture thread and HTTP handlers.
 _state = {"frame": None, "count": 0, "fps": 0.0, "ok": False, "err": "starting"}
@@ -93,11 +102,6 @@ def _capture_loop():
                 _state["fps"] = round((_state["count"] - win_n0) / (now - win_t0), 1)
                 win_t0 = now
                 win_n0 = _state["count"]
-
-
-@app.on_event("startup")
-def _startup():
-    threading.Thread(target=_capture_loop, daemon=True).start()
 
 
 @app.get("/health")

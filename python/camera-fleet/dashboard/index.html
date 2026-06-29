@@ -82,7 +82,7 @@ function render(){
     lbl.className = "lbl";
     lbl.innerHTML = `<span><span class="dot ${p.status==='ready'?'ok':''}"></span>${p.name}</span>`+
                     `<span>${p.group||""}</span>`;
-    tile.appendChild(img.cloneNode(false) === img ? img : img); // keep the same node (no reconnect)
+    tile.appendChild(img); // reuse the same <img> node so the MJPEG stream isn't reconnected on re-render
     tile.appendChild(lbl);
     rail.appendChild(tile);
   });

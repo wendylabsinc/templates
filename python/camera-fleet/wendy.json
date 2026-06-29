@@ -6,7 +6,7 @@
         "camera": {
             "context": "camera",
             "target": { "group": "{{.CAMERA_GROUP}}" },
-            "service": {
+            "expose": {
                 "name": "usbcam",
                 "port": {{.CAMERA_PORT}},
                 "path": "/stream"
@@ -35,7 +35,7 @@
             },
             "hooks": {
                 "postStart": {
-                    "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.DASHBOARD_PORT}}"
+                    "openURL": "http://${WENDY_HOSTNAME}:{{.DASHBOARD_PORT}}"
                 }
             }
         }

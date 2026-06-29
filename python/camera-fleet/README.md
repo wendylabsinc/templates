@@ -40,7 +40,7 @@ device in a named group (the **edge** tier) plus a single camera-wall dashboard 
 
 ```jsonc
 "components": {
-  "camera":    { "context": "camera",    "target": { "group": "cameras" }, "service": { "port": 8000, "path": "/stream" } },
+  "camera":    { "context": "camera",    "target": { "group": "cameras" }, "expose": { "port": 8000, "path": "/stream" } },
   "dashboard": { "context": "dashboard", "target": { "central": true },    "discovers": [ { "component": "camera", "as": "WENDY_FLEET_PEERS" } ] }
 }
 ```
@@ -52,16 +52,22 @@ When deployed, the platform:
    edge devices, a separate device (a hub or your laptop), or Wendy Cloud.
 2. **Discovers** the live `camera` endpoints (members advertise; membership is dynamic —
    hot-plug / reboot / new device all reflected without a redeploy).
-3. **Auto-wires reachability** so the central tier gets *reachable* URLs regardless of where
-   it runs — LAN-direct when co-located, auto-provisioned cloud tunnels when remote.
+3. **Auto-wires reachability** so the central tier gets a *reachable* `url` regardless of where
+   it runs — LAN-direct when co-located, an auto-provisioned cloud tunnel when remote. Treat
+   `url` as **opaque**: it is a base origin (`scheme://host:port`) you append your own paths to
+   (`/stream`, `/health`); don't assume it is the camera's real host/port.
 4. **Injects** the resolved peers into the dashboard two ways:
    - `WENDY_FLEET_PEERS` — a JSON snapshot at start (inline or a file path):
      ```json
-     [{ "name": "device-1", "url": "http://…:8000", "group": "cameras", "status": "ready" }]
+     [{ "name": "device-1", "url": "http://…", "group": "cameras", "status": "ready" }]
      ```
    - `WENDY_DISCOVERY_URL` — a local discovery API the app polls for **live** membership.
+     **Auto-injected** whenever a component declares `discovers` (not something you put in the
+     manifest).
 5. Secures tier-to-tier traffic with the **existing WendyOS mTLS** (cert/enrollment, `+1`
-   port offset) — no new security posture.
+   port offset). The mTLS boundary is agent↔agent: it applies to the **remote hop** (when the
+   central tier reaches an edge over a cloud tunnel). When central and edge are co-located on
+   the LAN, `url` is the edge's plain host port in the same trust domain — no app-level mTLS.
 
 `dashboard/serve.py` consumes exactly that contract; `dashboard/index.html` renders purely
 from `GET /api/peers`. That's the whole "after" story: **the dashboard self-populates from

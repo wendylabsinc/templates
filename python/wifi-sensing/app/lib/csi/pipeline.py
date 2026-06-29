@@ -39,8 +39,16 @@ class Pipeline:
         self.store.add(frame)
 
     async def run(self, source: CSISource) -> None:
-        """Start the source and drain its frames into buffers until cancelled."""
-        await source.start()
+        """Start the source and drain its frames into buffers until cancelled.
+
+        A bind failure is logged but does not crash the app — the dashboard still
+        serves and reports no sensors.
+        """
+        try:
+            await source.start()
+        except OSError as exc:
+            log.error("CSI ingest could not bind UDP %s: %s", self.config.udp_port, exc)
+            return
         log.info("CSI ingest listening on UDP %s", self.config.udp_port)
         async for payload in source.frames():
             self.ingest(payload)

@@ -14,6 +14,7 @@ _EPS = 1e-9
 _MOTION_SUPPRESS = 0.5  # above this motion level, vitals are unreliable
 _CONF_FLOOR = 0.15  # below this, a rate estimate is reported as None
 _RATE_CONF_SCALE = 10.0  # maps peak/mean band ratio to a 0..1 confidence
+_MOTION_RATIO_SCALE = 0.5  # diff/total variance ratio that maps to full motion
 
 
 def select_subcarriers(amps: np.ndarray, top_k: int | None = None) -> np.ndarray:
@@ -41,16 +42,24 @@ def baseline_variance(amps: np.ndarray) -> float:
 def presence_motion(
     amps: np.ndarray, baseline: float | None, threshold: float
 ) -> tuple[bool, float]:
-    """Return ``(occupied, motion)`` from amplitude variance vs. a calibrated baseline.
+    """Return ``(occupied, motion)`` from amplitude statistics vs. a calibrated baseline.
 
-    ``baseline`` is the empty-room variance from calibration; when ``None`` a small
-    default floor is used so the app still works before calibration.
+    Occupancy comes from total amplitude variance vs. the empty-room ``baseline``
+    (sensitive enough to flag a still, breathing person). Motion is the ratio of
+    sample-to-sample change energy to total variance, which stays low for slow
+    breathing and rises for gross movement — so it can gate vitals without
+    suppressing them on a still subject. ``baseline`` ``None`` uses a small floor.
     """
     base = baseline if baseline and baseline > _EPS else 0.05
-    var = baseline_variance(amps)
-    occupied = var > base * threshold
-    excess_ratio = max(var - base, 0.0) / max(base, _EPS)
-    motion = float(np.clip(np.log1p(excess_ratio) / np.log1p(threshold * 100.0), 0.0, 1.0))
+    idx = select_subcarriers(amps)
+    if idx.size == 0 or amps.shape[0] < 2:
+        return False, 0.0
+    sel = amps[:, idx]
+    total_var = float(sel.var(axis=0).mean())
+    occupied = total_var > base * threshold
+    diff_var = float(np.diff(sel, axis=0).var(axis=0).mean())
+    ratio = diff_var / (total_var + _EPS)
+    motion = float(np.clip(ratio / _MOTION_RATIO_SCALE, 0.0, 1.0))
     return occupied, motion
 
 

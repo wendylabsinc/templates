@@ -46,6 +46,33 @@ def test_odd_array_returns_none():
     assert parse_csi_data(bad) is None
 
 
+# ESP32-C6 / C5 short layout: CSI_DATA,seq,mac,rssi,rate,noise_floor,fft_gain,
+# agc_gain,channel,local_timestamp,sig_len,rx_format,len,first_word,"[data]"
+C6_SAMPLE = (
+    'CSI_DATA,7,20:6e:f1:19:90:90,-55,11,-97,0,0,6,12345,128,1,8,0,'
+    '"[3,4,0,5,-3,4,6,8]"'
+)
+
+
+def test_parses_c6_layout_channel_at_index_8():
+    f = parse_csi_data(C6_SAMPLE)
+    assert f is not None
+    assert f.link_id == "20:6e:f1:19:90:90"
+    assert f.rssi == -55
+    assert f.channel == 6  # C6 layout: channel is field 8, not 16
+    assert np.allclose(f.amplitudes, [5, 5, 5, 10])
+
+
+def test_quoted_array_is_parsed():
+    f = parse_csi_data(C6_SAMPLE)
+    assert f is not None and f.amplitudes.shape[0] == 4
+
+
+def test_csi_header_line_returns_none():
+    header = "type,seq,mac,rssi,rate,noise_floor,fft_gain,agc_gain,channel,local_timestamp,sig_len,rx_format,len,first_word,data"
+    assert parse_csi_data(header) is None
+
+
 def test_empty_array_returns_none():
     bad = SAMPLE.replace("[3,4,0,5,-3,4,6,8]", "[]")
     assert parse_csi_data(bad) is None

@@ -14,15 +14,23 @@ import numpy as np
 
 from app.lib.csi.types import CSIFrame
 
-# Column indices within the CSV portion (before the '[' array).
+# Column indices within the CSV portion (before the '[' array). ``mac`` and
+# ``rssi`` are identical across firmware variants; only the channel position
+# differs between the long (ESP32/S3) and short (C6/C5/C61) esp-csi layouts.
 _COL_MAC = 2
 _COL_RSSI = 3
-_COL_CHANNEL = 16
-_MIN_COLS = 17  # need at least through the channel column
+_COL_CHANNEL_LONG = 16   # ESP32 / ESP32-S3 layout (>= 20 columns)
+_COL_CHANNEL_SHORT = 8   # ESP32-C6 / C5 / C61 layout (~14 columns)
+_MIN_COLS = 4            # need at least through the rssi column
 
 
 def parse_csi_data(payload: bytes | str, timestamp: float = 0.0) -> CSIFrame | None:
-    """Parse one ``CSI_DATA`` record. Returns ``None`` on any malformed input."""
+    """Parse one ``CSI_DATA`` record. Returns ``None`` on any malformed input.
+
+    Handles both esp-csi CSV layouts: the long ESP32/S3 form (channel at field
+    16) and the short ESP32-C6/C5 form (channel at field 8). The CSI array may
+    be quoted (``"[...]"``) — keying off the brackets handles either.
+    """
     try:
         text = payload.decode("ascii", "ignore") if isinstance(payload, bytes) else payload
         text = text.strip()
@@ -40,13 +48,14 @@ def parse_csi_data(payload: bytes | str, timestamp: float = 0.0) -> CSIFrame | N
         if len(ints) == 0 or len(ints) % 2 != 0:
             return None
 
-        cols = head.rstrip(", ").split(",")
+        cols = head.rstrip(', "').split(",")
         if len(cols) < _MIN_COLS:
             return None
 
         link_id = cols[_COL_MAC].strip()
         rssi = int(cols[_COL_RSSI])
-        channel = int(cols[_COL_CHANNEL])
+        chan_idx = _COL_CHANNEL_LONG if len(cols) >= 20 else _COL_CHANNEL_SHORT
+        channel = int(cols[chan_idx]) if len(cols) > chan_idx else 0
         if not link_id:
             return None
 

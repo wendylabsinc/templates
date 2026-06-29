@@ -114,8 +114,18 @@ Or **Claude Desktop** (`claude_desktop_config.json`):
     "env": { "SENSING_WS": "ws://<device>:3001/ws/sensing" } } } }
 ```
 
-The `network` entitlement in `wendy.json` already covers the MCP server reaching
-the stream (and being reachable in `--http` mode).
+### WendyOS `mcp` entitlement (built in)
+
+The app ships the MCP server and declares the WendyOS **`mcp` entitlement** in
+`wendy.json` (`{ "type": "mcp", "port": 8000 }`). On `wendy run`, `start.sh`
+launches the dashboard **and** the MCP server bound to **`127.0.0.1:8000`** — the
+agent's MCP proxy (`StreamMCP`, dialing `127.0.0.1:<port>`) exposes it over the
+secure Wendy channel, so the MCP port is **never published on the LAN**.
+
+By default the on-device MCP server reads this app's own stream
+(`ws://127.0.0.1:{{.PORT}}/ws/stream`); set `SENSING_WS` to point it at another
+source (e.g. a ruview stream on the same device). The `network` entitlement
+covers reaching the stream.
 
 ## Limitations & seams
 

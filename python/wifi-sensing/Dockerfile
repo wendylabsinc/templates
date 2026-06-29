@@ -23,6 +23,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 COPY app/ ./app/
+COPY mcp/ ./mcp/
+COPY start.sh ./start.sh
+RUN chmod +x start.sh
 COPY --from=frontend /frontend/dist ./static
 
 ARG WENDY_DEVICE_TYPE
@@ -33,5 +36,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     if [ "$WENDY_DEBUG" = "true" ]; then pip install debugpy; fi
 
 EXPOSE {{.PORT}}
+EXPOSE 8000
 
-CMD ["/app/venv/bin/uvicorn", "app:api", "--host", "0.0.0.0", "--port", "{{.PORT}}"]
+CMD ["/app/start.sh"]

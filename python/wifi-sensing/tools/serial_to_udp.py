@@ -28,7 +28,15 @@ def main() -> None:
     args = ap.parse_args()
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    ser = serial.Serial(args.serial, args.baud, timeout=1)
+    # Open without asserting DTR/RTS — on ESP32-C6/C5 USB-Serial/JTAG those
+    # lines drive the reset/boot strapping and can hold the chip in reset.
+    ser = serial.Serial()
+    ser.port = args.serial
+    ser.baudrate = args.baud
+    ser.timeout = 1
+    ser.dtr = False
+    ser.rts = False
+    ser.open()
     dest = (args.host, args.port)
     print(f"Bridging {args.serial}@{args.baud} -> udp://{args.host}:{args.port}")
 

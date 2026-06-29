@@ -137,7 +137,10 @@ async def raw_frame() -> dict:
 
 if __name__ == "__main__":
     if "--http" in sys.argv:
-        mcp.settings.host = "0.0.0.0"
+        # Bind localhost by default: under the WendyOS `mcp` entitlement the agent
+        # dials 127.0.0.1:<port> and proxies the server over its secure channel,
+        # so the MCP port is never exposed on the LAN.
+        mcp.settings.host = os.environ.get("MCP_HOST", "127.0.0.1")
         mcp.settings.port = int(os.environ.get("MCP_PORT", "8000"))
         mcp.run(transport="streamable-http")
     else:

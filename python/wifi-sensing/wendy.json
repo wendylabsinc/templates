@@ -11,6 +11,10 @@
             "type": "persist",
             "name": "{{.APP_ID}}-data",
             "path": "/data"
+        },
+        {
+            "type": "mcp",
+            "port": 8000
         }
     ],
     "readiness": {

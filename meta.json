@@ -46,6 +46,12 @@
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]
+        },
+        {
+            "name": "isaac-sim-rl",
+            "description": "Isaac Sim / IsaacLab RL training app with selectable robot profiles, RSL-RL, persistent logs, checkpoints, and sim-to-real handoff notes",
+            "targets": ["wendyos"],
+            "languages": ["python"]
         }
     ],
     "languages": [

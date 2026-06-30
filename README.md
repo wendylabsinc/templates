@@ -85,6 +85,34 @@ Interactive init shows a model picker with `model`, `size`, `parameters`, and `c
 wendy init --app-id llm --target wendyos --language python --template llm --assistant skip --git-init no
 ```
 
+### isaac-sim-rl
+
+Isaac Sim / IsaacLab RL training app with RSL-RL, GPU access, and persistent
+training logs under `/logs`. The template starts from a robot profile, then
+resolves that profile to an IsaacLab task id. The task id, experiment name,
+Isaac Sim image, IsaacLab ref, environment count, and training iterations are
+all template variables.
+
+| Language | Framework | Default Task | Directory |
+|----------|-----------|--------------|-----------|
+| Python | Isaac Sim 5.1.0 + IsaacLab v2.3.2 + RSL-RL | `unitree-go2-flat` | `python/isaac-sim-rl/` |
+
+```bash
+wendy init \
+  --app-id unitree-isaac \
+  --target wendyos \
+  --language python \
+  --template isaac-sim-rl \
+  --assistant skip \
+  --git-init no
+```
+
+Use `--var ROBOT_PROFILE=...`, `--var TASK_ID=...`,
+`--var EXPERIMENT_NAME=...`, `--var NUM_ENVS=...`, and
+`--var MAX_ITERATIONS=...` to make smaller smoke tests or point at a custom
+IsaacLab task. The generated app includes a local task-registration hook under
+`source/local_isaac_tasks/` for robot-specific tasks and non-walking workflows.
+
 ### common
 
 Shared building blocks (not selectable as templates):

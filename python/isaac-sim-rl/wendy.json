@@ -1,0 +1,10 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        { "type": "gpu" },
+        { "type": "network", "mode": "host" },
+        { "type": "persist", "name": "{{.APP_ID}}-logs", "path": "/logs" }
+    ]
+}

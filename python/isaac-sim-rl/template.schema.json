@@ -1,0 +1,47 @@
+{
+    "phases": [
+        {
+            "id": "training",
+            "title": "Robot and training defaults",
+            "questions": [
+                {
+                    "id": "ROBOT_PROFILE",
+                    "label": "Robot profile",
+                    "type": "radio",
+                    "required": true,
+                    "default": "unitree-go2-flat",
+                    "options": [
+                        {
+                            "value": "unitree-go2-flat",
+                            "label": "Unitree Go2 flat",
+                            "comments": "Built-in IsaacLab velocity locomotion task for a first deployable training run."
+                        },
+                        {
+                            "value": "unitree-go2-rough",
+                            "label": "Unitree Go2 rough",
+                            "comments": "Built-in rough-terrain velocity locomotion task."
+                        },
+                        {
+                            "value": "cartpole-smoke",
+                            "label": "Cartpole smoke test",
+                            "comments": "Small non-robot sanity check for build and trainer plumbing."
+                        },
+                        {
+                            "value": "custom-unitree",
+                            "label": "Custom Unitree task",
+                            "comments": "Use this for G1, H1, B2, or a custom robot task registered under source/local_isaac_tasks."
+                        }
+                    ]
+                },
+                {
+                    "id": "TASK_ID",
+                    "label": "IsaacLab task id",
+                    "type": "text",
+                    "required": true,
+                    "default": "auto",
+                    "comments": "Leave as auto for built-in profiles, or enter a custom registered IsaacLab/Gymnasium task id."
+                }
+            ]
+        }
+    ]
+}

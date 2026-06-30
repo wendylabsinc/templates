@@ -47,8 +47,12 @@ let peers = [];
 let selected = null;          // peer.name
 const imgs = {};              // name -> live <img> in the rail (moved into main when selected)
 
-const streamUrl = p => p.url.replace(/\/$/, "") + "/stream";
-const healthUrl = p => p.url.replace(/\/$/, "") + "/health";
+// Route through the dashboard's same-origin proxy: browsers block cross-origin
+// LAN MJPEG loaded from a localhost page (Chrome Private Network Access), so the
+// server fetches the stream and relays it.
+const proxied = ep => "/proxy?target=" + encodeURIComponent(ep);
+const streamUrl = p => proxied(p.url.replace(/\/$/, "") + "/stream");
+const healthUrl = p => proxied(p.url.replace(/\/$/, "") + "/health");
 
 async function refresh(){
   try{

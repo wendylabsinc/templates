@@ -25,6 +25,7 @@ import json
 import os
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -82,7 +83,40 @@ class Handler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path.startswith("/proxy"):
+            self._proxy()
+            return
         return super().do_GET()
+
+    def _proxy(self):
+        """Same-origin reverse proxy to a discovered peer endpoint. Browsers
+        refuse to load cross-origin LAN MJPEG from a localhost page (Chrome
+        Private Network Access), so the page requests /proxy?target=<peer url>
+        and we stream it back from here — only the server talks to the LAN."""
+        target = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("target", [""])[0]
+        with _peers_lock:
+            origins = [p.get("url", "").rstrip("/") for p in _peers if p.get("url")]
+        if not any(target == o or target.startswith(o + "/") for o in origins):
+            self.send_error(403, "target is not a discovered peer")
+            return
+        try:
+            upstream = urllib.request.urlopen(target, timeout=10)  # noqa: S310 (validated above)
+        except Exception as e:  # noqa: BLE001
+            self.send_error(502, f"upstream error: {e}")
+            return
+        self.send_response(200)
+        self.send_header("content-type", upstream.headers.get("content-type", "application/octet-stream"))
+        self.end_headers()
+        try:
+            while True:
+                chunk = upstream.read(65536)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client (browser) closed the stream tab/tile
+        finally:
+            upstream.close()
 
     def log_message(self, *a):
         pass

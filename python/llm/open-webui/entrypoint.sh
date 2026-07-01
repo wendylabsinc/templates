@@ -7,13 +7,19 @@ export WEBUI_AUTH="${WEBUI_AUTH:-False}"
 export ENABLE_PERSISTENT_CONFIG="${ENABLE_PERSISTENT_CONFIG:-False}"
 export WEBUI_NAME="${WEBUI_NAME:-Wendy}"
 
-# On a Wendy device each compose service runs in its own network namespace,
-# so the Docker service-name URL from docker-compose.yml does not resolve.
-# The ollama service publishes 11434 on the device host, so point at it via
-# the agent-injected device hostname instead (see the README).
-if [[ -n "${WENDY_DEVICE_HOSTNAME:-}" && "${OLLAMA_BASE_URL:-}" == "http://ollama:11434" ]]; then
-  export OLLAMA_BASE_URL="http://${WENDY_DEVICE_HOSTNAME}:11434"
-  echo "Wendy device detected; OLLAMA_BASE_URL=${OLLAMA_BASE_URL}"
+# On WendyOS app groups do not get Docker Compose's service-name DNS, so the
+# local Compose URL (http://ollama:11434) is not usable from Open WebUI. Avoid
+# rewriting to the device's .local hostname here: containers do not reliably
+# have mDNS NSS support even when the host advertises itself with Avahi. The
+# Ollama service publishes 11434 on the shared device network stack, making
+# loopback the stable in-app route.
+if [[ -n "${WENDY_HOSTNAME:-}" ]]; then
+  case "${OLLAMA_BASE_URL:-}" in
+    "http://ollama:11434"|"http://${WENDY_HOSTNAME}:11434")
+      export OLLAMA_BASE_URL="http://127.0.0.1:11434"
+      echo "Wendy device detected; OLLAMA_BASE_URL=${OLLAMA_BASE_URL}"
+      ;;
+  esac
 fi
 
 BRAND_PYTHON="/root/.local/share/uv/tools/open-webui/bin/python"

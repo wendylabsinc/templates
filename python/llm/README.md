@@ -64,11 +64,13 @@ The first start downloads the model in the background — watch the `[ollama]`
 log lines for pull progress. The model list in the UI populates once the pull
 completes.
 
-> On the device each service runs in its own network namespace, so the
-> Docker service-name URL (`http://ollama:11434`) does not resolve. The
-> `open-webui` entrypoint detects the agent-injected `WENDY_DEVICE_HOSTNAME`
-> and rewrites `OLLAMA_BASE_URL` to reach Ollama's host-published port
-> instead.
+> On WendyOS, app groups do not get Docker Compose's service-name DNS, so
+> the local Compose URL (`http://ollama:11434`) does not resolve from Open
+> WebUI. The entrypoint rewrites that URL to `http://127.0.0.1:11434` on
+> device because Ollama publishes its API on the shared device network stack.
+> This deliberately avoids the device's `.local` hostname: mDNS works on the
+> host for discovery, but app containers do not reliably include the NSS/mDNS
+> pieces needed to resolve `.local` names from inside the container.
 
 > Compose app groups do not yet support Wendy readiness probes or
 > `postStart` hooks, so the browser is not opened automatically.

@@ -57,6 +57,20 @@ Live Intel RealSense D415 multi-stream viewer: color, left IR, right IR, and col
 
 The shared viewer frontend source lives at `common/realsense-camera-frontend/` and is vendored into both language template directories.
 
+### ros2-talker-listener
+
+The canonical ROS 2 `talker` / `listener` demo in Swift, built on
+[swift-ros2](https://github.com/youtalk/swift-ros2) — a pure-Swift ROS 2 client
+that speaks the ROS 2 (Humble) wire format directly over CycloneDDS, with no
+`rclcpp` or C++ interop. A two-service app group: a `std_msgs/String` publisher
+on `/chatter` and a subscriber that logs what it hears.
+
+| Language | Framework | Directory |
+|----------|-----------|-----------|
+| Swift | swift-ros2 1.2.0 + CycloneDDS (ROS 2 Humble) | `swift/ros2-talker-listener/` |
+
+Deploy with `wendy run` and watch the exchange via `wendy device logs`.
+
 ### audio
 
 Live audio waveform visualization with GStreamer mic capture. Streams raw PCM S16LE 16kHz mono over WebSocket. Includes sample .wav files for playback. Entitlements: network (host), audio.

@@ -1,0 +1,21 @@
+{
+    "appId": "{{.APP_ID}}",
+    "components": {
+        "camera": {
+            "path": "camera",
+            "tags": ["{{.CAMERA_GROUP}}"],
+            "expose": {
+                "name": "usbcam",
+                "port": {{.CAMERA_PORT}},
+                "path": "/stream"
+            }
+        },
+        "dashboard": {
+            "path": "dashboard",
+            "tags": ["central"],
+            "discovers": [
+                { "component": "camera", "as": "WENDY_FLEET_PEERS" }
+            ]
+        }
+    }
+}

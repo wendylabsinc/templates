@@ -1,0 +1,13 @@
+{
+    "appId": "{{.APP_ID}}.camera",
+    "version": "0.1.0",
+    "platform": "linux/arm64",
+    "entitlements": [
+        { "type": "network", "mode": "host" },
+        { "type": "camera" }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.CAMERA_PORT}} },
+        "timeoutSeconds": 30
+    }
+}

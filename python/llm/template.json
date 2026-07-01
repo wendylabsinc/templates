@@ -16,6 +16,13 @@
             "default": 8080,
             "prompt": "HTTP port",
             "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "OLLAMA_MODEL",
+            "description": "Ollama model to pull on first start (see template.schema.json for the full picker)",
+            "type": "string",
+            "default": "gemma4:e2b",
+            "prompt": "Ollama model"
         }
     ]
 }

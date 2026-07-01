@@ -13,9 +13,9 @@ export WEBUI_NAME="${WEBUI_NAME:-Wendy}"
 # have mDNS NSS support even when the host advertises itself with Avahi. The
 # Ollama service publishes 11434 on the shared device network stack, making
 # loopback the stable in-app route.
-if [[ -n "${WENDY_DEVICE_HOSTNAME:-}" ]]; then
+if [[ -n "${WENDY_HOSTNAME:-}" ]]; then
   case "${OLLAMA_BASE_URL:-}" in
-    "http://ollama:11434"|"http://${WENDY_DEVICE_HOSTNAME}:11434")
+    "http://ollama:11434"|"http://${WENDY_HOSTNAME}:11434")
       export OLLAMA_BASE_URL="http://127.0.0.1:11434"
       echo "Wendy device detected; OLLAMA_BASE_URL=${OLLAMA_BASE_URL}"
       ;;

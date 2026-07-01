@@ -78,6 +78,21 @@
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
             "languages": ["python"]
+        },
+        {
+            "name": "go2-inspect",
+            "description": "Open-vocabulary object inspection over the Unitree Go2's WebRTC camera: describe what to look for in plain English, run YOLOE detection, and capture annotated crops + a report from a browser",
+            "languages": ["python"]
+        },
+        {
+            "name": "go2-map-zones",
+            "description": "Segment a saved occupancy map (.npz or nav2 .pgm+.yaml) into labelled navigable zones via watershed, with a browser UI — an offline map utility that pairs with a Go2 SLAM/mapping source",
+            "languages": ["python"]
+        },
+        {
+            "name": "go2-mcp-control",
+            "description": "Drive the Unitree Go2 in natural language through Claude: a 2-service app group (SportClient motion over DDS + a FastMCP-over-HTTP server exposing the dog's motion/gesture tools)",
+            "languages": ["python"]
         }
     ],
     "languages": [

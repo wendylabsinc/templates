@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>go2-map-zones</title>
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --panel: rgba(20, 24, 30, 0.85);
+        --panel-edge: rgba(255, 255, 255, 0.08);
+        --fg: #f4f6f8;
+        --muted: #8b95a3;
+        --accent: #4ea7ff;
+        --ok: #43c581;
+        --warn: #f0a23c;
+        --danger: #ef4444;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        line-height: 1.45;
+      }
+      header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--panel-edge);
+      }
+      header h1 { margin: 0; font-size: 1.25rem; }
+      header p { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }
+      main {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 20px;
+        padding: 20px 24px;
+        align-items: start;
+      }
+      @media (max-width: 780px) { main { grid-template-columns: 1fr; } }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--panel-edge);
+        border-radius: 12px;
+        padding: 16px;
+      }
+      h2 { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 12px; }
+      #drop {
+        border: 1.5px dashed var(--panel-edge);
+        border-radius: 10px;
+        padding: 22px 12px;
+        text-align: center;
+        color: var(--muted);
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      #drop.hover { border-color: var(--accent); background: rgba(78, 167, 255, 0.06); color: var(--fg); }
+      #drop b { color: var(--fg); }
+      .files { margin: 12px 0; font-size: 0.85rem; }
+      .files div { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; }
+      .files .name { color: var(--fg); word-break: break-all; }
+      .files .kind { color: var(--accent); flex: none; }
+      label.param { display: block; margin: 12px 0; font-size: 0.85rem; color: var(--muted); }
+      label.param input {
+        width: 100%;
+        margin-top: 4px;
+        background: #12161b;
+        border: 1px solid var(--panel-edge);
+        color: var(--fg);
+        border-radius: 8px;
+        padding: 7px 9px;
+        font-size: 0.9rem;
+      }
+      button {
+        width: 100%;
+        margin-top: 8px;
+        padding: 11px;
+        border: none;
+        border-radius: 9px;
+        background: var(--accent);
+        color: #06121f;
+        font-weight: 700;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #status { margin-top: 10px; font-size: 0.85rem; min-height: 1.2em; }
+      #status.err { color: var(--danger); }
+      #status.ok { color: var(--ok); }
+      #viz { width: 100%; border-radius: 10px; display: none; background: #000; }
+      table { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 12px; }
+      th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--panel-edge); }
+      th { color: var(--muted); font-weight: 600; }
+      td.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; color: var(--muted); }
+      .empty { color: var(--muted); font-size: 0.9rem; }
+      .dl { display: inline-block; margin-top: 12px; color: var(--accent); font-size: 0.85rem; text-decoration: none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>go2-map-zones</h1>
+      <p>Segment an occupancy map into labelled, navigable zones. Upload an <b>.npz</b> or a nav2 <b>.pgm + .yaml</b> pair.</p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>1 · Map</h2>
+        <div id="drop">
+          <div><b>Drop a map here</b> or click to pick</div>
+          <div style="font-size:0.78rem;margin-top:6px">.npz &nbsp;·&nbsp; or .pgm + .yaml together</div>
+        </div>
+        <input id="picker" type="file" accept=".npz,.pgm,.yaml,.yml" multiple hidden />
+        <div class="files" id="files"></div>
+
+        <h2 style="margin-top:18px">2 · Tuning</h2>
+        <label class="param">
+          core_dist_m — min open-space radius to seed a room (m)
+          <input id="core_dist_m" type="number" step="0.1" value="1.6" />
+        </label>
+        <label class="param">
+          min_area_m2 — drop zones smaller than this (m²)
+          <input id="min_area_m2" type="number" step="0.5" value="6.0" />
+        </label>
+        <label class="param">
+          island_max_m2 — free-standing props up to this size are filled in (m²)
+          <input id="island_max_m2" type="number" step="0.5" value="2.5" />
+        </label>
+
+        <button id="go">Segment</button>
+        <div id="status"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Zones</h2>
+        <img id="viz" alt="segmentation visualization" />
+        <a id="dl" class="dl" style="display:none" href="#" download="zones.yaml">↓ download zones.yaml</a>
+        <div id="table"><p class="empty">No segmentation yet — upload a map and hit Segment.</p></div>
+      </section>
+    </main>
+
+    <script>
+      const drop = document.getElementById("drop");
+      const picker = document.getElementById("picker");
+      const filesEl = document.getElementById("files");
+      const statusEl = document.getElementById("status");
+      const go = document.getElementById("go");
+      const viz = document.getElementById("viz");
+      const dl = document.getElementById("dl");
+      const tableEl = document.getElementById("table");
+
+      // Selected files, keyed by role. The segmenter accepts either one .npz,
+      // or a .pgm + .yaml pair — we sort each dropped file into its slot by
+      // extension so the user can just drop everything at once.
+      let selected = { npz: null, pgm: null, yaml: null };
+
+      function classify(file) {
+        const n = file.name.toLowerCase();
+        if (n.endsWith(".npz")) return "npz";
+        if (n.endsWith(".pgm")) return "pgm";
+        if (n.endsWith(".yaml") || n.endsWith(".yml")) return "yaml";
+        return null;
+      }
+
+      function addFiles(list) {
+        for (const f of list) {
+          const role = classify(f);
+          if (!role) { setStatus(`ignored ${f.name} (need .npz, .pgm or .yaml)`, "err"); continue; }
+          // Choosing an .npz clears any pgm/yaml and vice-versa — the two
+          // input modes are mutually exclusive.
+          if (role === "npz") selected = { npz: f, pgm: null, yaml: null };
+          else { selected.npz = null; selected[role] = f; }
+        }
+        renderFiles();
+      }
+
+      function renderFiles() {
+        const rows = [];
+        for (const [role, f] of Object.entries(selected)) {
+          if (f) rows.push(`<div><span class="name">${f.name}</span><span class="kind">${role}</span></div>`);
+        }
+        filesEl.innerHTML = rows.join("") || "";
+      }
+
+      function setStatus(msg, cls = "") { statusEl.textContent = msg; statusEl.className = cls; }
+
+      drop.addEventListener("click", () => picker.click());
+      picker.addEventListener("change", () => addFiles(picker.files));
+      ["dragover", "dragenter"].forEach((e) =>
+        drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.add("hover"); })
+      );
+      ["dragleave", "drop"].forEach((e) =>
+        drop.addEventListener(e, (ev) => { ev.preventDefault(); drop.classList.remove("hover"); })
+      );
+      drop.addEventListener("drop", (ev) => addFiles(ev.dataTransfer.files));
+
+      go.addEventListener("click", async () => {
+        const fd = new FormData();
+        if (selected.npz) {
+          fd.append("npz", selected.npz);
+        } else if (selected.pgm && selected.yaml) {
+          fd.append("pgm", selected.pgm);
+          fd.append("yaml", selected.yaml);
+        } else {
+          setStatus("select an .npz, or both a .pgm and its .yaml", "err");
+          return;
+        }
+        fd.append("core_dist_m", document.getElementById("core_dist_m").value);
+        fd.append("min_area_m2", document.getElementById("min_area_m2").value);
+        fd.append("island_max_m2", document.getElementById("island_max_m2").value);
+
+        go.disabled = true;
+        setStatus("segmenting…");
+        try {
+          const r = await fetch("/api/segment", { method: "POST", body: fd });
+          const body = await r.json();
+          if (!r.ok) throw new Error(body.detail || r.statusText);
+          render(body);
+          setStatus(`found ${body.count} zone(s)`, "ok");
+        } catch (err) {
+          setStatus(String(err.message || err), "err");
+        } finally {
+          go.disabled = false;
+        }
+      });
+
+      function render(body) {
+        // cache-bust the image (the id is unique per run, but be safe)
+        viz.src = body.viz_url + "?t=" + Date.now();
+        viz.style.display = "block";
+        dl.href = body.yaml_url;
+        dl.style.display = "inline-block";
+        if (!body.zones.length) {
+          tableEl.innerHTML = '<p class="empty">No zones met the size threshold — try a smaller min_area_m2.</p>';
+          return;
+        }
+        const rows = body.zones
+          .map(
+            (z) => `<tr>
+              <td>${z.id}</td>
+              <td>${z.label}</td>
+              <td class="mono">${z.area}</td>
+              <td class="mono">${z.center[0]}, ${z.center[1]}</td>
+              <td class="mono">${z.nav_point[0]}, ${z.nav_point[1]}</td>
+            </tr>`
+          )
+          .join("");
+        tableEl.innerHTML = `<table>
+          <thead><tr><th>id</th><th>label</th><th>area m²</th><th>center x,y</th><th>nav_point x,y</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+      }
+    </script>
+  </body>
+</html>

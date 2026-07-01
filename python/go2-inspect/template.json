@@ -1,0 +1,35 @@
+{
+    "name": "go2-inspect",
+    "description": "Open-vocabulary object inspection over the Unitree Go2's front camera: describe what to look for in plain English, watch an annotated live stream, and capture annotated frames + per-object crops into a report.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "INSPECT_PORT",
+            "description": "Port for the inspection web UI — open http://<device>:<port> in a browser",
+            "type": "integer",
+            "default": 3400,
+            "prompt": "Inspection UI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "GO2_IP",
+            "description": "Go2 main-controller IP — the WebRTC camera source",
+            "type": "string",
+            "default": "192.168.123.161",
+            "prompt": "Go2 main-controller IP — the WebRTC camera source"
+        },
+        {
+            "name": "NETWORK_INTERFACE",
+            "description": "NIC on the deploy host that has the 192.168.123.0/24 address. On the Go2's onboard Jetson this is normally 'eth0'.",
+            "type": "string",
+            "default": "eth0",
+            "prompt": "CycloneDDS / SDK network interface"
+        }
+    ]
+}

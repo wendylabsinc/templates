@@ -1,0 +1,35 @@
+{
+    "name": "go2-mcp-control",
+    "description": "Drive the Unitree Go2 EDU in natural language through Claude: a 2-service app group (motion API over DDS + a FastMCP-over-HTTP server exposing the dog's motion/gesture surface as MCP tools).",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "MCP_PORT",
+            "description": "Port the FastMCP HTTP server listens on — register it with `claude mcp add --transport http go2 http://<device>:<port>/mcp`",
+            "type": "integer",
+            "default": 3450,
+            "prompt": "MCP server HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "GO2_IP",
+            "description": "Go2 main-controller IP on the 192.168.123.0/24 network",
+            "type": "string",
+            "default": "192.168.123.161",
+            "prompt": "Go2 main-controller IP"
+        },
+        {
+            "name": "NETWORK_INTERFACE",
+            "description": "NIC on the deploy host that has the 192.168.123.0/24 address. On the Go2's onboard Jetson this is normally 'eth0'.",
+            "type": "string",
+            "default": "eth0",
+            "prompt": "CycloneDDS / SDK network interface"
+        }
+    ]
+}

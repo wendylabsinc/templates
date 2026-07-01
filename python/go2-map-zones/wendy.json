@@ -1,0 +1,13 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "zones": {
+            "context": "./zones",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    }
+}

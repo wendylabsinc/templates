@@ -1,0 +1,4 @@
+# FastMCP 2.x — streamable-HTTP transport (mcp.run(transport="http", ...)),
+# served at /mcp. 2.3 is the floor where the "http" transport alias exists.
+fastmcp>=2.3
+httpx>=0.27

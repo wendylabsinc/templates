@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>go2-inspect</title>
+  <style>
+    :root {
+      --bg: #0d1117; --panel: #161b22; --border: #30363d;
+      --fg: #e6edf3; --muted: #8b949e; --accent: #2f81f7; --ok: #3fb950; --warn: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+    #status { margin-left: auto; font-size: 12px; color: var(--muted); }
+    #status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+      background: var(--warn); margin-right: 5px; vertical-align: middle; }
+    #status.ok .dot { background: var(--ok); }
+    main { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; padding: 16px; }
+    @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; }
+    .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em;
+      color: var(--muted); margin: 0 0 10px; }
+    #view { width: 100%; background: #000; border-radius: 6px; display: block; aspect-ratio: 16/9;
+      object-fit: contain; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    button {
+      background: var(--accent); color: #fff; border: 0; border-radius: 6px;
+      padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer;
+    }
+    button.secondary { background: #21262d; border: 1px solid var(--border); color: var(--fg); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    textarea {
+      width: 100%; min-height: 120px; resize: vertical; background: var(--bg);
+      color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px;
+      font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .toggle button { background: #21262d; border: 0; border-radius: 0; color: var(--muted); font-weight: 500; }
+    .toggle button.active { background: var(--accent); color: #fff; }
+    ul.det { list-style: none; margin: 8px 0 0; padding: 0; }
+    ul.det li { display: flex; justify-content: space-between; padding: 4px 0;
+      border-bottom: 1px solid var(--border); font-size: 13px; }
+    ul.det li .conf { color: var(--muted); }
+    .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+    .gallery figure { margin: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+    .gallery img { width: 100%; display: block; aspect-ratio: 16/9; object-fit: cover; }
+    .gallery figcaption { font-size: 11px; color: var(--muted); padding: 4px 6px; }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>go2-inspect</h1>
+    <div class="toggle" id="mode">
+      <button data-mode="annotated" class="active">Annotated</button>
+      <button data-mode="raw">Raw</button>
+    </div>
+    <span id="status"><span class="dot"></span><span id="statusText">connecting…</span></span>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>Live camera</h2>
+      <img id="view" alt="camera stream" />
+      <div class="row">
+        <button id="captureBtn">📸 Capture</button>
+        <span class="hint" id="captureHint">Point the dog, then capture an annotated snapshot.</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Detection prompts</h2>
+      <textarea id="prompts" placeholder="one object per line, e.g.&#10;person&#10;fire extinguisher&#10;spill on the floor"></textarea>
+      <div class="row">
+        <button id="setPromptsBtn">Set prompts</button>
+        <span class="hint">Open-vocabulary — describe anything in plain English.</span>
+      </div>
+
+      <h2 style="margin-top:18px">Last capture</h2>
+      <ul class="det" id="detList"><li><span class="conf">no captures yet</span></li></ul>
+    </section>
+
+    <section class="panel" style="grid-column:1/-1">
+      <h2>Captures</h2>
+      <div class="gallery" id="gallery"></div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const view = $("view");
+
+    let mode = "annotated";
+    function setStream() { view.src = `/stream/${mode}?t=${Date.now()}`; }
+
+    $("mode").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-mode]");
+      if (!b) return;
+      mode = b.dataset.mode;
+      for (const btn of $("mode").children) btn.classList.toggle("active", btn === b);
+      setStream();
+    });
+
+    async function refreshHealth() {
+      try {
+        const h = await (await fetch("/health")).json();
+        const ok = h.camera && h.camera.ok;
+        $("status").classList.toggle("ok", !!ok);
+        const parts = [];
+        parts.push(ok ? `camera ${h.camera.fps}fps` : "camera starting");
+        if (h.detector) parts.push(h.detector.ready ? "model ready" : (h.detector.error ? "model error" : "model loading"));
+        $("statusText").textContent = parts.join(" · ");
+        // Seed the prompts box once, from whatever the detector reports.
+        if (h.detector && h.detector.prompts && !$("prompts").value.trim()) {
+          $("prompts").value = h.detector.prompts.join("\n");
+        }
+      } catch { $("statusText").textContent = "unreachable"; }
+    }
+
+    $("setPromptsBtn").addEventListener("click", async () => {
+      const prompts = $("prompts").value.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
+      if (!prompts.length) return;
+      $("setPromptsBtn").disabled = true;
+      try {
+        const r = await fetch("/api/prompts", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompts }),
+        });
+        if (!r.ok) throw new Error(await r.text());
+        const d = await r.json();
+        $("prompts").value = d.prompts.join("\n");
+      } catch (e) { alert("Set prompts failed: " + e.message); }
+      finally { $("setPromptsBtn").disabled = false; }
+    });
+
+    $("captureBtn").addEventListener("click", async () => {
+      $("captureBtn").disabled = true;
+      $("captureHint").textContent = "capturing…";
+      try {
+        const r = await fetch("/api/capture", { method: "POST" });
+        if (!r.ok) throw new Error(await r.text());
+        const cap = await r.json();
+        renderDetections(cap.objects);
+        $("captureHint").textContent = `${cap.objects.length} object(s) at ${cap.timestamp}`;
+        refreshReport();
+      } catch (e) { $("captureHint").textContent = "capture failed: " + e.message; }
+      finally { $("captureBtn").disabled = false; }
+    });
+
+    function renderDetections(objects) {
+      const list = $("detList");
+      if (!objects.length) { list.innerHTML = '<li><span class="conf">nothing detected</span></li>'; return; }
+      list.innerHTML = objects.map(o =>
+        `<li><span>${o.class}</span><span class="conf">${(o.confidence * 100).toFixed(0)}%</span></li>`
+      ).join("");
+    }
+
+    async function refreshReport() {
+      try {
+        const rep = await (await fetch("/api/report")).json();
+        $("gallery").innerHTML = rep.captures.map(c =>
+          `<figure><a href="${c.annotated_url}" target="_blank">
+             <img src="${c.annotated_url}" loading="lazy" alt="${c.timestamp}" /></a>
+           <figcaption>${c.timestamp} — ${c.objects.length} obj</figcaption></figure>`
+        ).join("");
+      } catch { /* leave gallery as-is */ }
+    }
+
+    setStream();
+    refreshHealth();
+    refreshReport();
+    setInterval(refreshHealth, 3000);
+  </script>
+</body>
+</html>

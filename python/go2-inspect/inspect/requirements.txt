@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+opencv-python-headless
+aiortc
+aiohttp
+unitree_webrtc_connect
+numpy
+# Pin to 0.10.x — only matches a CycloneDDS C library at 0.10.x. The
+# Dockerfile builds 0.10.5 from source; bumping this without rebuilding
+# the C lib will fail at import time with a header / ABI mismatch.
+cyclonedds<0.11
+# YOLOE open-vocab detection. Pulls torch; on aarch64 PyPI serves a CPU
+# build, which is what we default to (inference is on-demand at capture,
+# not per-frame). ultralytics also pulls the CLIP/MobileCLIP text backend
+# the Dockerfile warms at build time.
+ultralytics

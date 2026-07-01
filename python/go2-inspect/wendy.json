@@ -1,0 +1,14 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "inspect": {
+            "context": "./inspect",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "gpu" }
+            ]
+        }
+    }
+}

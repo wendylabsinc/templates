@@ -1,0 +1,20 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "motion": {
+            "context": "./motion",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "mcp": {
+            "context": "./mcp",
+            "dependsOn": ["motion"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    }
+}

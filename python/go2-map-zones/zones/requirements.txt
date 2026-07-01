@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+opencv-python-headless
+numpy
+# Required by FastAPI to parse multipart/form-data (the map file uploads).
+python-multipart

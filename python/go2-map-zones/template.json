@@ -1,0 +1,21 @@
+{
+    "name": "go2-map-zones",
+    "description": "Segment an occupancy map into labelled, navigable zones (rooms) with a watershed pipeline — upload an .npz or a nav2 .pgm+.yaml, get back zones.yaml + a visualization, all from a browser. Pure offline map utility; no dog required.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Port for the web UI — open http://<device>:<port> in a browser to upload a map and view zones",
+            "type": "integer",
+            "default": 3001,
+            "prompt": "Web UI port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

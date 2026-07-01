@@ -5,8 +5,8 @@ services:
   ollama:
     build:
       context: ./ollama
-      args:
-        OLLAMA_MODEL: "{{.OLLAMA_MODEL}}"
+    environment:
+      OLLAMA_MODEL: "{{.OLLAMA_MODEL}}"
     ports:
       - "11434:11434"
     volumes:

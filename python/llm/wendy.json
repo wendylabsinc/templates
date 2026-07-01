@@ -4,10 +4,13 @@
     "platform": "linux",
     "services": {
         "ollama": {
+            "context": "./ollama",
             "entitlements": [
                 { "type": "gpu" }
             ]
         },
-        "open-webui": {}
+        "open-webui": {
+            "context": "./open-webui"
+        }
     }
 }

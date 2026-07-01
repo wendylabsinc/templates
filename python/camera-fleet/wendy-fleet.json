@@ -1,43 +1,21 @@
 {
     "appId": "{{.APP_ID}}",
-    "version": "0.1.0",
-    "platform": "linux",
     "components": {
         "camera": {
-            "context": "camera",
-            "target": { "group": "{{.CAMERA_GROUP}}" },
+            "path": "camera",
+            "tags": ["{{.CAMERA_GROUP}}"],
             "expose": {
                 "name": "usbcam",
                 "port": {{.CAMERA_PORT}},
                 "path": "/stream"
-            },
-            "entitlements": [
-                { "type": "network", "mode": "host" },
-                { "type": "camera" }
-            ],
-            "readiness": {
-                "tcpSocket": { "port": {{.CAMERA_PORT}} },
-                "timeoutSeconds": 30
             }
         },
         "dashboard": {
-            "context": "dashboard",
-            "target": { "central": true },
+            "path": "dashboard",
+            "tags": ["central"],
             "discovers": [
                 { "component": "camera", "as": "WENDY_FLEET_PEERS" }
-            ],
-            "entitlements": [
-                { "type": "network", "mode": "host" }
-            ],
-            "readiness": {
-                "tcpSocket": { "port": {{.DASHBOARD_PORT}} },
-                "timeoutSeconds": 30
-            },
-            "hooks": {
-                "postStart": {
-                    "openURL": "http://${WENDY_HOSTNAME}:{{.DASHBOARD_PORT}}"
-                }
-            }
+            ]
         }
     }
 }

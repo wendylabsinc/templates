@@ -1,0 +1,15 @@
+{
+    "appId": "{{.APP_ID}}.dashboard",
+    "version": "0.1.0",
+    "platform": "linux/arm64",
+    "entitlements": [
+        { "type": "network", "mode": "host" }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.DASHBOARD_PORT}} },
+        "timeoutSeconds": 30
+    },
+    "hooks": {
+        "postStart": { "openURL": "http://${WENDY_HOSTNAME}:{{.DASHBOARD_PORT}}" }
+    }
+}

@@ -62,7 +62,11 @@ http://<device-hostname>:{{.PORT}}
 
 The first start downloads the model in the background — watch the `[ollama]`
 log lines for pull progress. The model list in the UI populates once the pull
-completes.
+completes. If the device does not have network/DNS when the app first starts,
+the Ollama service keeps retrying instead of giving up, so the model appears
+automatically once connectivity is restored. If Open WebUI shows an empty model
+picker, the model is still downloading or the puller is retrying; check the
+Ollama service logs before pulling manually.
 
 > On the device each service runs in its own network namespace, so the
 > Docker service-name URL (`http://ollama:11434`) does not resolve. The
@@ -88,6 +92,6 @@ built-in service-name DNS.
 
 ```sh
 wendy run --detach           # start and return; stream later with:
-wendy device logs
-wendy device ps              # list both containers
+wendy device logs {{.APP_ID}} --service ollama --tail 100
+wendy device apps list       # list both containers
 ```

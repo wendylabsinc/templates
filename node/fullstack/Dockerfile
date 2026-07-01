@@ -1,8 +1,9 @@
+# syntax=docker/dockerfile:1.6
 # Stage 1 — Build React frontend
 FROM node:22-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 COPY frontend/ ./
 RUN npm run build
 
@@ -10,7 +11,7 @@ RUN npm run build
 FROM node:22-slim AS builder
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build
@@ -33,11 +34,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
+    ccache \
     && rm -rf /var/lib/apt/lists/*
 
 # Install production dependencies (rebuilds better-sqlite3 native addon)
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN --mount=type=cache,target=/root/.npm --mount=type=cache,target=/ccache \
+    CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/ccache npm install --omit=dev
 
 # Copy compiled backend and frontend assets
 COPY --from=builder /app/dist ./dist

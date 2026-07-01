@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 # go2-RC — teleop UI for the Go2.
 #
 # Sibling container to go2-motion (and optionally realsense). Runs on
@@ -11,7 +12,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 COPY main.py ./
 COPY static ./static

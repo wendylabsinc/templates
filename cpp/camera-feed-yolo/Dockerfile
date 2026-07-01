@@ -12,8 +12,9 @@ FROM python:3.11-slim-bookworm AS model-export
 # at import time — slim doesn't ship them, so cv2 fails to load before export runs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb1 libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir ultralytics onnx
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install ultralytics onnx
 WORKDIR /export
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=True, dynamic=False)" \
  && [ -s /export/yolov8n.onnx ] \
@@ -22,8 +23,10 @@ RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='o
 # ── Stage B-jetson ──────────────────────────────────────────────────────────
 FROM dustynv/onnxruntime:1.20.2-r36.4.0 AS base-nvidia-jetson
 
+ENV CCACHE_DIR=/ccache
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git pkg-config ca-certificates \
+    build-essential cmake git pkg-config ca-certificates ccache \
     libjsoncpp-dev libssl-dev uuid-dev zlib1g-dev \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-tools \
@@ -46,10 +49,11 @@ RUN LIB=$(find / -name "libonnxruntime.so*" 2>/dev/null | grep -v __pycache__ | 
  && ldconfig
 
 # Build Drogon from source.
-RUN git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drogon.git /tmp/drogon \
+RUN --mount=type=cache,target=/ccache \
+    git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drogon.git /tmp/drogon \
  && cd /tmp/drogon && git submodule update --init \
  && mkdir build && cd build \
- && cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=OFF -DBUILD_CTL=OFF -DBUILD_ORM=OFF \
+ && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DBUILD_EXAMPLES=OFF -DBUILD_CTL=OFF -DBUILD_ORM=OFF \
  && make -j"$(nproc)" && make install \
  && rm -rf /tmp/drogon
 
@@ -57,9 +61,10 @@ RUN git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drog
 FROM debian:bookworm-slim AS base-generic
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CCACHE_DIR=/ccache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake git pkg-config ca-certificates curl \
+    build-essential cmake git pkg-config ca-certificates curl ccache \
     libjsoncpp-dev libssl-dev uuid-dev zlib1g-dev \
     libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
     gstreamer1.0-tools \
@@ -82,10 +87,11 @@ RUN ARCH="$(uname -m)" \
  && rm /tmp/ort.tgz \
  && ldconfig
 
-RUN git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drogon.git /tmp/drogon \
+RUN --mount=type=cache,target=/ccache \
+    git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drogon.git /tmp/drogon \
  && cd /tmp/drogon && git submodule update --init \
  && mkdir build && cd build \
- && cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_EXAMPLES=OFF -DBUILD_CTL=OFF -DBUILD_ORM=OFF \
+ && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DBUILD_EXAMPLES=OFF -DBUILD_CTL=OFF -DBUILD_ORM=OFF \
  && make -j"$(nproc)" && make install \
  && rm -rf /tmp/drogon
 
@@ -102,8 +108,9 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
 
 WORKDIR /app
 COPY CMakeLists.txt main.cpp ./
-RUN mkdir build && cd build \
- && cmake .. -DCMAKE_BUILD_TYPE=Release \
+RUN --mount=type=cache,target=/ccache \
+    mkdir build && cd build \
+ && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
  && make -j"$(nproc)" \
  && cp {{.APP_ID}} /app/{{.APP_ID}} \
  && cd /app && rm -rf build

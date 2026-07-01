@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 # Slim FastAPI image — no ROS2, no colcon. Builds in ~1-2 min on first
 # run, ~30s on cached rebuilds.
 FROM python:3.11-slim
@@ -27,20 +28,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         git \
         pkg-config \
+        ccache \
     && rm -rf /var/lib/apt/lists/*
+
+ENV CCACHE_DIR=/ccache
 
 # CycloneDDS C library — pinned to 0.10.5 to match cyclonedds-python<0.11.
 # This is the same version go2-brain uses; staying compatible across the
 # two means the same wheel/ABI combo we know works. Build is ~2-3 min on
 # Orin NX, layer-cached after the first build.
 ARG CYCLONEDDS_VERSION=0.10.5
-RUN git clone --depth 1 --branch ${CYCLONEDDS_VERSION} \
+RUN --mount=type=cache,target=/ccache \
+    git clone --depth 1 --branch ${CYCLONEDDS_VERSION} \
         https://github.com/eclipse-cyclonedds/cyclonedds.git /tmp/cyclonedds \
     && cmake -S /tmp/cyclonedds -B /tmp/cyclonedds/build \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_TESTING=OFF \
         -DBUILD_IDLC=ON \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     && cmake --build /tmp/cyclonedds/build -j"$(nproc)" \
     && cmake --install /tmp/cyclonedds/build \
     && ldconfig \
@@ -51,7 +58,10 @@ ENV CYCLONEDDS_HOME=/usr/local
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/ccache \
+    CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/ccache \
+    pip install -r requirements.txt
 
 COPY main.py perception.py audio.py webrtc_audio.py cyclonedds.xml ./
 

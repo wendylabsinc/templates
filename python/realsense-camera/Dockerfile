@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 # Stage 1 — Build the React/Vite frontend
 FROM node:22-alpine AS frontend-builder
 WORKDIR /build
@@ -6,7 +7,7 @@ COPY package.json package-lock.json ./
 # out of sync with package.json (missing @emnapi/* transitive entries on
 # some platforms). Regenerate the lockfile (`rm package-lock.json && npm
 # install`) and switch this back to `npm ci` once stable.
-RUN npm install --no-audit --no-fund
+RUN --mount=type=cache,target=/root/.npm npm install --no-audit --no-fund
 COPY . ./
 RUN npm run build
 
@@ -15,19 +16,23 @@ RUN npm run build
 # Intel publishes no aarch64 deb for python3-pyrealsense2, so we build it.
 FROM ubuntu:22.04 AS librealsense-builder
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CCACHE_DIR=/ccache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
-      build-essential cmake git pkg-config \
+      build-essential cmake git pkg-config ccache \
       libusb-1.0-0-dev libssl-dev libudev-dev \
       python3 python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ARG LIBREALSENSE_VERSION=v2.55.1
-RUN git clone --depth 1 --branch ${LIBREALSENSE_VERSION} \
+RUN --mount=type=cache,target=/ccache \
+    git clone --depth 1 --branch ${LIBREALSENSE_VERSION} \
       https://github.com/IntelRealSense/librealsense.git /tmp/librealsense \
     && cmake -S /tmp/librealsense -B /tmp/librealsense/build \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_GRAPHICAL_EXAMPLES=OFF \
@@ -65,7 +70,8 @@ ENV PATH="/app/venv/bin:$PATH"
 
 WORKDIR /app
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r requirements.txt
 
 # Sanity check — fail the build early if the bindings aren't importable.
 RUN python3 -c "import pyrealsense2 as rs; print('pyrealsense2 OK')"
@@ -80,7 +86,8 @@ ARG WENDY_DEVICE_TYPE
 ARG WENDY_DEBUG=false
 ENV WENDY_DEVICE_TYPE=${WENDY_DEVICE_TYPE}
 ENV WENDY_DEBUG=${WENDY_DEBUG}
-RUN if [ "$WENDY_DEBUG" = "true" ]; then pip install --no-cache-dir debugpy; fi
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ "$WENDY_DEBUG" = "true" ]; then pip install debugpy; fi
 
 EXPOSE {{.PORT}}
 

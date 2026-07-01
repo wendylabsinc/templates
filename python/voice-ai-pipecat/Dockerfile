@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 # Stage 1 - Build React visualizer
 FROM node:22-slim AS frontend
 WORKDIR /frontend
@@ -5,7 +6,7 @@ COPY frontend/package*.json ./
 # `npm ci` for reproducible builds: it requires package-lock.json (which
 # we commit) and fails if the lockfile is out of sync rather than
 # silently repairing it the way `npm install` does.
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -40,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
         python3-dev \
         gcc \
+        ccache \
         ca-certificates \
         curl \
         alsa-utils \
@@ -65,7 +67,10 @@ ENV HF_HOME=/models/huggingface
 ENV XDG_CACHE_HOME=/models/cache
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/ccache \
+    CC="ccache gcc" CXX="ccache g++" CCACHE_DIR=/ccache \
+    pip install -r requirements.txt
 
 # Pre-download NLTK data at build time. Piper TTS uses punkt_tab for sentence
 # tokenization and tries to download it on first import, which fails inside

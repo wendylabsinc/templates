@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 # Minimal Go2 motion API. Same shape as templates/python/go2-basic — Ubuntu
 # 22.04 base + cyclonedds 0.10.5 from source + unitree_sdk2_python pinned to
 # a known-good SHA. Matches what unitree_sdk2_python expects at the C-lib
@@ -16,19 +17,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         cmake \
         pkg-config \
         ca-certificates \
+        ccache \
     && rm -rf /var/lib/apt/lists/*
+
+ENV CCACHE_DIR=/ccache
 
 # Build CycloneDDS 0.10.5 from source. Matched to what
 # unitree_sdk2_python expects (no PyPI wheels for arm64 Linux on this
 # version, and the system apt repos don't ship anything compatible).
 ARG CYCLONEDDS_VERSION=0.10.5
-RUN git clone --depth 1 --branch ${CYCLONEDDS_VERSION} \
+RUN --mount=type=cache,target=/ccache \
+    git clone --depth 1 --branch ${CYCLONEDDS_VERSION} \
         https://github.com/eclipse-cyclonedds/cyclonedds.git /tmp/cyclonedds \
     && cmake -S /tmp/cyclonedds -B /tmp/cyclonedds/build \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_TESTING=OFF \
         -DBUILD_IDLC=ON \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     && cmake --build /tmp/cyclonedds/build -j"$(nproc)" \
     && cmake --install /tmp/cyclonedds/build \
     && ldconfig \
@@ -43,9 +50,10 @@ WORKDIR /app
 ARG UNITREE_SDK2_PYTHON_REF=db9b2d210081387fcd1e7ed9ac4c56a02983bb85
 
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --upgrade pip \
-    && pip3 install --no-cache-dir -r requirements.txt \
-    && pip3 install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --upgrade pip \
+    && pip3 install -r requirements.txt \
+    && pip3 install \
         "git+https://github.com/unitreerobotics/unitree_sdk2_python.git@${UNITREE_SDK2_PYTHON_REF}" \
     && mkdir -p /usr/local/lib/python3.10/dist-packages/unitree_sdk2py/b2 \
     && touch /usr/local/lib/python3.10/dist-packages/unitree_sdk2py/b2/__init__.py

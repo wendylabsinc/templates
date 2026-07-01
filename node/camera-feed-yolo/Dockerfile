@@ -15,10 +15,11 @@ ARG WENDY_PLATFORM=generic
 FROM python:3.11-slim-bookworm AS model-export
 # ultralytics pulls in opencv-python (not headless), which dlopens libxcb/libgl
 # at import time — slim doesn't ship them, so cv2 fails to load before export runs.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    apt-get update && apt-get install -y --no-install-recommends \
     libxcb1 libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir ultralytics onnx
+ && pip install ultralytics onnx
 WORKDIR /export
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=True, dynamic=False)" \
  && [ -s /export/yolov8n.onnx ] \
@@ -67,7 +68,7 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
 
 WORKDIR /app
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 
 # On Jetson, replace the npm-bundled libonnxruntime.so.1 (arm64, CPU-only —
 # NuGet has no CUDA EP package for linux/arm64) with a symlink to dustynv's

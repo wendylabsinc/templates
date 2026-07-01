@@ -35,7 +35,8 @@ ENV PATH="/opt/venv/bin:${PATH}"
 # Pip will see the pre-installed torch>=2.2 and skip reinstalling it for ultralytics.
 # The dustynv base pins pip to Jetson-specific indexes that don't mirror fastapi/uvicorn —
 # override with real PyPI. Torch is pre-installed so ultralytics won't pull a CPU wheel.
-RUN pip3 install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install \
     --index-url https://pypi.org/simple/ \
     fastapi \
     'uvicorn[standard]' \
@@ -66,7 +67,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -r /tmp/requirements.txt
 
 
 # ── Final stage: WENDY_PLATFORM selects the hardware path ────────────────────
@@ -104,7 +106,8 @@ RUN python3 -c "import gi; gi.require_version('Gst', '1.0'); from gi.repository 
 RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" && \
     [ -s /app/yolov8n.pt ] && [ "$(stat -c %s /app/yolov8n.pt)" -gt 6000000 ]
 
-RUN if [ "$WENDY_DEBUG" = "true" ]; then pip install --no-cache-dir debugpy; fi
+RUN --mount=type=cache,target=/root/.cache/pip \
+    if [ "$WENDY_DEBUG" = "true" ]; then pip install debugpy; fi
 
 COPY app.py index.html ./
 COPY assets/ ./assets/

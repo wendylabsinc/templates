@@ -13,8 +13,9 @@ FROM python:3.11-slim-bookworm AS model-export
 # at import time — slim doesn't ship them, so cv2 fails to load before export runs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb1 libgl1 libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir ultralytics onnx
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install ultralytics onnx
 WORKDIR /export
 RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='onnx', imgsz=640, opset=12, simplify=True, dynamic=False)" \
  && [ -s /export/yolov8n.onnx ] \
@@ -88,6 +89,10 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
     ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so \
     TURBOJPEG_SOURCE=vendor
 
+# Pin CARGO_HOME so the registry cache mount path is deterministic across both
+# bases (rust:1.88-slim uses /usr/local/cargo; dustynv+rustup uses /root/.cargo).
+ENV CARGO_HOME=/usr/local/cargo
+
 WORKDIR /app
 COPY Cargo.toml ./
 COPY src ./src
@@ -95,9 +100,11 @@ COPY src ./src
 # in src/main.rs, so it must be present before `cargo build`.
 COPY index.html ./
 
-RUN cargo build --release \
- && cp target/release/{{.APP_ID}} /usr/local/bin/{{.APP_ID}} \
- && rm -rf target
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,id=cargo-target-{{.APP_ID}},target=/app/target \
+    cargo build --release \
+ && cp target/release/{{.APP_ID}} /usr/local/bin/{{.APP_ID}}
 
 COPY --from=model-export /export/yolov8n.onnx ./yolov8n.onnx
 COPY assets/ ./assets/

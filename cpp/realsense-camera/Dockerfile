@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.6
 # Stage 1: Build the React/Vite frontend.
 FROM node:22-alpine AS frontend-builder
 WORKDIR /build
@@ -12,20 +13,24 @@ RUN npm run build
 # Stage 2: Build librealsense, Drogon, and the C++ backend.
 FROM ubuntu:22.04 AS backend-builder
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CCACHE_DIR=/ccache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
-      build-essential cmake git pkg-config \
+      build-essential cmake git pkg-config ccache \
       libusb-1.0-0-dev libssl-dev libudev-dev \
       libjsoncpp-dev uuid-dev zlib1g-dev \
       libturbojpeg0-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ARG LIBREALSENSE_VERSION=v2.55.1
-RUN git clone --depth 1 --branch ${LIBREALSENSE_VERSION} \
+RUN --mount=type=cache,target=/ccache \
+    git clone --depth 1 --branch ${LIBREALSENSE_VERSION} \
       https://github.com/IntelRealSense/librealsense.git /tmp/librealsense \
     && cmake -S /tmp/librealsense -B /tmp/librealsense/build \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_GRAPHICAL_EXAMPLES=OFF \
@@ -36,11 +41,14 @@ RUN git clone --depth 1 --branch ${LIBREALSENSE_VERSION} \
     && cmake --install /tmp/librealsense/build \
     && rm -rf /tmp/librealsense
 
-RUN git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drogon.git /tmp/drogon \
+RUN --mount=type=cache,target=/ccache \
+    git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drogon.git /tmp/drogon \
     && cd /tmp/drogon \
     && git submodule update --init \
     && cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
         -DBUILD_EXAMPLES=OFF \
         -DBUILD_CTL=OFF \
         -DBUILD_ORM=OFF \
@@ -50,7 +58,8 @@ RUN git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drog
 
 WORKDIR /app
 COPY CMakeLists.txt main.cpp ./
-RUN cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+RUN --mount=type=cache,target=/ccache \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     && cmake --build build -j"$(nproc)"
 
 

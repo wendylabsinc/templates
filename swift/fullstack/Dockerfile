@@ -1,8 +1,9 @@
+# syntax=docker/dockerfile:1.6
 # Stage 1: Build the frontend
 FROM node:22-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 COPY frontend/ .
 RUN npm run build
 
@@ -17,7 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY Package.swift ./
 COPY Sources Sources
-RUN swift build -c release
+RUN --mount=type=cache,id=swiftpm-{{.APP_ID}},target=/app/.build \
+    swift build -c release \
+ && cp .build/release/{{.APP_ID}} /app/{{.APP_ID}}
 
 # Stage 3: Runtime image
 FROM swift:6.3-bookworm-slim
@@ -34,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/.build/release/{{.APP_ID}} /usr/local/bin/{{.APP_ID}}
+COPY --from=builder /app/{{.APP_ID}} /usr/local/bin/{{.APP_ID}}
 COPY --from=frontend /frontend/dist ./static
 EXPOSE {{.PORT}}
 CMD ["{{.APP_ID}}"]

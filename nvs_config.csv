@@ -1,0 +1,6 @@
+key,type,encoding,value
+csi_cfg,namespace,,
+ssid,data,string,Wendy Labs CI
+password,data,string,Approach-Relay-Enviable-Swizzle4
+target_ip,data,string,192.168.100.169
+target_port,data,u16,5005

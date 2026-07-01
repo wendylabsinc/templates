@@ -1,15 +1,18 @@
+# syntax=docker/dockerfile:1.6
 # --------------------------------------------------------------------------
 # Stage 1 – build
 # --------------------------------------------------------------------------
 FROM arm64v8/debian:bookworm-slim AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV CCACHE_DIR=/ccache
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     git \
     ca-certificates \
+    ccache \
     pkg-config \
     # Drogon dependencies
     libjsoncpp-dev \
@@ -22,11 +25,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Build Drogon from source (v1.9.12)
-RUN git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drogon.git /tmp/drogon && \
+RUN --mount=type=cache,target=/ccache \
+    git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drogon.git /tmp/drogon && \
     cd /tmp/drogon && \
     git submodule update --init && \
     mkdir build && cd build && \
     cmake .. -DCMAKE_BUILD_TYPE=Release \
+             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
              -DBUILD_EXAMPLES=OFF \
              -DBUILD_CTL=OFF \
              -DBUILD_ORM=OFF && \
@@ -37,8 +43,9 @@ RUN git clone --depth 1 --branch v1.9.12 https://github.com/drogonframework/drog
 # Build application
 WORKDIR /app
 COPY CMakeLists.txt main.cpp ./
-RUN mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release && \
+RUN --mount=type=cache,target=/ccache \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache && \
     make -j"$(nproc)"
 
 # --------------------------------------------------------------------------

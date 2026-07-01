@@ -1,10 +1,11 @@
+# syntax=docker/dockerfile:1.6
 # Stage 1 — build
 FROM node:22-slim AS builder
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 
 COPY tsconfig.json ./
 COPY src ./src

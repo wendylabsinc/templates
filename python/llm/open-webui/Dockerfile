@@ -31,7 +31,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+RUN --mount=type=cache,target=/root/.cache/uv \
+    curl -LsSf https://astral.sh/uv/install.sh | sh \
     && /root/.local/bin/uv python install 3.11 \
     && /root/.local/bin/uv tool install "open-webui==${OPEN_WEBUI_VERSION}" --python 3.11
 

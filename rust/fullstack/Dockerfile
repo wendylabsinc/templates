@@ -1,8 +1,9 @@
+# syntax=docker/dockerfile:1.6
 # Stage 1: Build frontend
 FROM node:22-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
-RUN npm install
+RUN --mount=type=cache,target=/root/.npm npm install
 COPY frontend/ .
 RUN npm run build
 
@@ -17,12 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY Cargo.toml ./
-# Create a dummy main.rs so dependencies can be cached
-RUN mkdir src && echo "fn main() {}" > src/main.rs
-RUN cargo build --release || true
-# Now copy the real source and build
 COPY src ./src
-RUN touch src/main.rs && cargo build --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,id=cargo-target-{{.APP_ID}},target=/app/target \
+    cargo build --release \
+ && cp target/release/{{.APP_ID}} /app/{{.APP_ID}}
 
 # Stage 3: Final image
 FROM debian:bookworm-slim
@@ -41,7 +42,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     v4l-utils \
     sqlite3 \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/{{.APP_ID}} /usr/local/bin/{{.APP_ID}}
+COPY --from=builder /app/{{.APP_ID}} /usr/local/bin/{{.APP_ID}}
 COPY --from=frontend /frontend/dist ./static
 EXPOSE {{.PORT}}
 CMD ["{{.APP_ID}}"]

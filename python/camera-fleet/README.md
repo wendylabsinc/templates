@@ -36,7 +36,7 @@ device in a named group (the **edge** tier) plus a single camera-wall dashboard 
 
 ## How the wiring works (the WDY-1755 contract)
 
-`wendy.json` declares two `components` with **placement**:
+`wendy-fleet.json` declares two `components` with **placement**:
 
 ```jsonc
 "components": {

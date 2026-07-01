@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Central component — the camera-wall dashboard.
 
-This is the "central" tier of the fleet (see ../wendy.json `dashboard` component).
+This is the "central" tier of the fleet (see ../wendy-fleet.json `dashboard` component).
 It does NOT know how many cameras exist or where they are. The platform resolves
 the `camera` component's live endpoints (every device in the named group) and hands
 them to us two ways — the contract delivered by WDY-1755:

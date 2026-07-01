@@ -1,0 +1,20 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "talker": {
+            "context": "./talker",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "listener": {
+            "context": "./listener",
+            "dependsOn": ["talker"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    }
+}

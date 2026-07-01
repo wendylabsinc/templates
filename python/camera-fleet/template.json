@@ -11,10 +11,10 @@
         },
         {
             "name": "CAMERA_GROUP",
-            "description": "Named device group the camera (edge) component is deployed to. Define it once with your devices; the dashboard discovers every member automatically.",
+            "description": "Device tag (glob) the camera component deploys to — a device matches when its name matches this pattern (e.g. camera-*). The dashboard discovers every match automatically.",
             "type": "string",
-            "default": "cameras",
-            "prompt": "Camera device group"
+            "default": "camera-*",
+            "prompt": "Camera device tag"
         },
         {
             "name": "CAMERA_PORT",

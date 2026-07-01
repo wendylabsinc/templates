@@ -12,7 +12,7 @@ RUN git clone --depth 1 --branch 0.10.5 \
       https://github.com/eclipse-cyclonedds/cyclonedds.git /tmp/cyclonedds \
  && cmake -S /tmp/cyclonedds -B /tmp/cyclonedds/build \
       -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release \
-      -DBUILD_IDLC=OFF -DENABLE_SHM=OFF -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF \
+      -DENABLE_SHM=OFF -DBUILD_TESTING=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DDSPERF=OFF \
  && cmake --build /tmp/cyclonedds/build --target install -j"$(nproc)" \
  && rm -rf /tmp/cyclonedds
 

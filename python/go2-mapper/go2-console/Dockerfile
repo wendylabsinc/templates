@@ -1,9 +1,10 @@
 # go2-console — no ROS needed: talks DDS directly via cyclonedds-python
 # (same trick as go2-foxglove's bridge) and pure-numpy export math.
 FROM python:3.11-slim
-RUN pip install --no-cache-dir fastapi uvicorn httpx numpy cyclonedds pillow
+# scipy: cKDTree for the offline loop-closure refine (refine.py, robustness #2)
+RUN pip install --no-cache-dir fastapi uvicorn httpx numpy scipy cyclonedds pillow
 WORKDIR /opt/console
-COPY app.py export.py nogo.py quality.py ./
+COPY app.py export.py nogo.py quality.py refine.py ./
 COPY static ./static
 COPY cyclonedds.xml /opt/cyclonedds.xml
 
@@ -17,7 +18,8 @@ ENV CYCLONEDDS_URI=/opt/cyclonedds.xml \
     SLICE_MIN_M={{.SLICE_MIN_M}} \
     SLICE_MAX_M={{.SLICE_MAX_M}} \
     GRID_RESOLUTION_M={{.GRID_RESOLUTION_M}} \
-    LIDAR_HEIGHT_OFFSET_M={{.LIDAR_HEIGHT_OFFSET_M}}
+    LIDAR_HEIGHT_OFFSET_M={{.LIDAR_HEIGHT_OFFSET_M}} \
+    EXPORT_VOXEL_M=0.03
 
 EXPOSE {{.CONSOLE_PORT}}
 CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-3600}"]

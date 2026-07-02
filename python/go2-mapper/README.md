@@ -28,21 +28,57 @@ subnet NIC, sharing one `/data` persist volume.
    the G1 will traverse. Watch coverage in Foxglove; loop back to the start.
 4. Stand the dog ~0.5 m in front of the door, facing it → type `front_door`
    → **Mark waypoint**.
-5. **Finish & export** → download the zip → move the artifacts to the G1.
+5. Walk a **loop back** to somewhere you already mapped (this is what lets the
+   refine step cancel drift), then tap **Refine map** — optional but recommended
+   for a full-home walk.
+6. **Finish & export** → download the zip → move the artifacts to the G1.
 
 ## Services
 
 - **go2-slam** — Point-LIO (chosen over FAST-LIO2 for robustness to legged-
   robot shake) consuming `/utlidar/cloud_deskewed` + `/utlidar/imu`. Runs a
-  sidecar (`viz_bridge.py`) that publishes a 5 cm / 1 Hz downsampled map for
-  Foxglove-over-WiFi, a JSON pose topic for the console, and atomic 30 s
-  `map.pcd` snapshots so a crash never loses the walk. Compute: ~1 core on
-  Orin NX — no external PC needed.
+  sidecar (`viz_bridge.py`) that publishes a 5 cm / 1 Hz downsampled cloud for
+  Foxglove-over-WiFi, a JSON pose topic for the console, a **health** topic
+  (divergence watchdog), atomic `map.pcd` snapshots (finer `EXPORT_VOXEL_M`
+  resolution than the Foxglove copy) with a rolling backup ring, and
+  **keyframes** for offline loop closure. Compute: ~1 core on Orin NX — no
+  external PC needed.
 - **go2-recorder** — `ros2 bag record` behind a 3-endpoint HTTP API.
-- **go2-console** — FastAPI + single-page UI. No ROS install: reads the pose
-  topic via bare `cyclonedds-python`. Runs the export (pure numpy: RANSAC floor fit with a mount-height
+- **go2-console** — FastAPI + single-page UI. No ROS install: reads the pose +
+  health topics via bare `cyclonedds-python`. Runs the offline **loop-closure
+  refine** and the export (pure numpy: RANSAC floor fit with a mount-height
   prior so it can't latch onto a bed, then slice → trinary PGM) and serves
   downloads (per-file or zip).
+
+## Robustness features
+
+These harden the mapping stage beyond raw Point-LIO odometry:
+
+1. **Finer export map.** The `map.pcd` handed to the G1 for localisation is
+   voxelised at `EXPORT_VOXEL_M` (3 cm default), separate from the coarse 5 cm
+   Foxglove preview — the accumulator is vectorised so it keeps up at LiDAR
+   rate. Raise `EXPORT_VOXEL_M` if the Jetson is RAM-constrained.
+2. **Loop-closure refine** (`refine.py`, **experimental**). Point-LIO has no
+   loop closure, so a full-home walk drifts (the "doubled walls" quality.py
+   flags). The console's **Refine** button builds an SE(2) pose graph from the
+   keyframes — odometry edges + 2D-ICP loop edges between revisited places —
+   and Gauss-Newton optimises it to cancel drift, then re-stitches a corrected
+   `map_refined.pcd` that export uses automatically. It **declines** (keeps the
+   raw map) if there aren't enough keyframes or no confident loops, and only
+   replaces the map when optimisation actually reduces loop error. Validate
+   `map_refined.pcd` in Foxglove before trusting it on the G1.
+3. **Divergence watchdog + rolling snapshots.** A watchdog on the odometry
+   flags SLAM divergence (NaN / teleport-sized jump / out-of-range) on the
+   health topic; the console shows a red banner. While diverged, snapshots
+   **freeze** so a blown-up map never overwrites the last good one, and the last
+   `SNAPSHOT_KEEP` snapshots are kept under `maps/current/snapshots/` to roll
+   back to. A final snapshot is flushed on container stop.
+4. **Dynamic-point culling.** Each voxel tracks how many frames observed it;
+   the export drops cells seen in fewer than `MIN_VOXEL_HITS` frames
+   (single-frame noise, fast-moving ghosts). Set `DYNAMIC_MIN_SPAN_S > 0` to
+   also drop cells only ever seen within a short time window (people/pets that
+   walked through). For walking people that linger, full free-space ray-carving
+   is the stronger — but much heavier — follow-up this doesn't attempt.
 
 ## Honest caveats (read before first build)
 

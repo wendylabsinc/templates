@@ -193,6 +193,7 @@ def run_export(
     resolution: float,
     lidar_height: float,
     waypoints: list | None = None,
+    loop_closed: bool = False,
 ) -> dict:
     os.makedirs(out_dir, exist_ok=True)
     xyz = read_pcd(src_pcd)
@@ -227,6 +228,7 @@ def run_export(
     meta = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "source": "go2-mapper (Unitree Go2 EDU, Livox Mid-360 via /utlidar)",
+        "loop_closed": bool(loop_closed),  # True if refine.py drift-corrected the input
         "points_raw": int(xyz.shape[0]),
         "quality": quality.assess(
             grid_img=img,

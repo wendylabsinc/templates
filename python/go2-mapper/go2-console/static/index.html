@@ -63,10 +63,16 @@
   .badge.fail{background:#3b1712;color:var(--danger)}
   .fox{font-size:12px;color:var(--dim)}
   .fox code{font-family:var(--mono);color:var(--signal)}
+  /* divergence banner — SLAM health goes red when Point-LIO blows up */
+  .banner{background:#3b1712;border:1px solid var(--danger);color:var(--danger);
+          border-radius:10px;padding:12px 14px;margin-bottom:12px;
+          font:600 13px var(--mono)}
 </style>
 </head>
 <body>
 <h1>go2·<b>mapper</b> — field console</h1>
+
+<div class="banner" id="health" style="display:none"></div>
 
 <div class="panel">
   <div class="rowlbl">SLAM pose</div>
@@ -93,6 +99,12 @@
 </div>
 
 <div class="panel">
+  <div class="rowlbl">Loop closure — optional, before export</div>
+  <button id="btnRefine">Refine map (close loops)</button>
+  <div class="msg" id="refMsg">Corrects Point-LIO drift from keyframes. Walk a loop back to a mapped spot first.</div>
+</div>
+
+<div class="panel">
   <div class="rowlbl">Finish</div>
   <button id="btnExport">Finish &amp; export G1 map</button>
   <div class="msg" id="exMsg">Aligns floor to z=0, slices 2D grid at G1 height, bundles waypoints.</div>
@@ -102,6 +114,7 @@
 <script>
 const $ = id => document.getElementById(id);
 let recording = false;
+let refBusy = false;
 $('foxAddr').textContent = 'ws://' + location.hostname + ':' + (window.FOXGLOVE_PORT || 8765);
 
 async function poll(){
@@ -119,6 +132,18 @@ async function poll(){
       $('poseTxt').textContent =
         `x ${s.pose.x.toFixed(2)}  y ${s.pose.y.toFixed(2)}` + (stale ? '  — STALE' : '');
     }
+    // SLAM divergence banner (#3): freeze the operator's attention, not the map
+    if(s.health && s.health.status === 'diverged'){
+      $('health').style.display = 'block';
+      $('health').textContent = '⚠ SLAM DIVERGED — ' + (s.health.reason||'') +
+        '. Map snapshots are frozen at the last good state; restart go2-slam to resume.';
+    } else { $('health').style.display = 'none'; }
+    // refine availability (#2)
+    const kf = s.keyframes||0;
+    $('btnRefine').disabled = kf < 2;
+    if(!refBusy) $('refMsg').textContent = kf < 2
+      ? 'Corrects Point-LIO drift from keyframes. Walk a loop back to a mapped spot first.'
+      : `${kf} keyframes captured${s.refined ? ' · refined map ready — export will use it' : ''}.`;
   }catch(e){ $('poseTxt').textContent = 'console unreachable'; $('dot').className='dot stale'; }
 }
 setInterval(poll, 1000); poll();
@@ -145,13 +170,25 @@ $('btnMark').onclick = async () => {
   poll();
 };
 
+$('btnRefine').onclick = async () => {
+  refBusy = true; $('btnRefine').disabled = true;
+  $('refMsg').textContent = 'Refining — detecting loops + optimising pose graph…';
+  try{
+    const r = await (await fetch('/refine',{method:'POST'})).json();
+    $('refMsg').textContent = r.ok
+      ? `Closed ${r.loops} loops over ${r.keyframes} keyframes (loop err ${r.loop_err_before}→${r.loop_err_after}). Export will use the refined map.`
+      : ('Not refined: ' + (r.reason || r.detail || 'unknown') + ' — export will use the raw map.');
+  }catch(e){ $('refMsg').textContent = 'refine failed: ' + e; }
+  refBusy = false; poll();
+};
+
 $('btnExport').onclick = async () => {
   $('btnExport').disabled = true;
   $('exMsg').textContent = 'Exporting — floor fit + slicing…';
   const res = await fetch('/export',{method:'POST'});
   const r = await res.json();
   $('exMsg').textContent = res.ok
-    ? `Done: ${r.meta.grid.width}×${r.meta.grid.height} grid, floor fit on ${r.meta.floor_fit.inliers} pts.`
+    ? `Done: ${r.meta.grid.width}×${r.meta.grid.height} grid, floor fit on ${r.meta.floor_fit.inliers} pts${r.loop_closed ? ' (loop-closed map)' : ' (raw map)'}.`
     : (r.detail || 'export failed');
   $('btnExport').disabled = false;
   loadExports();

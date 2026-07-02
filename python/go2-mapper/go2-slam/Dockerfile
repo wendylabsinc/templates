@@ -44,7 +44,12 @@ ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp \
     MAP_SAVE_DIR=/data/maps \
     MAP_SAVE_INTERVAL_S=30 \
     VIZ_VOXEL_M=0.05 \
-    VIZ_HZ=1.0
+    VIZ_HZ=1.0 \
+    EXPORT_VOXEL_M=0.03 \
+    MIN_VOXEL_HITS=2 \
+    DYNAMIC_MIN_SPAN_S=0.0 \
+    SNAPSHOT_KEEP=5 \
+    KEYFRAME_DIST_M=0.5
 
 EXPOSE {{.FOXGLOVE_PORT}}
 ENTRYPOINT ["/opt/entry.sh"]

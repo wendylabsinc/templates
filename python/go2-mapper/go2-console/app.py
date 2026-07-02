@@ -9,7 +9,8 @@ Endpoints:
   GET  /session/status       recorder status + latest SLAM pose + map size
   POST /waypoint             mark current SLAM pose as a named waypoint
   GET  /waypoints            list marked waypoints (raw map frame)
-  POST /export               run export.py on the latest map snapshot
+  POST /refine               offline loop-closure refine of the map (refine.py)
+  POST /export               run export.py on the latest (refined if present) map
   GET  /exports              list finished exports
   GET  /download/{session}.zip           everything, zipped
   GET  /download/{session}/{filename}    individual artifact
@@ -35,11 +36,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
 import export as exporter
+import refine as refiner
 
 RECORDER_URL = os.environ.get("RECORDER_URL", "http://127.0.0.1:3610")
 MAP_SAVE_DIR = os.environ.get("MAP_SAVE_DIR", "/data/maps")
 EXPORT_DIR = os.environ.get("EXPORT_DIR", "/data/exports")
 STATIC = os.path.join(os.path.dirname(__file__), "static")
+
+CURRENT = os.path.join(MAP_SAVE_DIR, "current")
+KEYFRAME_DIR = os.path.join(CURRENT, "keyframes")
+RAW_PCD = os.path.join(CURRENT, "map.pcd")
+REFINED_PCD = os.path.join(CURRENT, "map_refined.pcd")
 
 app = FastAPI()
 
@@ -69,7 +76,29 @@ class PoseListener:
                     pass
 
 
+class HealthListener:
+    """Reads go2-slam's /go2/slam/health_json so the console can surface a
+    divergence banner instead of silently exporting a blown-up map. [#3]"""
+
+    def __init__(self):
+        self.latest = {"status": "unknown", "reason": None}
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+
+    def _run(self):
+        dp = DomainParticipant()
+        topic = Topic(dp, "rt/go2/slam/health_json", StdString)
+        reader = DataReader(Subscriber(dp), topic)
+        while True:
+            for sample in reader.take_iter(timeout=1_000_000_000):
+                try:
+                    self.latest = json.loads(sample.data)
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+
+
 pose = PoseListener()
+health = HealthListener()
 waypoints: list[dict] = []
 WAYPOINTS_FILE = os.path.join(MAP_SAVE_DIR, "current", "waypoints_raw.json")
 
@@ -118,7 +147,10 @@ def session_status():
         "recorder": rec,
         "pose": pose.latest,
         "pose_stale_s": stale_s,
+        "health": health.latest,
         "map_snapshot_bytes": os.path.getsize(map_pcd) if os.path.exists(map_pcd) else 0,
+        "keyframes": len(_list_keyframes()),
+        "refined": os.path.exists(REFINED_PCD),
         "waypoints": len(waypoints),
     }
 
@@ -147,9 +179,35 @@ def list_waypoints():
     return {"waypoints": waypoints}
 
 
+def _list_keyframes():
+    if not os.path.isdir(KEYFRAME_DIR):
+        return []
+    return [f for f in os.listdir(KEYFRAME_DIR) if f.startswith("kf_") and f.endswith(".npz")]
+
+
+@app.post("/refine")
+def do_refine():
+    """Offline loop-closure refine over the walk's keyframes → map_refined.pcd.
+
+    Point-LIO has no loop closure, so a full-home walk drifts ('doubled walls').
+    This corrects it from the keyframes go2-slam dropped along the way. It
+    declines (ok=False) rather than guess if there aren't enough keyframes or no
+    confident loop closures — you then just export the raw map. [#2]
+    """
+    if not _list_keyframes():
+        raise HTTPException(409, "No keyframes yet — walk (and loop back) first")
+    try:
+        res = refiner.run_refine(KEYFRAME_DIR, REFINED_PCD)
+    except Exception as e:  # refine is experimental — never take the console down
+        raise HTTPException(500, f"refine failed: {e}")
+    return res
+
+
 @app.post("/export")
 def do_export():
-    src = os.path.join(MAP_SAVE_DIR, "current", "map.pcd")
+    # prefer the loop-closed map if refine produced one; fall back to raw
+    use_refined = os.path.exists(REFINED_PCD)
+    src = REFINED_PCD if use_refined else RAW_PCD
     if not os.path.exists(src):
         raise HTTPException(409, "No map snapshot yet — map for at least 30s first")
     session = time.strftime("%Y%m%d-%H%M%S")
@@ -163,10 +221,11 @@ def do_export():
             resolution=float(os.environ.get("GRID_RESOLUTION_M", "0.05")),
             lidar_height=float(os.environ.get("LIDAR_HEIGHT_OFFSET_M", "0.40")),
             waypoints=waypoints,
+            loop_closed=use_refined,
         )
     except RuntimeError as e:
         raise HTTPException(422, str(e))
-    return {"ok": True, "session": session, "meta": meta,
+    return {"ok": True, "session": session, "meta": meta, "loop_closed": use_refined,
             "download": f"/download/{session}.zip"}
 
 

@@ -11,10 +11,10 @@
         },
         {
             "name": "NETWORK_INTERFACE",
-            "description": "Host NIC on the 192.168.123.0/24 dog subnet (eth0 on the Go2's onboard Jetson)",
+            "description": "Host NIC on the 192.168.123.0/24 dog subnet. On the Go2's onboard Orin this is often 'enP8p1s0' (verified on a JP6.1 unit), NOT 'eth0'. Check with `ip -o addr` on the device; the right NIC is the one with a 192.168.123.x address.",
             "type": "string",
             "default": "eth0",
-            "prompt": "Host network interface"
+            "prompt": "Host network interface (Orin is usually enP8p1s0)"
         },
         {
             "name": "LIDAR_TOPIC",

@@ -80,6 +80,28 @@ These harden the mapping stage beyond raw Point-LIO odometry:
    walked through). For walking people that linger, full free-space ray-carving
    is the stronger — but much heavier — follow-up this doesn't attempt.
 
+## ⚠ go2-slam does not build yet — required fixes
+
+`go2-slam` was shipped referencing a Point-LIO branch that does not exist and
+**has never built**. The `go2-console` cyclonedds base is fixed (see its
+Dockerfile), but `go2-slam` still needs, and this was verified against a real
+Go2 Orin ("Woof", JetPack 6.1):
+
+1. **Real ROS2 Point-LIO.** The Dockerfile clones `hku-mars/Point-LIO --branch
+   ROS2`, which doesn't exist (both real branches are ROS1 catkin). Use
+   [`SMBU-PolarBear-Robotics-Team/point_lio`](https://github.com/SMBU-PolarBear-Robotics-Team/point_lio)
+   `@ 1.0.0` (ament, same `pointlio_mapping` executable and config schema). It
+   also needs a `livox_ros_driver2` message package present to compile (it
+   references `CustomMsg`); vendor a minimal msg-only package into the colcon ws.
+2. **Generic-xyz ingestion.** Woof's `/utlidar/cloud_deskewed` is `x,y,z,intensity`
+   only — **no `ring`, no per-point `time`** (frame `odom`, ~11k pts, 32B stride).
+   Point-LIO's stock PointCloud2 handlers (Ouster/Velodyne/Hesai) all require
+   ring+time, so a new `lidar_type` case must read plain XYZI and set per-point
+   time to 0 (the cloud is already deskewed). `lidar_type: 5` in the config is a
+   placeholder — no stock handler exists for it.
+3. **DDS interface.** The Go2 Orin's dog-subnet NIC is **`enP8p1s0`** (192.168.123.x),
+   not `eth0` — set `NETWORK_INTERFACE` accordingly (or let CycloneDDS auto-select).
+
 ## Honest caveats (read before first build)
 
 - **Point-LIO input path.** Unitree publishes a *standard PointCloud2*, not

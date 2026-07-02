@@ -1,6 +1,9 @@
 FROM ros:humble-ros-base
+# rmw-cyclonedds-cpp is REQUIRED: the Go2 speaks CycloneDDS, and
+# RMW_IMPLEMENTATION below selects it — without the package rosbag2 can't
+# load the RMW and won't discover the robot's topics.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ros-humble-rosbag2-storage-mcap python3-pip \
+    ros-humble-rosbag2-storage-mcap ros-humble-rmw-cyclonedds-cpp python3-pip \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --no-cache-dir fastapi uvicorn
 COPY cyclonedds.xml /opt/cyclonedds.xml

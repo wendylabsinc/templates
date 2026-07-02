@@ -26,6 +26,7 @@ import os
 import threading
 import time
 import zipfile
+from dataclasses import dataclass
 
 import httpx
 from cyclonedds.domain import DomainParticipant
@@ -53,8 +54,11 @@ app = FastAPI()
 
 # --------------------------------------------------- DDS pose subscriber
 # Matches ROS2's on-wire std_msgs/String: single `data` field, `rt/` prefix.
+# @dataclass is REQUIRED — without it cyclonedds can't build the type
+# (AttributeError: 'NoneType' has no attribute 'SupportsBasic').
+@dataclass
 class StdString(IdlStruct, typename="std_msgs::msg::dds_::String_"):
-    data: str
+    data: str = ""
 
 
 class PoseListener:
@@ -64,9 +68,13 @@ class PoseListener:
         self._t.start()
 
     def _run(self):
-        dp = DomainParticipant()
-        topic = Topic(dp, "rt/go2/slam/pose_json", StdString)
-        reader = DataReader(Subscriber(dp), topic)
+        try:
+            dp = DomainParticipant()
+            topic = Topic(dp, "rt/go2/slam/pose_json", StdString)
+            reader = DataReader(Subscriber(dp), topic)
+        except Exception as e:  # DDS init failure — degrade, don't crash the web app
+            print(f"[pose-listener] disabled: {e}", flush=True)
+            return
         while True:
             for sample in reader.take_iter(timeout=1_000_000_000):
                 try:
@@ -86,9 +94,13 @@ class HealthListener:
         self._t.start()
 
     def _run(self):
-        dp = DomainParticipant()
-        topic = Topic(dp, "rt/go2/slam/health_json", StdString)
-        reader = DataReader(Subscriber(dp), topic)
+        try:
+            dp = DomainParticipant()
+            topic = Topic(dp, "rt/go2/slam/health_json", StdString)
+            reader = DataReader(Subscriber(dp), topic)
+        except Exception as e:  # DDS init failure — degrade, don't crash the web app
+            print(f"[health-listener] disabled: {e}", flush=True)
+            return
         while True:
             for sample in reader.take_iter(timeout=1_000_000_000):
                 try:

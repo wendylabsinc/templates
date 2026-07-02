@@ -1,0 +1,78 @@
+{
+    "name": "go2-mapper",
+    "description": "Map your home with the Go2's Mid-360 LiDAR and export G1-ready navigation maps (3D .pcd + 2D Nav2 grid + waypoints). Live Foxglove view + web console with downloads.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "NETWORK_INTERFACE",
+            "description": "Host NIC on the 192.168.123.0/24 dog subnet (eth0 on the Go2's onboard Jetson)",
+            "type": "string",
+            "default": "eth0",
+            "prompt": "Host network interface"
+        },
+        {
+            "name": "LIDAR_TOPIC",
+            "description": "Deskewed Mid-360 cloud from Unitree's driver",
+            "type": "string",
+            "default": "/utlidar/cloud_deskewed",
+            "prompt": "LiDAR topic"
+        },
+        {
+            "name": "IMU_TOPIC",
+            "description": "LiDAR IMU topic used by Point-LIO",
+            "type": "string",
+            "default": "/utlidar/imu",
+            "prompt": "IMU topic"
+        },
+        {
+            "name": "CONSOLE_PORT",
+            "description": "Web console (control + downloads) port",
+            "type": "integer",
+            "default": 3600,
+            "prompt": "Console port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "FOXGLOVE_PORT",
+            "description": "Foxglove WebSocket bridge port",
+            "type": "integer",
+            "default": 8765,
+            "prompt": "Foxglove port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "SLICE_MIN_M",
+            "description": "Lower bound (m above floor) of the 2D obstacle slice — tuned for the G1's body, not the Go2's",
+            "type": "string",
+            "default": "0.15",
+            "prompt": "2D slice min height (m)"
+        },
+        {
+            "name": "SLICE_MAX_M",
+            "description": "Upper bound (m above floor) of the 2D obstacle slice (G1 head height + margin)",
+            "type": "string",
+            "default": "1.50",
+            "prompt": "2D slice max height (m)"
+        },
+        {
+            "name": "GRID_RESOLUTION_M",
+            "description": "Nav2 occupancy grid cell size in meters",
+            "type": "string",
+            "default": "0.05",
+            "prompt": "2D grid resolution (m)"
+        },
+        {
+            "name": "LIDAR_HEIGHT_OFFSET_M",
+            "description": "Mid-360 mount height above floor on the Go2 (used as a floor-fit prior; final z=0 comes from RANSAC)",
+            "type": "string",
+            "default": "0.40",
+            "prompt": "LiDAR mount height (m)"
+        }
+    ]
+}

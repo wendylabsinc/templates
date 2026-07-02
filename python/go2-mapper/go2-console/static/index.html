@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>go2-mapper console</title>
+<style>
+  /* Field-instrument look: deep photic blue (deep-water lidar), signal cyan
+     for live data, amber only for the recording state. Mono everywhere data
+     appears; the display face is the system stack set very tight. */
+  :root{
+    --bg:#0b1220; --panel:#111b2e; --line:#1e2c47;
+    --ink:#d7e2f4; --dim:#7d8db0;
+    --signal:#43d9c0; --rec:#f0a63c; --danger:#e0604f;
+    --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--ink);
+       font:16px/1.45 system-ui,-apple-system,sans-serif;
+       padding:16px;max-width:520px;margin:0 auto}
+  h1{font-size:15px;letter-spacing:.18em;text-transform:uppercase;
+     color:var(--dim);font-weight:600;margin:4px 0 14px}
+  h1 b{color:var(--signal);font-weight:700}
+  .panel{background:var(--panel);border:1px solid var(--line);
+         border-radius:10px;padding:14px;margin-bottom:12px}
+  .rowlbl{font-size:11px;letter-spacing:.14em;text-transform:uppercase;
+          color:var(--dim);margin-bottom:8px}
+  /* signature: the pose strip — a live instrument readout with a
+     heartbeat dot that dims when SLAM goes stale */
+  .pose{font-family:var(--mono);font-size:14px;display:flex;
+        align-items:center;gap:10px;min-height:24px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--signal);
+       flex:none;transition:background .4s}
+  .dot.stale{background:var(--danger)}
+  .dot.live{animation:pulse 1.2s ease-in-out infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  @media (prefers-reduced-motion: reduce){.dot.live{animation:none}}
+  .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+  .stat{font-family:var(--mono)}
+  .stat .v{font-size:18px;color:var(--ink)}
+  .stat .k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
+  button{width:100%;padding:13px;border-radius:8px;border:1px solid var(--line);
+         background:#16223a;color:var(--ink);font:600 15px system-ui;
+         cursor:pointer;margin-top:8px}
+  button:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:var(--signal);border-color:var(--signal);color:#062019}
+  button.rec{background:var(--rec);border-color:var(--rec);color:#241300}
+  input{width:100%;padding:11px;border-radius:8px;border:1px solid var(--line);
+        background:#0d1526;color:var(--ink);font:15px var(--mono)}
+  ul{list-style:none}
+  li{font-family:var(--mono);font-size:13px;padding:8px 0;
+     border-bottom:1px solid var(--line);display:flex;
+     justify-content:space-between;gap:8px;align-items:center}
+  li:last-child{border-bottom:0}
+  a{color:var(--signal);text-decoration:none;font-weight:600}
+  .msg{font-family:var(--mono);font-size:12px;color:var(--dim);
+       min-height:16px;margin-top:8px;word-break:break-word}
+  .badge{font:700 10px var(--mono);letter-spacing:.1em;text-transform:uppercase;
+       padding:2px 7px;border-radius:99px;margin-left:6px}
+  .badge.pass{background:#123b33;color:var(--signal)}
+  .badge.warn{background:#3b2c12;color:var(--rec)}
+  .badge.fail{background:#3b1712;color:var(--danger)}
+  .fox{font-size:12px;color:var(--dim)}
+  .fox code{font-family:var(--mono);color:var(--signal)}
+</style>
+</head>
+<body>
+<h1>go2·<b>mapper</b> — field console</h1>
+
+<div class="panel">
+  <div class="rowlbl">SLAM pose</div>
+  <div class="pose"><span class="dot" id="dot"></span><span id="poseTxt">waiting for /go2/slam/pose_json…</span></div>
+  <div class="stats">
+    <div class="stat"><div class="v" id="mapSize">0</div><div class="k">map MB</div></div>
+    <div class="stat"><div class="v" id="bagSize">0</div><div class="k">bag MB</div></div>
+    <div class="stat"><div class="v" id="wpCount">0</div><div class="k">waypoints</div></div>
+  </div>
+  <p class="fox" style="margin-top:10px">Live 3D view: open Foxglove → <code id="foxAddr">ws://…</code> → topic <code>/go2/slam/map_viz</code></p>
+</div>
+
+<div class="panel">
+  <div class="rowlbl">Recording</div>
+  <button id="btnRec" class="primary">Start recording</button>
+  <div class="msg" id="recMsg">Bag is insurance — SLAM maps continuously either way.</div>
+</div>
+
+<div class="panel">
+  <div class="rowlbl">Mark waypoint at current pose</div>
+  <input id="wpName" placeholder="front_door" autocomplete="off">
+  <button id="btnMark">Mark waypoint</button>
+  <div class="msg" id="wpMsg">Stand the dog where the G1 should stand, then mark.</div>
+</div>
+
+<div class="panel">
+  <div class="rowlbl">Finish</div>
+  <button id="btnExport">Finish &amp; export G1 map</button>
+  <div class="msg" id="exMsg">Aligns floor to z=0, slices 2D grid at G1 height, bundles waypoints.</div>
+  <ul id="exports"></ul>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let recording = false;
+$('foxAddr').textContent = 'ws://' + location.hostname + ':' + (window.FOXGLOVE_PORT || 8765);
+
+async function poll(){
+  try{
+    const s = await (await fetch('/session/status')).json();
+    recording = !!(s.recorder && s.recorder.recording);
+    $('btnRec').textContent = recording ? 'Stop recording' : 'Start recording';
+    $('btnRec').className = recording ? 'rec' : 'primary';
+    $('mapSize').textContent = (s.map_snapshot_bytes/1e6).toFixed(1);
+    $('bagSize').textContent = ((s.recorder&&s.recorder.size_bytes||0)/1e6).toFixed(0);
+    $('wpCount').textContent = s.waypoints;
+    if(s.pose){
+      const stale = s.pose_stale_s > 2;
+      $('dot').className = 'dot ' + (stale ? 'stale' : 'live');
+      $('poseTxt').textContent =
+        `x ${s.pose.x.toFixed(2)}  y ${s.pose.y.toFixed(2)}` + (stale ? '  — STALE' : '');
+    }
+  }catch(e){ $('poseTxt').textContent = 'console unreachable'; $('dot').className='dot stale'; }
+}
+setInterval(poll, 1000); poll();
+
+$('btnRec').onclick = async () => {
+  $('btnRec').disabled = true;
+  const r = await (await fetch(recording?'/session/stop':'/session/start',{method:'POST'})).json();
+  $('recMsg').textContent = r.ok
+    ? (r.session ? (recording?'Saved bag ':'Recording to bags/') + r.session : 'ok')
+    : ('Not started: ' + (r.error||'unknown'));
+  $('btnRec').disabled = false; poll();
+};
+
+$('btnMark').onclick = async () => {
+  const name = $('wpName').value.trim() || undefined;
+  const res = await fetch('/waypoint',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name})});
+  const r = await res.json();
+  $('wpMsg').textContent = res.ok
+    ? `Marked "${r.waypoint.name}" at x ${r.waypoint.x.toFixed(2)}, y ${r.waypoint.y.toFixed(2)}`
+    : (r.detail || 'failed');
+  if(res.ok) $('wpName').value='';
+  poll();
+};
+
+$('btnExport').onclick = async () => {
+  $('btnExport').disabled = true;
+  $('exMsg').textContent = 'Exporting — floor fit + slicing…';
+  const res = await fetch('/export',{method:'POST'});
+  const r = await res.json();
+  $('exMsg').textContent = res.ok
+    ? `Done: ${r.meta.grid.width}×${r.meta.grid.height} grid, floor fit on ${r.meta.floor_fit.inliers} pts.`
+    : (r.detail || 'export failed');
+  $('btnExport').disabled = false;
+  loadExports();
+};
+
+async function loadExports(){
+  const d = await (await fetch('/exports')).json();
+  const rows = await Promise.all(d.exports.map(async e => {
+    let v = '';
+    try {
+      const m = await (await fetch(`/exports/${e.session}/meta`)).json();
+      const q = m.quality && m.quality.verdict;
+      if(q) v = `<span class="badge ${q}">${q}</span>`;
+    } catch(err){}
+    return `<li><span>${e.session} ${v}</span>
+      <span><a href="/nogo">no-go</a> · <a href="${e.zip}" download>zip</a></span></li>`;
+  }));
+  $('exports').innerHTML = rows.join('') || '<li><span>No exports yet.</span></li>';
+}
+loadExports();
+</script>
+</body>
+</html>

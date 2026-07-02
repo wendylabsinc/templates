@@ -1,0 +1,29 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "go2-slam": {
+            "context": "./go2-slam",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "mapper-data", "path": "/data" }
+            ]
+        },
+        "go2-recorder": {
+            "context": "./go2-recorder",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "mapper-data", "path": "/data" }
+            ]
+        },
+        "go2-console": {
+            "context": "./go2-console",
+            "dependsOn": ["go2-slam", "go2-recorder"],
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "mapper-data", "path": "/data" }
+            ]
+        }
+    }
+}

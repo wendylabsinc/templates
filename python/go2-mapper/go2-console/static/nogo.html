@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>no-go zones — go2-mapper</title>
+<style>
+  :root{--bg:#0b1220;--panel:#111b2e;--line:#1e2c47;--ink:#d7e2f4;
+        --dim:#7d8db0;--signal:#43d9c0;--danger:#e0604f;
+        --mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace}
+  *{box-sizing:border-box;margin:0}
+  body{background:var(--bg);color:var(--ink);
+       font:16px/1.45 system-ui,-apple-system,sans-serif;
+       padding:16px;max-width:640px;margin:0 auto}
+  h1{font-size:15px;letter-spacing:.18em;text-transform:uppercase;
+     color:var(--dim);font-weight:600;margin:4px 0 14px}
+  h1 b{color:var(--danger);font-weight:700}
+  a{color:var(--signal);text-decoration:none}
+  #wrap{background:var(--panel);border:1px solid var(--line);
+        border-radius:10px;padding:10px;margin-bottom:12px}
+  canvas{width:100%;display:block;border-radius:6px;touch-action:none}
+  .bar{display:flex;gap:8px;margin-top:10px}
+  button{flex:1;padding:12px;border-radius:8px;border:1px solid var(--line);
+         background:#16223a;color:var(--ink);font:600 14px system-ui;cursor:pointer}
+  button:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
+  button.save{background:var(--danger);border-color:var(--danger);color:#2a0b06}
+  .msg{font-family:var(--mono);font-size:12px;color:var(--dim);
+       min-height:16px;margin-top:8px}
+  select{width:100%;padding:10px;border-radius:8px;background:#0d1526;
+         color:var(--ink);border:1px solid var(--line);font:14px var(--mono);
+         margin-bottom:10px}
+</style>
+</head>
+<body>
+<h1>go2·mapper — <b>no-go zones</b> &nbsp;<a href="/">← console</a></h1>
+<div id="wrap">
+  <select id="session"></select>
+  <canvas id="cv"></canvas>
+  <div class="bar">
+    <button id="btnClose">Close polygon</button>
+    <button id="btnUndo">Undo point</button>
+    <button id="btnClear">Clear all</button>
+    <button id="btnSave" class="save">Save keepout</button>
+  </div>
+  <div class="msg" id="msg">Tap the map to outline a forbidden area (stairs, pet bed, sliding rug). The G1's Nav2 keepout filter consumes the result directly.</div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('cv'), ctx = cv.getContext('2d');
+let meta = null, imgEl = new Image(), polys = [], cur = [], session = null;
+
+// map coords <-> canvas pixels. grid.png row 0 is the TOP (max y in map frame).
+function mapToPx(x, y){
+  const g = meta.grid, sx = cv.width / g.width, sy = cv.height / g.height;
+  return [ (x - g.origin[0]) / g.resolution_m * sx,
+           cv.height - (y - g.origin[1]) / g.resolution_m * sy ];
+}
+function pxToMap(px, py){
+  const g = meta.grid, sx = cv.width / g.width, sy = cv.height / g.height;
+  return [ g.origin[0] + px / sx * g.resolution_m,
+           g.origin[1] + (cv.height - py) / sy * g.resolution_m ];
+}
+
+function draw(){
+  ctx.drawImage(imgEl, 0, 0, cv.width, cv.height);
+  const paint = (pts, closed, hot) => {
+    if(!pts.length) return;
+    ctx.beginPath();
+    pts.forEach((p,i)=>{ const [x,y]=mapToPx(p[0],p[1]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+    if(closed) ctx.closePath();
+    ctx.strokeStyle = hot ? '#43d9c0' : '#e0604f';
+    ctx.lineWidth = 2; ctx.stroke();
+    if(closed){ ctx.fillStyle = 'rgba(224,96,79,.30)'; ctx.fill(); }
+    pts.forEach(p=>{ const [x,y]=mapToPx(p[0],p[1]);
+      ctx.fillStyle = hot ? '#43d9c0' : '#e0604f';
+      ctx.beginPath(); ctx.arc(x,y,4,0,7); ctx.fill(); });
+  };
+  polys.forEach(p => paint(p.points, true, false));
+  paint(cur, false, true);
+}
+
+cv.addEventListener('pointerdown', e => {
+  if(!meta) return;
+  const r = cv.getBoundingClientRect();
+  const scale = cv.width / r.width;
+  cur.push(pxToMap((e.clientX - r.left) * scale, (e.clientY - r.top) * scale));
+  draw();
+});
+
+$('btnClose').onclick = () => {
+  if(cur.length < 3){ $('msg').textContent = 'A zone needs at least 3 points.'; return; }
+  polys.push({name: 'zone_' + (polys.length + 1), points: cur});
+  cur = []; draw();
+  $('msg').textContent = polys.length + ' zone(s) drawn — save to generate keepout.pgm.';
+};
+$('btnUndo').onclick = () => { cur.pop(); draw(); };
+$('btnClear').onclick = () => { polys = []; cur = []; draw();
+  $('msg').textContent = 'Cleared. Save to remove keepout zones from the export.'; };
+
+$('btnSave').onclick = async () => {
+  const res = await fetch(`/exports/${session}/nogo`, {method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({polygons: polys})});
+  const r = await res.json();
+  $('msg').textContent = res.ok
+    ? `Saved — ${r.forbidden_m2} m² forbidden. keepout.pgm/.yaml added to the download zip.`
+    : (r.detail || 'save failed');
+};
+
+async function loadSession(s){
+  session = s;
+  meta = await (await fetch(`/exports/${s}/meta`)).json();
+  const saved = await (await fetch(`/exports/${s}/nogo`)).json();
+  polys = saved.polygons || []; cur = [];
+  imgEl = new Image();
+  imgEl.onload = () => {
+    cv.width = imgEl.width * 4; cv.height = imgEl.height * 4;  // crisp on retina
+    ctx.imageSmoothingEnabled = false; draw();
+  };
+  imgEl.src = `/exports/${s}/grid.png`;
+}
+
+(async () => {
+  const d = await (await fetch('/exports')).json();
+  if(!d.exports.length){ $('msg').textContent = 'No exports yet — finish a mapping session first.'; return; }
+  $('session').innerHTML = d.exports.map(e => `<option>${e.session}</option>`).join('');
+  $('session').onchange = e => loadSession(e.target.value);
+  loadSession(d.exports[0].session);
+})();
+</script>
+</body>
+</html>

@@ -78,6 +78,11 @@
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
             "languages": ["python"]
+        },
+        {
+            "name": "go2-mapper",
+            "description": "Map your home with the Go2's Mid-360 LiDAR and export G1-ready navigation maps (3D .pcd + 2D Nav2 grid + waypoints). Live Foxglove view + web console with downloads. A 3-service app group (Point-LIO SLAM + rosbag recorder + export console).",
+            "languages": ["python"]
         }
     ],
     "languages": [

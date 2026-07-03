@@ -80,27 +80,32 @@ These harden the mapping stage beyond raw Point-LIO odometry:
    walked through). For walking people that linger, full free-space ray-carving
    is the stronger — but much heavier — follow-up this doesn't attempt.
 
-## ⚠ go2-slam does not build yet — required fixes
+## LiDAR source: mid360 vs hesai (`LIDAR_SOURCE`)
 
-`go2-slam` was shipped referencing a Point-LIO branch that does not exist and
-**has never built**. The `go2-console` cyclonedds base is fixed (see its
-Dockerfile), but `go2-slam` still needs, and this was verified against a real
-Go2 Orin ("Woof", JetPack 6.1):
+`go2-slam` now **builds and runs** (verified on a real Go2 Orin, "Woof", JP6.1:
+Point-LIO on the SMBU-PolarBear ROS2 fork + a vendored `livox_ros_driver2` msg
+package; IMU init, cloud ingest, map accumulate, export all confirmed). Pick the
+LiDAR with `LIDAR_SOURCE`:
 
-1. **Real ROS2 Point-LIO.** The Dockerfile clones `hku-mars/Point-LIO --branch
-   ROS2`, which doesn't exist (both real branches are ROS1 catkin). Use
-   [`SMBU-PolarBear-Robotics-Team/point_lio`](https://github.com/SMBU-PolarBear-Robotics-Team/point_lio)
-   `@ 1.0.0` (ament, same `pointlio_mapping` executable and config schema). It
-   also needs a `livox_ros_driver2` message package present to compile (it
-   references `CustomMsg`); vendor a minimal msg-only package into the colcon ws.
-2. **Generic-xyz ingestion.** Woof's `/utlidar/cloud_deskewed` is `x,y,z,intensity`
-   only — **no `ring`, no per-point `time`** (frame `odom`, ~11k pts, 32B stride).
-   Point-LIO's stock PointCloud2 handlers (Ouster/Velodyne/Hesai) all require
-   ring+time, so a new `lidar_type` case must read plain XYZI and set per-point
-   time to 0 (the cloud is already deskewed). `lidar_type: 5` in the config is a
-   placeholder — no stock handler exists for it.
-3. **DDS interface.** The Go2 Orin's dog-subnet NIC is **`enP8p1s0`** (192.168.123.x),
-   not `eth0` — set `NETWORK_INTERFACE` accordingly (or let CycloneDDS auto-select).
+- **`mid360`** (default) — the stock Unitree Mid-360. Its `/utlidar/cloud_deskewed`
+  is `x,y,z,intensity` only (no ring/time), so `cloud_shim.py` repacks it into the
+  Velodyne layout and Point-LIO runs `lidar_type=2` (VELO16).
+- **`hesai`** — an aftermarket **Hesai XT-16** (as on Woof). It publishes a real
+  PointCloud2 with per-point ring+timestamp on `/hesai/points`, consumed via
+  `lidar_type=4` (HESAIxt32) with **no shim**. The build clones the Hesai ROS2
+  driver (`--build-arg WITH_HESAI=0` to skip); set `GO2_HESAI_IP` / `GO2_HESAI_HOST`.
+
+**Known issue — Point-LIO divergence.** Point-LIO is LiDAR-*inertial* and the
+Go2 LiDAR's `/utlidar/imu` is noisy; on the Mid-360 path (with shim-synthesized
+timing) it diverged (pose blew up), and the divergence watchdog froze the map.
+The `hesai` path removes the fake-timing suspect (real per-point time), but the
+XT-16 has no IMU of its own, so it still pairs with `/utlidar/imu` (extrinsic
+estimated online) — **not yet validated end-to-end**. If divergence persists,
+the robust alternative is an IMU-free front-end (2D `slam_toolbox` on
+`sportmodestate` odometry, as in `go2-autonav-voice`).
+
+- **DDS interface.** The Go2 Orin's dog-subnet NIC is **`enP8p1s0`** (192.168.123.x),
+  not `eth0` — set `NETWORK_INTERFACE` accordingly (or let CycloneDDS auto-select).
 
 ## Honest caveats (read before first build)
 

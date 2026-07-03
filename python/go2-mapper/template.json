@@ -17,18 +17,39 @@
             "prompt": "Host network interface (Orin is usually enP8p1s0)"
         },
         {
+            "name": "LIDAR_SOURCE",
+            "description": "Which LiDAR to map with: 'mid360' (stock Unitree Mid-360, xyz-only cloud via shim) or 'hesai' (aftermarket Hesai XT-16 with real ring+time, native Point-LIO path). 'hesai' also builds the Hesai driver.",
+            "type": "string",
+            "default": "mid360",
+            "prompt": "LiDAR source (mid360 | hesai)"
+        },
+        {
             "name": "LIDAR_TOPIC",
-            "description": "Deskewed Mid-360 cloud from Unitree's driver",
+            "description": "Deskewed Mid-360 cloud from Unitree's driver (used when LIDAR_SOURCE=mid360)",
             "type": "string",
             "default": "/utlidar/cloud_deskewed",
             "prompt": "LiDAR topic"
         },
         {
             "name": "IMU_TOPIC",
-            "description": "LiDAR IMU topic used by Point-LIO",
+            "description": "IMU topic Point-LIO fuses (the Go2's /utlidar/imu for both LiDAR sources; the XT-16 has no IMU of its own)",
             "type": "string",
             "default": "/utlidar/imu",
             "prompt": "IMU topic"
+        },
+        {
+            "name": "GO2_HESAI_IP",
+            "description": "Hesai XT-16 sensor IP on the dog subnet (used when LIDAR_SOURCE=hesai)",
+            "type": "string",
+            "default": "192.168.123.20",
+            "prompt": "Hesai LiDAR IP"
+        },
+        {
+            "name": "GO2_HESAI_HOST",
+            "description": "Host NIC IP on the dog subnet the Hesai sends to (the Orin's 192.168.123.x address)",
+            "type": "string",
+            "default": "192.168.123.18",
+            "prompt": "Hesai host IP"
         },
         {
             "name": "CONSOLE_PORT",

@@ -48,6 +48,7 @@ CURRENT = os.path.join(MAP_SAVE_DIR, "current")
 KEYFRAME_DIR = os.path.join(CURRENT, "keyframes")
 RAW_PCD = os.path.join(CURRENT, "map.pcd")
 REFINED_PCD = os.path.join(CURRENT, "map_refined.pcd")
+BAG_DIR = os.environ.get("BAG_DIR", "/data/bags")  # shared with go2-recorder
 
 app = FastAPI()
 
@@ -285,6 +286,35 @@ def download_file(session: str, filename: str):
     path = os.path.realpath(os.path.join(d, filename))
     if not path.startswith(d) or not os.path.isfile(path):
         raise HTTPException(404, "no such file")
+    return FileResponse(path, filename=filename)
+
+
+# ------------------------------------------------------- rosbag downloads
+# The recorder writes bags to the shared /data volume; expose them so the
+# raw capture can be pulled to a laptop (bags aren't zipped — the .mcap is
+# streamed from disk via FileResponse so multi-GB bags don't buffer in RAM).
+@app.get("/bags")
+def list_bags():
+    if not os.path.isdir(BAG_DIR):
+        return {"bags": []}
+    out = []
+    for s in sorted(os.listdir(BAG_DIR), reverse=True):
+        d = os.path.join(BAG_DIR, s)
+        if os.path.isdir(d):
+            files = [{"name": f, "bytes": os.path.getsize(os.path.join(d, f)),
+                      "url": f"/download-bag/{s}/{f}"}
+                     for f in sorted(os.listdir(d))]
+            out.append({"session": s, "files": files,
+                        "bytes": sum(f["bytes"] for f in files)})
+    return {"bags": out}
+
+
+@app.get("/download-bag/{session}/{filename}")
+def download_bag_file(session: str, filename: str):
+    base = os.path.realpath(BAG_DIR)
+    path = os.path.realpath(os.path.join(base, session, filename))
+    if not path.startswith(base + os.sep) or not os.path.isfile(path):
+        raise HTTPException(404, "no such bag file")
     return FileResponse(path, filename=filename)
 
 

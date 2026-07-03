@@ -3,34 +3,43 @@
 # Point-LIO is chosen over FAST-LIO2 because it tolerates the jerky sensor
 # motion of legged robots better. Both are light: ~1 CPU core on Orin NX.
 #
-# NOTE (the fiddly part): Unitree publishes the Mid-360 as a standard
-# sensor_msgs/PointCloud2 on /utlidar/cloud_deskewed, NOT the livox custom
-# msg. config/mid360_go2.yaml therefore uses the generic PointCloud2
-# preprocessing path. If your firmware's cloud lacks per-point timestamps,
-# deskewed input still works — Unitree already motion-corrected it.
+# Point-LIO source: the SMBU-PolarBear ROS2 port (ament, executable
+# `pointlio_mapping`) pinned to tag 1.0.0. The upstream hku-mars repo has no
+# ROS2 branch. It references livox_ros_driver2::msg::CustomMsg unconditionally,
+# so we vendor a minimal msg-only livox_ros_driver2 package to satisfy the
+# build (the Livox path is never used at runtime).
+#
+# Input path: the Go2's /utlidar/cloud_deskewed is x,y,z,intensity only (no
+# ring / per-point time), which none of Point-LIO's stock PointCloud2 handlers
+# accept. cloud_shim.py repacks it into the Velodyne layout on /point_lio/cloud
+# and the config runs lidar_type=2 (VELO16) against that.
 
 FROM ros:humble-ros-base
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git cmake \
-    libeigen3-dev libpcl-dev \
+    libeigen3-dev libpcl-dev libgoogle-glog-dev \
     ros-humble-pcl-conversions ros-humble-pcl-ros \
     ros-humble-foxglove-bridge \
-    python3-pip \
+    ros-humble-rmw-cyclonedds-cpp \
+    python3-pip python3-dev python3-numpy \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir numpy
 
-# Build Point-LIO (ROS2 branch)
-WORKDIR /ws/src
-RUN git clone --depth 1 --branch ROS2 https://github.com/hku-mars/Point-LIO.git
+# Vendored livox_ros_driver2 messages (build-time only) + the real ROS2
+# Point-LIO. colcon builds livox_ros_driver2 first (Point-LIO depends on it).
+COPY livox_ros_driver2 /ws/src/livox_ros_driver2
+RUN git clone --depth 1 --branch 1.0.0 \
+    https://github.com/SMBU-PolarBear-Robotics-Team/point_lio.git /ws/src/point_lio
 WORKDIR /ws
 RUN . /opt/ros/humble/setup.sh && \
     colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 
 COPY config/mid360_go2.yaml /ws/config/mid360_go2.yaml
 COPY cyclonedds.xml /opt/cyclonedds.xml
+COPY cloud_shim.py /opt/cloud_shim.py
 COPY viz_bridge.py /opt/viz_bridge.py
 COPY entry.sh /opt/entry.sh
 RUN chmod +x /opt/entry.sh

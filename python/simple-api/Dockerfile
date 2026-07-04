@@ -1,5 +1,4 @@
 # syntax=docker/dockerfile:1.6
-RUN false # deliberate test bug — wendy-flow fix-loop validation; delete this branch after
 FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
 
 WORKDIR /app

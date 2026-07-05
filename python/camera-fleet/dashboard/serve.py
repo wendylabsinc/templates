@@ -6,7 +6,7 @@ It does NOT know how many cameras exist or where they are. The platform resolves
 the `camera` component's live endpoints (every device in the named group) and hands
 them to us two ways — the contract delivered by WDY-1755:
 
-  1. WENDY_FLEET_PEERS  — env var (or file path), a JSON snapshot injected at start:
+  1. FLEET_PEERS  — env var (or file path), a JSON snapshot injected at start:
          [{"name": "...", "url": "http://...:8000", "group": "cameras", "status": "ready"}, ...]
      The `url` is already reachable from here regardless of where this component runs
      (LAN-direct when co-located, auto-provisioned tunnel when remote/cloud).
@@ -39,8 +39,8 @@ _peers_lock = threading.Lock()
 
 
 def _load_seed():
-    """Initial peers from WENDY_FLEET_PEERS — either inline JSON or a file path."""
-    raw = os.environ.get("WENDY_FLEET_PEERS", "").strip()
+    """Initial peers from FLEET_PEERS — either inline JSON or a file path."""
+    raw = os.environ.get("FLEET_PEERS", "").strip()
     if not raw:
         return []
     try:
@@ -50,7 +50,7 @@ def _load_seed():
         data = json.loads(raw)
         return data.get("peers", data) if isinstance(data, dict) else data
     except Exception as e:  # noqa: BLE001
-        print(f"[fleet] could not parse WENDY_FLEET_PEERS: {e}")
+        print(f"[fleet] could not parse FLEET_PEERS: {e}")
         return []
 
 
@@ -125,7 +125,7 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     with _peers_lock:
         _peers[:] = _load_seed()
-    print(f"[fleet] seeded {len(_peers)} camera(s) from WENDY_FLEET_PEERS")
+    print(f"[fleet] seeded {len(_peers)} camera(s) from FLEET_PEERS")
     if DISCOVERY_URL:
         threading.Thread(target=_poll_discovery, daemon=True).start()
         print(f"[fleet] polling live discovery: {DISCOVERY_URL} every {POLL_SECONDS}s")

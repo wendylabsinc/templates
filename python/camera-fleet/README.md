@@ -48,7 +48,7 @@ device matching a tag (the **edge** tier) plus a single camera-wall dashboard th
 {
   "components": {
     "camera":    { "path": "camera",    "tags": ["camera-*"], "expose": { "port": 8000, "path": "/stream" } },
-    "dashboard": { "path": "dashboard", "tags": ["central"],  "discovers": [ { "component": "camera", "as": "WENDY_FLEET_PEERS" } ] }
+    "dashboard": { "path": "dashboard", "tags": ["central"],  "discovers": [ { "component": "camera", "as": "FLEET_PEERS" } ] }
   }
 }
 ```
@@ -60,13 +60,17 @@ device matching a tag (the **edge** tier) plus a single camera-wall dashboard th
    conventional tag. A component whose tags match no device (like `dashboard` here) is deployed
    to `--central <device>`, or its peer snapshot is printed so you can run it on your laptop.
 2. **Resolves** the matched `camera` devices to their mesh names.
-3. **Injects** them into the dashboard as `WENDY_FLEET_PEERS` — a JSON snapshot:
+3. **Injects** them into the dashboard as `FLEET_PEERS` — a JSON snapshot:
    ```json
    [{ "name": "camera-01", "url": "http://device-42.cloud.wendy.dev:8000", "group": "camera-*", "status": "ready" }]
    ```
    `url` is a **base origin** (`scheme://host:port`) reachable over the mesh; consumers append
    their own paths (`/stream`, `/health`). (`WENDY_DISCOVERY_URL`, a live-membership API, is
    reserved for the mDNS work in WDY-1777; unset today, and `serve.py` degrades to the snapshot.)
+
+> The discover `as` name is injected as a container env var, so it must not use a
+> reserved prefix (`WENDY_`, `LD_`, `DYLD_`) — the agent rejects those. Use a plain
+> name like `FLEET_PEERS`.
 
 `dashboard/serve.py` consumes exactly that contract and renders from `GET /api/peers` — add a
 camera to the fleet, a tile appears.
@@ -85,10 +89,10 @@ wendy init --template camera-fleet \
 wendy fleet run --lan     # fans `camera` out to matching devices; prints the dashboard peers
 ```
 
-To run the dashboard on your laptop, export the printed `WENDY_FLEET_PEERS` and start it:
+To run the dashboard on your laptop, export the printed `FLEET_PEERS` and start it:
 
 ```sh
-cd dashboard && WENDY_FLEET_PEERS='[…]' DASHBOARD_PORT=9000 python3 serve.py
+cd dashboard && FLEET_PEERS='[…]' DASHBOARD_PORT=9000 python3 serve.py
 # open http://localhost:9000
 ```
 

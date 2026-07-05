@@ -1,7 +1,7 @@
 # Central component — the camera-wall dashboard. Stdlib-only Python, so a bare
-# slim image is all it needs. The platform places this once (on a hub device, or
-# in the cloud) per the `target: { central: true }` in ../wendy-fleet.json, and injects
-# WENDY_FLEET_PEERS + WENDY_DISCOVERY_URL so it auto-populates from the fleet.
+# slim image is all it needs. The platform places this on the device(s) matching
+# the dashboard component's tags in ../wendy-fleet.json, and injects FLEET_PEERS
+# (+ WENDY_DISCOVERY_URL) so it auto-populates from the fleet.
 #
 # (It also runs host-side with no container at all: `python3 serve.py`.)
 FROM python:3.11-slim

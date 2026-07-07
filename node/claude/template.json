@@ -30,6 +30,20 @@
             "type": "string",
             "default": "claude --print --dangerously-skip-permissions",
             "prompt": "Claude command"
+        },
+        {
+            "name": "CLAUDE_CODE_OAUTH_TOKEN",
+            "description": "Optional Claude subscription token from `claude setup-token` on a machine with a browser. If set, Claude Code is authenticated without an in-container OAuth login. Leave blank to log in later via attach.",
+            "type": "string",
+            "default": "",
+            "prompt": "Claude Code OAuth token (optional)"
+        },
+        {
+            "name": "ANTHROPIC_API_KEY",
+            "description": "Optional Anthropic API key (API billing) as an alternative to the subscription token. Leave blank if using CLAUDE_CODE_OAUTH_TOKEN or attach login.",
+            "type": "string",
+            "default": "",
+            "prompt": "Anthropic API key (optional)"
         }
     ]
 }

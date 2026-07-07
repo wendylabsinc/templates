@@ -36,6 +36,14 @@ ENV CONSOLE_TOKEN="{{.CONSOLE_TOKEN}}"
 ENV CLAUDE_COMMAND="{{.CLAUDE_COMMAND}}"
 ENV HTTPS_CERT_PATH=/state/tls/cert.pem
 ENV HTTPS_KEY_PATH=/state/tls/key.pem
+# Optional Claude Code credentials, baked in only when provided at `wendy init`.
+# With either set, Claude Code is authenticated without an in-container login.
+{{- if .CLAUDE_CODE_OAUTH_TOKEN}}
+ENV CLAUDE_CODE_OAUTH_TOKEN="{{.CLAUDE_CODE_OAUTH_TOKEN}}"
+{{- end}}
+{{- if .ANTHROPIC_API_KEY}}
+ENV ANTHROPIC_API_KEY="{{.ANTHROPIC_API_KEY}}"
+{{- end}}
 
 WORKDIR /workspace
 EXPOSE {{.PORT}}

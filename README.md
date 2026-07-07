@@ -87,11 +87,11 @@ The image installs Wendy CLI during the build via the public Wendy installer. En
 
 ### claude
 
-A slimmer sibling of `hermes-agent`: the same token-gated HTTPS console (text + browser voice prompts) running Claude Code on a WendyOS device. It carries the same `admin` and `build` entitlements, but does not bundle the Wendy CLI, Wendy MCP setup, or an in-container BuildKit daemon — Claude Code works in a persisted `/workspace` out of the box, and its subscription token is baked in at `wendy init` so there is no in-container OAuth login.
+Functionally the same on-device app-building agent as `hermes-agent` — the same token-gated HTTPS console (text + browser voice prompts), Wendy CLI, Wendy MCP setup, and in-container BuildKit, with full device control through the local admin socket. The one difference: the Claude subscription token is baked in at `wendy init` (from `claude setup-token`), so the device never runs the interactive OAuth login that is unreliable in headless / attach sessions.
 
 | Target | Language | Framework | Default Port | Directory |
 |--------|----------|-----------|--------------|-----------|
-| WendyOS | Node | Claude Code + built-in HTTPS server | 3091 | `node/claude/` |
+| WendyOS | Node | Claude Code + Wendy MCP + BuildKit + built-in HTTPS server | 3091 | `node/claude/` |
 
 ```bash
 wendy init --app-id claude --target wendyos --language node --template claude \
@@ -99,7 +99,7 @@ wendy init --app-id claude --target wendyos --language node --template claude \
   --var CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat..."   # from `claude setup-token`
 ```
 
-Entitlements: `admin`, `build`, `network` (host, so Claude Code can reach the Anthropic API), and persisted `/home/claude`, `/workspace`, and `/state`. Claude Code runs as the unprivileged `claude` user, authenticated by the `CLAUDE_CODE_OAUTH_TOKEN` baked into the image.
+The image installs the Wendy CLI during the build via the public Wendy installer. Entitlements: `admin`, `build`, `network` (host), and persisted `/home/claude`, `/workspace`, `/state`, and `/var/lib/buildkit`. Claude Code runs as the unprivileged `claude` user, authenticated by the `CLAUDE_CODE_OAUTH_TOKEN` baked into the image.
 
 ### llm
 

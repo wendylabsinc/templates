@@ -41,7 +41,7 @@
         },
         {
             "name": "claude",
-            "description": "On-device Claude Code console: token-gated HTTPS page with browser text and voice input, pointed at a persisted /workspace, with admin and build entitlements",
+            "description": "On-device app-building agent: Claude Code + Wendy MCP + BuildKit with browser text and voice input and full device control; subscription token baked in at init",
             "targets": ["wendyos"],
             "languages": ["node"]
         },

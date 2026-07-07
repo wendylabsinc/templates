@@ -27,6 +27,11 @@
             "type": "persist",
             "name": "{{.APP_ID}}-state",
             "path": "/state"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-buildkit-cache",
+            "path": "/var/lib/buildkit"
         }
     ],
     "readiness": {

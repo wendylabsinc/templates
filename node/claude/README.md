@@ -1,17 +1,17 @@
 # {{.APP_ID}}
 
-A lean **Claude Code console** for a WendyOS device. It runs the Claude Code CLI
-inside a container as an unprivileged user and serves a token-gated HTTPS page
-that accepts text prompts and browser-transcribed voice prompts, then streams
-the Claude Code run back to the page. All work happens in a persisted
-`/workspace`.
+A **Claude Code console** that runs Claude Code on a WendyOS device with full
+control of the device. It packages the Wendy CLI, Wendy MCP setup, and an
+in-container BuildKit daemon, and serves a token-gated HTTPS page that accepts
+text prompts and browser-transcribed voice prompts, then streams the Claude Code
+run back to the page. Prompts can inspect the device, edit projects under
+`/workspace`, build with `wendy run --yes`, and deploy apps through the local
+admin socket.
 
-This template holds the `admin` and `build` entitlements, so the container can
-reach the Wendy admin socket and use privileged builder features. Unlike
-`hermes-agent`, it does not bundle the Wendy CLI, Wendy MCP setup, or an
-in-container BuildKit daemon — Claude Code works in `/workspace` out of the box,
-and you can install and wire up device tooling yourself if you want to use those
-entitlements.
+It is functionally the same on-device agent as `hermes-agent`, with one
+difference: the Claude subscription token is baked in at `wendy init` (see
+below), so the device never has to run the interactive OAuth login that is
+unreliable in headless / attach sessions.
 
 ## Scaffold
 
@@ -44,6 +44,12 @@ wendy init \
 Because the credential is baked into the image layers and the rendered
 `Dockerfile`, treat the scaffolded project and its image as secret — don't push
 the image to a public registry.
+
+## Wendy CLI
+
+The Dockerfile installs the Wendy CLI during the image build via the public Wendy
+installer. By default it installs the latest release. For direct Docker builds or
+CI, pass `--build-arg WENDY_INSTALL_URL=...` to use an internal mirror.
 
 ## Deploy
 
@@ -78,7 +84,7 @@ Type or speak an instruction and press `Send`. Claude Code runs once per prompt
 into the log. A good first prompt:
 
 ```text
-Create /workspace/hello.py that prints the current time, then run it and show me the output.
+Create a WendyOS simple-api app under /workspace/apps/hello-api, deploy it, and show me the health endpoint.
 ```
 
 - **Auto send** submits a voice prompt as soon as speech recognition finalizes.
@@ -86,22 +92,34 @@ Create /workspace/hello.py that prints the current time, then run it and show me
 - **Stop** cancels the running job.
 - The **Workspace** panel lists the top-level entries in `/workspace`.
 
+## Building Apps on the Device
+
+`/workspace/CLAUDE.md` seeds operating rules for Claude Code. On-device builds use
+`buildkitd` through:
+
+```bash
+BUILDKIT_HOST=unix:///run/buildkit/buildkitd.sock
+```
+
+If BuildKit fails with overlayfs errors on your device kernel, set
+`BUILDKIT_SNAPSHOTTER=native` in the container environment and redeploy.
+
 ## Security
 
-Anyone with the console token can run Claude Code in this container and read or
-edit anything under `/workspace`. This app holds the `admin` and `build`
-entitlements, so with the right tooling it can control apps, read device
-telemetry, and use privileged builder features. Keep the console token private,
-deploy only to trusted first-party devices, and avoid exposing the port beyond
-your trusted network. The container also has host networking so Claude Code can
-reach the Anthropic API.
+This app has `admin` and `build` entitlements. It can control apps, read device
+telemetry, exec into containers, build images, deploy apps, and use privileged
+builder kernel features — and anyone with the console token can drive it. Deploy
+only to trusted first-party devices, keep the console token private, and avoid
+exposing the port beyond your trusted network. The container also has host
+networking so Claude Code can reach the Anthropic API.
 
 ## Persistence
 
-`wendy.json` persists three volumes:
+`wendy.json` persists four volumes:
 
 | Path | Holds |
 |------|-------|
 | `/home/claude` | Claude Code login and settings |
 | `/workspace` | Your files (seeded once with `CLAUDE.md`) |
 | `/state` | TLS certificate and prompt history (`claude-history.ndjson`) |
+| `/var/lib/buildkit` | BuildKit layer cache |

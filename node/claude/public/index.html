@@ -342,6 +342,8 @@
         </div>
         <div class="status-row">
           <span id="jobBadge" class="badge">Idle</span>
+          <span id="adminBadge" class="badge">Admin socket</span>
+          <span id="buildBadge" class="badge">BuildKit</span>
           <span id="claudeBadge" class="badge">Claude auth</span>
         </div>
       </header>
@@ -352,7 +354,7 @@
           <form id="promptForm" class="composer">
             <textarea
               id="prompt"
-              placeholder="Write a Python script under /workspace that fetches the weather and prints it."
+              placeholder="Build a small camera viewer app and deploy it."
               autocomplete="off"
             ></textarea>
             <div class="actions">
@@ -422,6 +424,8 @@
         tokenForm: document.querySelector("#tokenForm"),
         tokenInput: document.querySelector("#tokenInput"),
         jobBadge: document.querySelector("#jobBadge"),
+        adminBadge: document.querySelector("#adminBadge"),
+        buildBadge: document.querySelector("#buildBadge"),
         claudeBadge: document.querySelector("#claudeBadge"),
         jobField: document.querySelector("#jobField"),
         voiceField: document.querySelector("#voiceField"),
@@ -529,6 +533,8 @@
           const status = await api("/api/status");
           state.active = Boolean(status.activeJob);
           els.jobField.value = status.activeJob ? status.activeJob.id : "idle";
+          setBadge(els.adminBadge, "Admin socket", status.adminSocket ? "good" : "bad");
+          setBadge(els.buildBadge, "BuildKit", status.buildkitSocket ? "good" : "warn");
           setBadge(els.claudeBadge, "Claude auth", status.claudeHome ? "good" : "warn");
           els.workspace.replaceChildren(
             ...status.workspace.map((entry) => {

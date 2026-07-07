@@ -131,11 +131,11 @@ async function appendHistory(entry) {
 
 function buildClaudePrompt(userPrompt) {
   return [
-    "You are Claude Code, running on a WendyOS device inside a container.",
+    "You are Claude Code, running on the WendyOS device itself.",
     "The user is giving you a voice or text instruction from the browser console.",
-    "Work in the local workspace at /workspace, which is persisted across restarts.",
-    "You can read and edit files, run shell commands, and use git in this container.",
-    "Keep changes small and explain what you did in plain language.",
+    "Use the local workspace at /workspace for app projects. Use the installed wendy CLI for device inspection, app logs, builds, and deploys.",
+    "When asked to build or iterate on an app, create or edit a project under /workspace/apps and run wendy run --yes from that app directory.",
+    "Avoid destructive device actions unless the user explicitly asks for them.",
     "",
     "User request:",
     userPrompt.trim(),
@@ -255,6 +255,9 @@ async function statusPayload() {
           startedAt: activeJob.startedAt,
         }
       : null,
+    adminSocket: Boolean(process.env.WENDY_AGENT_SOCKET),
+    adminSocketPath: process.env.WENDY_AGENT_SOCKET || "",
+    buildkitSocket: existsSync("/run/buildkit/buildkitd.sock"),
     claudeHome:
       existsSync(path.join(CLAUDE_HOME_DIR, ".claude")) ||
       existsSync(path.join(CLAUDE_HOME_DIR, ".claude.json")),

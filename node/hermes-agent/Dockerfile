@@ -18,7 +18,7 @@ RUN apt-get update \
 # BuildKit (buildkitd + buildctl + buildkit-runc) for on-device image builds.
 # The default target is arm64 because WendyOS devices are normally Jetson/ARM64.
 ARG BUILDKIT_VERSION=v0.16.0
-ARG WENDY_INSTALL_URL=https://install.wendy.sh/cli.sh
+ARG WENDY_INSTALL_URL=https://install.wendy.dev/cli.sh
 ARG WENDY_VERSION=latest
 ARG TARGETARCH=arm64
 RUN case "${TARGETARCH}" in \
@@ -35,10 +35,13 @@ ENV BUILDKIT_HOST=unix:///run/buildkit/buildkitd.sock
 # Wendy CLI for talking to the local admin socket. Use the public installer so
 # the template does not need to know release artifact names or local CLI paths.
 RUN if [ "${WENDY_VERSION}" = "latest" ]; then \
-      curl -fsSL "${WENDY_INSTALL_URL}" | bash -s -- -y -d /usr/local/bin; \
+      curl -fsSL -o /tmp/install-wendy-cli.sh "${WENDY_INSTALL_URL}" \
+      && bash /tmp/install-wendy-cli.sh -y -d /usr/local/bin; \
     else \
-      curl -fsSL "${WENDY_INSTALL_URL}" | WENDY_VERSION="${WENDY_VERSION}" bash -s -- -y -d /usr/local/bin; \
+      curl -fsSL -o /tmp/install-wendy-cli.sh "${WENDY_INSTALL_URL}" \
+      && WENDY_VERSION="${WENDY_VERSION}" bash /tmp/install-wendy-cli.sh -y -d /usr/local/bin; \
     fi \
+  && rm -f /tmp/install-wendy-cli.sh \
   && wendy --version
 
 # Claude Code CLI. Authentication is persisted in /root by wendy.json.

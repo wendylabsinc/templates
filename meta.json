@@ -25,6 +25,10 @@
             "description": "Live camera feed: GStreamer MJPEG over WebSocket"
         },
         {
+            "name": "camera-fleet",
+            "description": "Multi-device camera fleet: edge MJPEG cameras + an auto-discovering central dashboard"
+        },
+        {
             "name": "audio",
             "description": "Live audio waveform visualization with mic capture"
         },

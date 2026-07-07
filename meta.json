@@ -50,6 +50,11 @@
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },
         {
+            "name": "camera-feed-vlm",
+            "description": "Live camera feed + vision-language chat: ask questions about what the camera sees (moondream2 on Jetson GPU, CPU fallback)",
+            "languages": ["python"]
+        },
+        {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]

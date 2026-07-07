@@ -12,9 +12,9 @@ sandboxed coding assistant, not a device operator.
 
 ## Scaffold
 
-The recommended path authenticates Claude Code at scaffold time so the device
-never has to run an interactive OAuth login (which is unreliable in headless /
-attach sessions). First, on a machine with a browser, mint a subscription token:
+Claude Code is authenticated at scaffold time so the device never has to run an
+interactive OAuth login (which is unreliable in headless / attach sessions).
+First, on a machine with a browser, mint a subscription token:
 
 ```bash
 claude setup-token          # completes OAuth locally, prints sk-ant-oat...
@@ -33,9 +33,8 @@ wendy init \
 ```
 
 - `CONSOLE_TOKEN` gates the browser console — keep it private.
-- `CLAUDE_CODE_OAUTH_TOKEN` (optional) authenticates Claude Code via your
-  subscription. Use `ANTHROPIC_API_KEY` instead for API billing. Either is baked
-  into the image `ENV`; leave both blank to log in later via attach.
+- `CLAUDE_CODE_OAUTH_TOKEN` (required) authenticates Claude Code via your
+  subscription. It is baked into the image `ENV`.
 - `PORT` defaults to `3091`; `CLAUDE_COMMAND` defaults to
   `claude --print --dangerously-skip-permissions`.
 
@@ -56,26 +55,18 @@ scaffolding.
 
 ## Authentication
 
-If you passed `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) at scaffold
-time, Claude Code is already authenticated — nothing else to do. Send prompts
-from the text box or the `Mic` button. Browser speech support depends on the
-browser; Chrome-based browsers are the most reliable.
+Claude Code is authenticated by the `CLAUDE_CODE_OAUTH_TOKEN` baked in at scaffold
+time — nothing else to do. Send prompts from the text box or the `Mic` button.
+Browser speech support depends on the browser; Chrome-based browsers are the
+most reliable.
 
-### Fallback: log in via attach
+### Re-authenticating
 
-If you left both credentials blank, log in once interactively. Claude Code runs
-as the unprivileged `claude` user, and its login is stored under `/home/claude`,
-which `wendy.json` persists. The `Claude auth` badge in the console stays amber
-until you have logged in:
-
-```bash
-wendy device attach {{.APP_ID}} -- claude-user claude
-```
-
-Note: the OAuth URL that `claude` prints can be truncated by terminal line
-wrapping in an attach/SSH session, which yields an `Invalid OAuth Request —
-Unknown scope` error. Copy the entire URL (widen the terminal first), or use the
-`claude setup-token` path above instead.
+If the token is revoked or expires, mint a new one with `claude setup-token` and
+re-scaffold (or rebuild with a new `--var CLAUDE_CODE_OAUTH_TOKEN=...`). Avoid
+the interactive `claude` login inside an attach/SSH session: the OAuth URL it
+prints is often truncated by terminal line wrapping, which yields an
+`Invalid OAuth Request — Unknown scope` error.
 
 ## Using the console
 

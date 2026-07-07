@@ -3,20 +3,15 @@
     "version": "0.1.0",
     "platform": "linux/arm64",
     "isolation": "isolated",
-    "services": {
-        "cam": {
-            "context": ".",
-            "entitlements": [
-                {
-                    "type": "network",
-                    "mode": "mesh",
-                    "serviceCIDR": "10.99.0.0/16",
-                    "ports": [
-                        { "host": {{.CAMERA_PORT}}, "container": {{.CAMERA_PORT}} }
-                    ]
-                },
-                { "type": "camera" }
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "mesh",
+            "serviceCIDR": "10.99.0.0/16",
+            "ports": [
+                { "host": {{.CAMERA_PORT}}, "container": {{.CAMERA_PORT}} }
             ]
-        }
-    }
+        },
+        { "type": "camera" }
+    ]
 }

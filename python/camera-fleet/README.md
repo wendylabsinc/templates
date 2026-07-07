@@ -13,10 +13,10 @@ device matching a tag (the **edge** tier) plus a single camera-wall dashboard th
 > `wendy.json`); the dashboard only needs the mesh to *dial* the cameras — it proxies their
 > streams to your browser same-origin, so your laptop never joins the mesh.
 >
-> **Mesh apps must be defined under `services.{name}`** (not top-level `entitlements`) — the
-> agent only wires the mesh network namespace for a named service. A top-level `mode:mesh` app
-> deploys and runs but is silently **unreachable** over the mesh. Both apps here use a single
-> service (`cam` / `dashboard`) for exactly this reason.
+> Both apps declare the mesh entitlement at the **top level** of their `wendy.json` (not under
+> `services.{name}`). This is deliberate: a fleet **consumer** (the dashboard) only receives its
+> injected `FLEET_PEERS` env on the single-container deploy path, so it must be top-level. Top-level
+> `mode:mesh` reachability requires the WDY-1853 agent fix (single-service mesh bridge wiring).
 
 ## Topology
 

@@ -3,19 +3,14 @@
     "version": "0.1.0",
     "platform": "linux/arm64",
     "isolation": "isolated",
-    "services": {
-        "dashboard": {
-            "context": ".",
-            "entitlements": [
-                {
-                    "type": "network",
-                    "mode": "mesh",
-                    "serviceCIDR": "10.99.0.0/16",
-                    "ports": [
-                        { "host": {{.DASHBOARD_PORT}}, "container": {{.DASHBOARD_PORT}} }
-                    ]
-                }
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "mesh",
+            "serviceCIDR": "10.99.0.0/16",
+            "ports": [
+                { "host": {{.DASHBOARD_PORT}}, "container": {{.DASHBOARD_PORT}} }
             ]
         }
-    }
+    ]
 }

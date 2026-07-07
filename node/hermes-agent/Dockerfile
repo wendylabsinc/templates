@@ -18,6 +18,8 @@ RUN apt-get update \
 # BuildKit (buildkitd + buildctl + buildkit-runc) for on-device image builds.
 # The default target is arm64 because WendyOS devices are normally Jetson/ARM64.
 ARG BUILDKIT_VERSION=v0.16.0
+ARG WENDY_INSTALL_URL=https://install.wendy.sh/cli.sh
+ARG WENDY_VERSION=latest
 ARG TARGETARCH=arm64
 RUN case "${TARGETARCH}" in \
       arm64) buildkit_arch="arm64" ;; \
@@ -30,12 +32,17 @@ RUN case "${TARGETARCH}" in \
   && test -x /usr/local/bin/buildkitd
 ENV BUILDKIT_HOST=unix:///run/buildkit/buildkitd.sock
 
+# Wendy CLI for talking to the local admin socket. Use the public installer so
+# the template does not need to know release artifact names or local CLI paths.
+RUN if [ "${WENDY_VERSION}" = "latest" ]; then \
+      curl -fsSL "${WENDY_INSTALL_URL}" | bash -s -- -y -d /usr/local/bin; \
+    else \
+      curl -fsSL "${WENDY_INSTALL_URL}" | WENDY_VERSION="${WENDY_VERSION}" bash -s -- -y -d /usr/local/bin; \
+    fi \
+  && wendy --version
+
 # Claude Code CLI. Authentication is persisted in /root by wendy.json.
 RUN --mount=type=cache,target=/root/.npm npm install -g @anthropic-ai/claude-code
-
-# Stage an arm64 Wendy CLI into this directory before building. See README.md.
-COPY wendy-linux-arm64 /usr/local/bin/wendy
-RUN chmod +x /usr/local/bin/wendy
 
 WORKDIR /app
 COPY package.json ./

@@ -13,14 +13,11 @@ builder kernel features. Deploy only to trusted first-party devices, keep the
 Hermes token private, and avoid exposing port `{{.PORT}}` beyond your trusted
 network.
 
-## Stage the Wendy CLI
+## Wendy CLI
 
-The image expects an arm64 Wendy CLI in the build context as `wendy-linux-arm64`.
-From the Wendy repo root:
-
-```bash
-GOOS=linux GOARCH=arm64 go build -o /path/to/{{.APP_ID}}/wendy-linux-arm64 ./go/cmd/wendy
-```
+The Dockerfile installs Wendy CLI during the image build via the public Wendy
+installer. By default it installs the latest release. For direct Docker builds
+or CI, pass `--build-arg WENDY_INSTALL_URL=...` to use an internal mirror.
 
 ## Deploy
 

@@ -34,6 +34,12 @@
             "languages": ["python"]
         },
         {
+            "name": "hermes-agent",
+            "description": "On-device app-building agent: Claude Code + Wendy MCP + BuildKit with browser text and voice input",
+            "targets": ["wendyos"],
+            "languages": ["node"]
+        },
+        {
             "name": "llm",
             "description": "Local LLM chat app: Ollama + Open WebUI on WendyOS",
             "targets": ["wendyos"],

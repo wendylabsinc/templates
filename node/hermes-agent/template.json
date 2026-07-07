@@ -1,0 +1,35 @@
+{
+    "name": "hermes-agent",
+    "description": "On-device agent console: Claude Code + Wendy MCP + BuildKit with browser text and voice input",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTPS web console port",
+            "type": "integer",
+            "default": 3090,
+            "prompt": "HTTPS port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "HERMES_TOKEN",
+            "description": "Access token required by the browser console. Use a long random value; this app has full device control.",
+            "type": "string",
+            "required": true,
+            "prompt": "Hermes access token"
+        },
+        {
+            "name": "CLAUDE_COMMAND",
+            "description": "Command used for one-shot Claude Code runs. The prompt is appended as the final argument.",
+            "type": "string",
+            "default": "claude --print --dangerously-skip-permissions",
+            "prompt": "Claude command"
+        }
+    ]
+}

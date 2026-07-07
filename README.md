@@ -71,6 +71,20 @@ Always-on voice AI assistant: local [faster-whisper](https://github.com/SYSTRAN/
 
 The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into the Python template directory.
 
+### hermes-agent
+
+On-device app-building agent with Claude Code, Wendy MCP setup, and an in-container BuildKit daemon. It exposes a token-gated HTTPS console for text prompts and browser-transcribed voice prompts, so a WendyOS device can inspect itself, edit projects under `/workspace`, build with `wendy run --yes`, and deploy apps through the local admin socket.
+
+| Target | Language | Framework | Default Port | Directory |
+|--------|----------|-----------|--------------|-----------|
+| WendyOS | Node | Claude Code + BuildKit + built-in HTTPS server | 3090 | `node/hermes-agent/` |
+
+```bash
+wendy init --app-id hermes-agent --target wendyos --language node --template hermes-agent --var HERMES_TOKEN="$(openssl rand -hex 24)"
+```
+
+Before deploying, stage an arm64 Wendy CLI into the generated app directory as `wendy-linux-arm64`; the template README includes the exact build command. Entitlements: `admin`, `build`, `network` (host), and persisted `/root`, `/workspace`, `/state`, and `/var/lib/buildkit`.
+
 ### llm
 
 Local LLM chat app with Open WebUI.

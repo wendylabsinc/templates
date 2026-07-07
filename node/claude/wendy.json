@@ -1,0 +1,35 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-home",
+            "path": "/home/claude"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-workspace",
+            "path": "/workspace"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-state",
+            "path": "/state"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 300
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser https://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

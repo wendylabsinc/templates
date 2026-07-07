@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Claude Console</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101214;
+        --panel: #181b1f;
+        --panel-2: #20252b;
+        --line: #343b44;
+        --text: #eef2f5;
+        --muted: #9aa6b2;
+        --blue: #4da3ff;
+        --green: #5dd59f;
+        --amber: #f2b84b;
+        --red: #ff6b6b;
+        --accent: #d97757;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      .shell {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      header {
+        min-height: 64px;
+        border-bottom: 1px solid var(--line);
+        padding: 12px 18px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        background: #121518;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+      }
+
+      .mark {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line);
+        background: #1b2026;
+        color: var(--accent);
+        font-weight: 800;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 18px;
+        line-height: 1.15;
+        letter-spacing: 0;
+      }
+
+      .subtitle {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 3px;
+      }
+
+      .status-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+      }
+
+      .badge {
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--muted);
+        padding: 5px 8px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .badge.good {
+        color: var(--green);
+      }
+
+      .badge.warn {
+        color: var(--amber);
+      }
+
+      .badge.bad {
+        color: var(--red);
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        min-height: 0;
+      }
+
+      .console {
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: 1fr auto;
+        border-right: 1px solid var(--line);
+      }
+
+      #log {
+        min-height: 0;
+        overflow: auto;
+        padding: 18px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .line {
+        color: var(--text);
+      }
+
+      .line.stderr {
+        color: #ffb3b3;
+      }
+
+      .line.meta {
+        color: var(--blue);
+      }
+
+      .composer {
+        border-top: 1px solid var(--line);
+        padding: 14px;
+        background: #121518;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 92px;
+        max-height: 220px;
+        resize: vertical;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: var(--text);
+        padding: 12px;
+        outline: none;
+      }
+
+      textarea:focus,
+      input:focus {
+        border-color: var(--accent);
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        height: 36px;
+        padding: 0 12px;
+        cursor: pointer;
+      }
+
+      button.primary {
+        background: #7a3b28;
+        border-color: #a85238;
+      }
+
+      button.danger {
+        color: #ffd0d0;
+        border-color: #774242;
+      }
+
+      button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+
+      label.check {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        min-height: 36px;
+      }
+
+      aside {
+        min-width: 0;
+        padding: 16px;
+        background: var(--panel);
+        overflow: auto;
+      }
+
+      .section {
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 16px;
+        margin-bottom: 16px;
+      }
+
+      .section:last-child {
+        border-bottom: 0;
+      }
+
+      h2 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        line-height: 1.2;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      .field span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      input[type="password"],
+      input[type="text"] {
+        width: 100%;
+        height: 36px;
+        border: 1px solid var(--line);
+        background: #111417;
+        color: var(--text);
+        padding: 0 10px;
+      }
+
+      .workspace-list {
+        display: grid;
+        gap: 6px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .workspace-list li {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        border: 1px solid var(--line);
+        background: #15191e;
+        padding: 8px;
+        font-size: 13px;
+      }
+
+      .workspace-list small {
+        color: var(--muted);
+      }
+
+      .auth-gate {
+        display: none;
+        border: 1px solid #6b5630;
+        background: #211b12;
+        padding: 12px;
+        margin-bottom: 16px;
+      }
+
+      .auth-gate.show {
+        display: block;
+      }
+
+      .auth-gate p {
+        margin: 0 0 10px;
+        color: var(--amber);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      @media (max-width: 900px) {
+        header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .status-row {
+          justify-content: flex-start;
+        }
+
+        main {
+          grid-template-columns: 1fr;
+        }
+
+        .console {
+          border-right: 0;
+        }
+
+        aside {
+          border-top: 1px solid var(--line);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header>
+        <div class="brand">
+          <div class="mark">C</div>
+          <div>
+            <h1>Claude Console</h1>
+            <div class="subtitle">Claude Code on WendyOS</div>
+          </div>
+        </div>
+        <div class="status-row">
+          <span id="jobBadge" class="badge">Idle</span>
+          <span id="claudeBadge" class="badge">Claude auth</span>
+        </div>
+      </header>
+
+      <main>
+        <section class="console">
+          <div id="log" aria-live="polite"></div>
+          <form id="promptForm" class="composer">
+            <textarea
+              id="prompt"
+              placeholder="Write a Python script under /workspace that fetches the weather and prints it."
+              autocomplete="off"
+            ></textarea>
+            <div class="actions">
+              <button class="primary" type="submit" id="sendBtn">Send</button>
+              <button type="button" id="micBtn">Mic</button>
+              <button type="button" id="cancelBtn" class="danger">Stop</button>
+              <label class="check">
+                <input type="checkbox" id="autoSend" />
+                Auto send
+              </label>
+              <label class="check">
+                <input type="checkbox" id="speak" />
+                Speak
+              </label>
+            </div>
+          </form>
+        </section>
+
+        <aside>
+          <div id="authGate" class="auth-gate">
+            <p>Access token required.</p>
+            <form id="tokenForm" class="field">
+              <span>Token</span>
+              <input id="tokenInput" type="password" autocomplete="current-password" />
+              <button type="submit">Unlock</button>
+            </form>
+          </div>
+
+          <div class="section">
+            <h2>Session</h2>
+            <div class="field">
+              <span>Current job</span>
+              <input id="jobField" type="text" readonly value="idle" />
+            </div>
+            <div class="field">
+              <span>Voice</span>
+              <input id="voiceField" type="text" readonly value="checking" />
+            </div>
+          </div>
+
+          <div class="section">
+            <h2>Workspace</h2>
+            <ul id="workspace" class="workspace-list"></ul>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <script>
+      const state = {
+        token: localStorage.getItem("claude-console-token") || "",
+        eventSource: null,
+        active: false,
+        lastOutput: "",
+      };
+
+      const els = {
+        log: document.querySelector("#log"),
+        prompt: document.querySelector("#prompt"),
+        promptForm: document.querySelector("#promptForm"),
+        sendBtn: document.querySelector("#sendBtn"),
+        micBtn: document.querySelector("#micBtn"),
+        cancelBtn: document.querySelector("#cancelBtn"),
+        autoSend: document.querySelector("#autoSend"),
+        speak: document.querySelector("#speak"),
+        authGate: document.querySelector("#authGate"),
+        tokenForm: document.querySelector("#tokenForm"),
+        tokenInput: document.querySelector("#tokenInput"),
+        jobBadge: document.querySelector("#jobBadge"),
+        claudeBadge: document.querySelector("#claudeBadge"),
+        jobField: document.querySelector("#jobField"),
+        voiceField: document.querySelector("#voiceField"),
+        workspace: document.querySelector("#workspace"),
+      };
+
+      function appendLine(text, kind = "line") {
+        const div = document.createElement("div");
+        div.className = `line ${kind}`;
+        div.textContent = text;
+        els.log.appendChild(div);
+        els.log.scrollTop = els.log.scrollHeight;
+      }
+
+      function setBadge(el, text, mode) {
+        el.textContent = text;
+        el.className = `badge ${mode || ""}`;
+      }
+
+      async function api(path, options = {}) {
+        const headers = new Headers(options.headers || {});
+        if (state.token) {
+          headers.set("authorization", `Bearer ${state.token}`);
+        }
+        if (options.body && !headers.has("content-type")) {
+          headers.set("content-type", "application/json");
+        }
+        const res = await fetch(path, { ...options, headers });
+        if (res.status === 401) {
+          showAuth(true);
+          throw new Error("unauthorized");
+        }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(body.error || `request failed: ${res.status}`);
+        }
+        return body;
+      }
+
+      function showAuth(show) {
+        els.authGate.classList.toggle("show", show);
+        els.sendBtn.disabled = show || state.active;
+        els.micBtn.disabled = show || !recognition || state.active;
+      }
+
+      function connectEvents() {
+        if (state.eventSource) {
+          state.eventSource.close();
+        }
+        const query = state.token ? `?token=${encodeURIComponent(state.token)}` : "";
+        const source = new EventSource(`/api/events${query}`);
+        state.eventSource = source;
+
+        source.addEventListener("server-start", () => {
+          appendLine("[claude] console connected", "meta");
+        });
+        source.addEventListener("job-start", (message) => {
+          const event = JSON.parse(message.data);
+          state.active = true;
+          state.lastOutput = "";
+          appendLine(`[job ${event.payload.id}] ${event.payload.prompt}`, "meta");
+          updateBusy();
+        });
+        source.addEventListener("job-output", (message) => {
+          const event = JSON.parse(message.data);
+          const text = event.payload.text || "";
+          state.lastOutput += text;
+          appendLine(text.replace(/\n$/, ""), event.payload.stream === "stderr" ? "stderr" : "line");
+        });
+        source.addEventListener("job-error", (message) => {
+          const event = JSON.parse(message.data);
+          appendLine(`[error] ${event.payload.message}`, "stderr");
+        });
+        source.addEventListener("job-cancel", () => {
+          appendLine("[claude] cancellation requested", "meta");
+        });
+        source.addEventListener("job-exit", (message) => {
+          const event = JSON.parse(message.data);
+          state.active = false;
+          appendLine(`[done] exit=${event.payload.code} signal=${event.payload.signal || ""}`, "meta");
+          updateBusy();
+          if (els.speak.checked && state.lastOutput.trim()) {
+            speak(state.lastOutput.trim().slice(-900));
+          }
+          void refreshStatus();
+        });
+        source.addEventListener("warning", (message) => {
+          const event = JSON.parse(message.data);
+          appendLine(`[warning] ${event.payload.message}`, "stderr");
+        });
+        source.onerror = () => {
+          appendLine("[claude] event stream disconnected", "stderr");
+        };
+      }
+
+      function updateBusy() {
+        els.sendBtn.disabled = state.active;
+        els.micBtn.disabled = state.active || !recognition;
+        els.cancelBtn.disabled = !state.active;
+        setBadge(els.jobBadge, state.active ? "Running" : "Idle", state.active ? "warn" : "good");
+      }
+
+      async function refreshStatus() {
+        try {
+          const status = await api("/api/status");
+          state.active = Boolean(status.activeJob);
+          els.jobField.value = status.activeJob ? status.activeJob.id : "idle";
+          setBadge(els.claudeBadge, "Claude auth", status.claudeHome ? "good" : "warn");
+          els.workspace.replaceChildren(
+            ...status.workspace.map((entry) => {
+              const li = document.createElement("li");
+              const name = document.createElement("span");
+              const type = document.createElement("small");
+              name.textContent = entry.name;
+              type.textContent = entry.type;
+              li.append(name, type);
+              return li;
+            }),
+          );
+          updateBusy();
+        } catch (error) {
+          if (error.message !== "unauthorized") {
+            appendLine(`[status] ${error.message}`, "stderr");
+          }
+        }
+      }
+
+      function speak(text) {
+        if (!("speechSynthesis" in window)) {
+          return;
+        }
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1;
+        window.speechSynthesis.speak(utterance);
+      }
+
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = SpeechRecognition ? new SpeechRecognition() : null;
+      if (recognition) {
+        recognition.lang = navigator.language || "en-US";
+        recognition.interimResults = true;
+        recognition.continuous = false;
+        els.voiceField.value = "available";
+        recognition.onstart = () => {
+          els.micBtn.textContent = "Listening";
+          els.micBtn.disabled = true;
+        };
+        recognition.onresult = (event) => {
+          let transcript = "";
+          let final = false;
+          for (const result of event.results) {
+            transcript += result[0].transcript;
+            final = final || result.isFinal;
+          }
+          els.prompt.value = transcript.trim();
+          if (final && els.autoSend.checked && els.prompt.value) {
+            els.promptForm.requestSubmit();
+          }
+        };
+        recognition.onerror = (event) => {
+          appendLine(`[voice] ${event.error}`, "stderr");
+        };
+        recognition.onend = () => {
+          els.micBtn.textContent = "Mic";
+          els.micBtn.disabled = state.active;
+        };
+      } else {
+        els.voiceField.value = "unavailable";
+        els.micBtn.disabled = true;
+      }
+
+      els.promptForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const prompt = els.prompt.value.trim();
+        if (!prompt || state.active) {
+          return;
+        }
+        try {
+          await api("/api/prompt", {
+            method: "POST",
+            body: JSON.stringify({ prompt }),
+          });
+          els.prompt.value = "";
+        } catch (error) {
+          appendLine(`[send] ${error.message}`, "stderr");
+        }
+      });
+
+      els.micBtn.addEventListener("click", () => {
+        if (recognition && !state.active) {
+          recognition.start();
+        }
+      });
+
+      els.cancelBtn.addEventListener("click", async () => {
+        try {
+          await api("/api/cancel", { method: "POST", body: "{}" });
+        } catch (error) {
+          appendLine(`[cancel] ${error.message}`, "stderr");
+        }
+      });
+
+      els.tokenForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        state.token = els.tokenInput.value.trim();
+        localStorage.setItem("claude-console-token", state.token);
+        showAuth(false);
+        connectEvents();
+        void refreshStatus();
+      });
+
+      async function boot() {
+        updateBusy();
+        const config = await fetch("/api/config").then((res) => res.json());
+        if (config.authRequired && !state.token) {
+          showAuth(true);
+          return;
+        }
+        showAuth(false);
+        connectEvents();
+        await refreshStatus();
+        setInterval(refreshStatus, 3000);
+      }
+
+      void boot();
+    </script>
+  </body>
+</html>

@@ -85,6 +85,20 @@ wendy init --app-id hermes-agent --target wendyos --language node --template her
 
 The image installs Wendy CLI during the build via the public Wendy installer. Entitlements: `admin`, `build`, `network` (host), and persisted `/home/hermes`, `/workspace`, `/state`, and `/var/lib/buildkit`.
 
+### claude
+
+A lean version of `hermes-agent`: the same token-gated HTTPS console (text + browser voice prompts) running Claude Code on a WendyOS device, but **without device control**. No `admin` or `build` entitlement, no Wendy MCP, and no in-container BuildKit — just Claude Code as an unprivileged user pointed at a persisted `/workspace`. Use it as a sandboxed coding assistant rather than a device operator.
+
+| Target | Language | Framework | Default Port | Directory |
+|--------|----------|-----------|--------------|-----------|
+| WendyOS | Node | Claude Code + built-in HTTPS server | 3091 | `node/claude/` |
+
+```bash
+wendy init --app-id claude --target wendyos --language node --template claude --var CONSOLE_TOKEN="$(openssl rand -hex 24)"
+```
+
+Entitlements: `network` (host, so Claude Code can reach the Anthropic API) and persisted `/home/claude`, `/workspace`, and `/state`. Claude Code runs as the unprivileged `claude` user; log in once with `wendy device attach claude -- claude-user claude`.
+
 ### llm
 
 Local LLM chat app with Open WebUI.

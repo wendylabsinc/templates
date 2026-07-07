@@ -1,0 +1,35 @@
+{
+    "name": "claude",
+    "description": "On-device Claude Code console: a token-gated HTTPS page for text and browser voice prompts, pointed at a persisted /workspace",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTPS web console port",
+            "type": "integer",
+            "default": 3091,
+            "prompt": "HTTPS port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "CONSOLE_TOKEN",
+            "description": "Access token required by the browser console. Use a long random value; anyone with it can run Claude Code in this container.",
+            "type": "string",
+            "required": true,
+            "prompt": "Console access token"
+        },
+        {
+            "name": "CLAUDE_COMMAND",
+            "description": "Command used for one-shot Claude Code runs. The prompt is appended as the final argument.",
+            "type": "string",
+            "default": "claude --print --dangerously-skip-permissions",
+            "prompt": "Claude command"
+        }
+    ]
+}

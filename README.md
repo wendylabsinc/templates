@@ -83,7 +83,7 @@ On-device app-building agent with Claude Code, Wendy MCP setup, and an in-contai
 wendy init --app-id hermes-agent --target wendyos --language node --template hermes-agent --var HERMES_TOKEN="$(openssl rand -hex 24)"
 ```
 
-The image installs Wendy CLI during the build via the public Wendy installer. Entitlements: `admin`, `build`, `network` (host), and persisted `/root`, `/workspace`, `/state`, and `/var/lib/buildkit`.
+The image installs Wendy CLI during the build via the public Wendy installer. Entitlements: `admin`, `build`, `network` (host), and persisted `/home/hermes`, `/workspace`, `/state`, and `/var/lib/buildkit`.
 
 ### llm
 

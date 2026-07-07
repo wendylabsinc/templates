@@ -10,6 +10,7 @@ const PORT = Number(process.env.PORT || "3090");
 const PUBLIC_DIR = path.resolve("/app/public");
 const WORKSPACE_DIR = "/workspace";
 const STATE_DIR = "/state";
+const CLAUDE_HOME_DIR = "/home/hermes";
 const HISTORY_PATH = path.join(STATE_DIR, "hermes-history.ndjson");
 const HERMES_TOKEN = (process.env.HERMES_TOKEN || "").trim();
 const CLAUDE_COMMAND = (process.env.CLAUDE_COMMAND || "claude --print").trim();
@@ -257,7 +258,9 @@ async function statusPayload() {
     adminSocket: Boolean(process.env.WENDY_AGENT_SOCKET),
     adminSocketPath: process.env.WENDY_AGENT_SOCKET || "",
     buildkitSocket: existsSync("/run/buildkit/buildkitd.sock"),
-    claudeHome: existsSync("/root/.claude") || existsSync("/root/.claude.json"),
+    claudeHome:
+      existsSync(path.join(CLAUDE_HOME_DIR, ".claude")) ||
+      existsSync(path.join(CLAUDE_HOME_DIR, ".claude.json")),
     workspace: await workspaceSummary(),
   };
 }

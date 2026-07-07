@@ -31,11 +31,13 @@ once, then enter the Hermes token you configured while scaffolding the template.
 
 ## Claude Code Login
 
-Claude Code stores its login under `/root`, which is persisted by `wendy.json`.
-If the web console reports that Claude auth is missing, attach once and log in:
+Claude Code runs as the unprivileged `hermes` user so
+`--dangerously-skip-permissions` is not invoked as root. Its login is stored
+under `/home/hermes`, which is persisted by `wendy.json`. If the web console
+reports that Claude auth is missing, attach once and log in as that user:
 
 ```bash
-wendy device attach {{.APP_ID}} -- claude
+wendy device attach {{.APP_ID}} -- hermes-user claude
 ```
 
 After OAuth completes, return to the web console and send prompts from text or

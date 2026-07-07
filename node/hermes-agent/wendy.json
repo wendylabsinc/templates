@@ -16,7 +16,7 @@
         {
             "type": "persist",
             "name": "{{.APP_ID}}-home",
-            "path": "/root"
+            "path": "/home/hermes"
         },
         {
             "type": "persist",

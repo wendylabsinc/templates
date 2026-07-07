@@ -13,6 +13,7 @@ RUN apt-get update \
     openssl \
     procps \
     ripgrep \
+    util-linux \
   && rm -rf /var/lib/apt/lists/*
 
 # BuildKit (buildkitd + buildctl + buildkit-runc) for on-device image builds.
@@ -44,16 +45,18 @@ RUN if [ "${WENDY_VERSION}" = "latest" ]; then \
   && rm -f /tmp/install-wendy-cli.sh \
   && wendy --version
 
-# Claude Code CLI. Authentication is persisted in /root by wendy.json.
+# Claude Code CLI. Authentication is persisted in /home/hermes by wendy.json.
 RUN --mount=type=cache,target=/root/.npm npm install -g @anthropic-ai/claude-code
+RUN useradd --create-home --shell /bin/bash hermes
 
 WORKDIR /app
 COPY package.json ./
 COPY server.mjs ./
 COPY public ./public
 COPY workspace /opt/hermes-workspace
+COPY hermes-user.sh /usr/local/bin/hermes-user
 COPY init.sh /usr/local/bin/hermes-agent-init
-RUN chmod +x /usr/local/bin/hermes-agent-init
+RUN chmod +x /usr/local/bin/hermes-agent-init /usr/local/bin/hermes-user
 
 ENV NODE_ENV=production
 ENV PORT={{.PORT}}

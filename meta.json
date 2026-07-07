@@ -41,7 +41,7 @@
         },
         {
             "name": "claude",
-            "description": "Lean on-device Claude Code console: token-gated HTTPS page with browser text and voice input, pointed at a persisted /workspace (no device control)",
+            "description": "On-device Claude Code console: token-gated HTTPS page with browser text and voice input, pointed at a persisted /workspace, with admin and build entitlements",
             "targets": ["wendyos"],
             "languages": ["node"]
         },

@@ -87,17 +87,19 @@ The image installs Wendy CLI during the build via the public Wendy installer. En
 
 ### claude
 
-A lean version of `hermes-agent`: the same token-gated HTTPS console (text + browser voice prompts) running Claude Code on a WendyOS device, but **without device control**. No `admin` or `build` entitlement, no Wendy MCP, and no in-container BuildKit — just Claude Code as an unprivileged user pointed at a persisted `/workspace`. Use it as a sandboxed coding assistant rather than a device operator.
+A slimmer sibling of `hermes-agent`: the same token-gated HTTPS console (text + browser voice prompts) running Claude Code on a WendyOS device. It carries the same `admin` and `build` entitlements, but does not bundle the Wendy CLI, Wendy MCP setup, or an in-container BuildKit daemon — Claude Code works in a persisted `/workspace` out of the box, and its subscription token is baked in at `wendy init` so there is no in-container OAuth login.
 
 | Target | Language | Framework | Default Port | Directory |
 |--------|----------|-----------|--------------|-----------|
 | WendyOS | Node | Claude Code + built-in HTTPS server | 3091 | `node/claude/` |
 
 ```bash
-wendy init --app-id claude --target wendyos --language node --template claude --var CONSOLE_TOKEN="$(openssl rand -hex 24)"
+wendy init --app-id claude --target wendyos --language node --template claude \
+  --var CONSOLE_TOKEN="$(openssl rand -hex 24)" \
+  --var CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat..."   # from `claude setup-token`
 ```
 
-Entitlements: `network` (host, so Claude Code can reach the Anthropic API) and persisted `/home/claude`, `/workspace`, and `/state`. Claude Code runs as the unprivileged `claude` user; log in once with `wendy device attach claude -- claude-user claude`.
+Entitlements: `admin`, `build`, `network` (host, so Claude Code can reach the Anthropic API), and persisted `/home/claude`, `/workspace`, and `/state`. Claude Code runs as the unprivileged `claude` user, authenticated by the `CLAUDE_CODE_OAUTH_TOKEN` baked into the image.
 
 ### llm
 

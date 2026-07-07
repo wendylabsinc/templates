@@ -4,8 +4,14 @@
     "platform": "linux",
     "entitlements": [
         {
+            "type": "admin"
+        },
+        {
             "type": "network",
             "mode": "host"
+        },
+        {
+            "type": "build"
         },
         {
             "type": "persist",

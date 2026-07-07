@@ -6,9 +6,12 @@ that accepts text prompts and browser-transcribed voice prompts, then streams
 the Claude Code run back to the page. All work happens in a persisted
 `/workspace`.
 
-Unlike the `hermes-agent` template, this template has **no device control**: no
-`admin` or `build` entitlement, no Wendy MCP, and no on-device BuildKit. It is a
-sandboxed coding assistant, not a device operator.
+This template holds the `admin` and `build` entitlements, so the container can
+reach the Wendy admin socket and use privileged builder features. Unlike
+`hermes-agent`, it does not bundle the Wendy CLI, Wendy MCP setup, or an
+in-container BuildKit daemon — Claude Code works in `/workspace` out of the box,
+and you can install and wire up device tooling yourself if you want to use those
+entitlements.
 
 ## Scaffold
 
@@ -86,10 +89,12 @@ Create /workspace/hello.py that prints the current time, then run it and show me
 ## Security
 
 Anyone with the console token can run Claude Code in this container and read or
-edit anything under `/workspace`. Keep the token private and avoid exposing the
-port beyond your trusted network. The container has host networking (so Claude
-Code can reach the Anthropic API) but no access to the Wendy admin socket or
-other apps.
+edit anything under `/workspace`. This app holds the `admin` and `build`
+entitlements, so with the right tooling it can control apps, read device
+telemetry, and use privileged builder features. Keep the console token private,
+deploy only to trusted first-party devices, and avoid exposing the port beyond
+your trusted network. The container also has host networking so Claude Code can
+reach the Anthropic API.
 
 ## Persistence
 

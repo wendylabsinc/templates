@@ -12,6 +12,11 @@ device matching a tag (the **edge** tier) plus a single camera-wall dashboard th
 > (`wendy fleet run --lan`). Each app carries a `mesh` network entitlement (see its
 > `wendy.json`); the dashboard only needs the mesh to *dial* the cameras — it proxies their
 > streams to your browser same-origin, so your laptop never joins the mesh.
+>
+> **Mesh apps must be defined under `services.{name}`** (not top-level `entitlements`) — the
+> agent only wires the mesh network namespace for a named service. A top-level `mode:mesh` app
+> deploys and runs but is silently **unreachable** over the mesh. Both apps here use a single
+> service (`cam` / `dashboard`) for exactly this reason.
 
 ## Topology
 
@@ -30,8 +35,7 @@ device matching a tag (the **edge** tier) plus a single camera-wall dashboard th
 
 - **`camera/`** — edge app. USB/UVC webcam → HTTP MJPEG (`/stream`, `/stream/color`,
   `/health`). Its own `camera/wendy.json` defines it (camera + `mesh` network entitlements
-  that publish its stream port on the mesh, readiness). Deployed to every device matching the
-  camera tag.
+  that publish its stream port on the mesh). Deployed to every device matching the camera tag.
 - **`dashboard/`** — central app. A camera wall that renders one tile per discovered camera,
   with **no camera URLs hardcoded** — it renders purely from `GET /api/peers`. Its own
   `dashboard/wendy.json` defines it (a `mesh` entitlement gives it egress to dial the cameras).

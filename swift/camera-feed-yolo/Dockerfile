@@ -21,7 +21,7 @@ RUN python -c "from ultralytics import YOLO; YOLO('yolov8n.pt').export(format='o
  && [ "$(stat -c %s /export/yolov8n.onnx)" -gt 5000000 ]
 
 # ── Stage B-jetson: Swift on top of CUDA onnxruntime ────────────────────────
-FROM dustynv/onnxruntime:1.20.0-r36.4.0 AS base-nvidia-jetson
+FROM dustynv/onnxruntime:1.20.2-r36.4.0 AS base-nvidia-jetson
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates pkg-config gnupg \
@@ -54,6 +54,27 @@ RUN LIB=$(find / -name "libonnxruntime.so*" 2>/dev/null | grep -v __pycache__ | 
  && mkdir -p /usr/local/lib/pkgconfig \
  && printf 'prefix=/usr/local\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: libonnxruntime\nDescription: ONNX Runtime\nVersion: 1.20.0\nLibs: -L${libdir} -lonnxruntime\nCflags: -I${includedir}\n' > /usr/local/lib/pkgconfig/libonnxruntime.pc \
  && ldconfig
+
+# ── JetPack 7 / WendyOS 0.17 GPU fix (WendyOS#1370; mirrors WendyOS PR #1379) ──
+# This dustynv base targets JetPack 6 (CUDA 12.x + cuDNN 9). On a JetPack-7 Orin
+# the host injects CUDA 13, and the base's own default LD_LIBRARY_PATH lists
+# /usr/local/cuda/compat (a bundled CUDA-12 forward-compat *driver*) first, which
+# shadows the host's real CUDA-13 driver and dies at cuInit with Error 801 — the
+# GPU vanishes and inference silently falls back to CPU. Fix: gather the image's
+# CUDA-12 *runtime* libs (toolkit under targets/*/lib + cuDNN in the multiarch
+# dir) into one dir, put it first on the loader path, and drop the compat dir so
+# the host CUDA-13 driver is used (CUDA 12 runs on it via backward compat, and the
+# CUDA-12 build ships the Orin sm_87 kernels the CUDA-13 sbsa build lacks). Never
+# bundle libcuda.so* — the GPU driver must stay the CDI/host one.
+RUN mkdir -p /opt/cuda12/lib \
+ && find /usr/local/cuda/targets/*/lib /usr/lib/aarch64-linux-gnu -maxdepth 1 \( \
+        -name 'libcudart.so*'  -o -name 'libcublas*.so*'   -o -name 'libcufft*.so*'   \
+     -o -name 'libcurand.so*'  -o -name 'libcusolver*.so*' -o -name 'libcusparse.so*' \
+     -o -name 'libnvrtc*.so*'  -o -name 'libnpp*.so*'      -o -name 'libcudnn*.so*'   \
+   \) ! -name 'libcuda.so*' -exec ln -sf {} /opt/cuda12/lib/ \; 2>/dev/null \
+ && echo /opt/cuda12/lib > /etc/ld.so.conf.d/000-cuda12.conf \
+ && ldconfig
+ENV LD_LIBRARY_PATH=/opt/cuda12/lib
 
 # ── Stage B-generic: Swift base + CPU onnxruntime ───────────────────────────
 FROM swift:{{.SWIFT_VERSION}}-bookworm AS base-generic

@@ -42,6 +42,28 @@ RUN python3 -c "import torch, fastapi, uvicorn; print('gpu deps ok')"
 RUN printf '#!/bin/sh\nexec "%s" "$@"\n' "$(python3 -c 'import sys; print(sys.executable)')" > /usr/local/bin/gpu-python \
  && chmod +x /usr/local/bin/gpu-python \
  && /usr/local/bin/gpu-python -c "import uvicorn, torch; print('launcher ok')"
+
+# ── JetPack 7 / WendyOS 0.17 GPU fix (WendyOS#1370; mirrors WendyOS PR #1379) ──
+# The default dustynv base targets JetPack 6 (CUDA 12.x + cuDNN 9). On a JetPack-7
+# Orin the host injects CUDA 13, and the base's own default LD_LIBRARY_PATH lists
+# /usr/local/cuda/compat (a bundled CUDA-12 forward-compat *driver*) first, which
+# shadows the host's real CUDA-13 driver and dies at cuInit with Error 801 — so
+# torch.cuda.is_available() goes False. Fix: gather the image's CUDA-12 *runtime*
+# libs (toolkit under targets/*/lib + cuDNN in the multiarch dir) into one dir,
+# put it first on the loader path, and drop the compat dir so the host CUDA-13
+# driver is used (CUDA 12 runs on it via backward compat, and the CUDA-12 build
+# ships the Orin sm_87 kernels the CUDA-13 sbsa build lacks). Never bundle
+# libcuda.so* — the GPU driver must stay the CDI/host one.
+RUN mkdir -p /opt/cuda12/lib \
+ && find /usr/local/cuda/targets/*/lib /usr/lib/aarch64-linux-gnu -maxdepth 1 \( \
+        -name 'libcudart.so*'  -o -name 'libcublas*.so*'   -o -name 'libcufft*.so*'   \
+     -o -name 'libcurand.so*'  -o -name 'libcusolver*.so*' -o -name 'libcusparse.so*' \
+     -o -name 'libnvrtc*.so*'  -o -name 'libnpp*.so*'      -o -name 'libcudnn*.so*'   \
+   \) ! -name 'libcuda.so*' -exec ln -sf {} /opt/cuda12/lib/ \; 2>/dev/null \
+ && echo /opt/cuda12/lib > /etc/ld.so.conf.d/000-cuda12.conf \
+ && ldconfig
+ENV LD_LIBRARY_PATH=/opt/cuda12/lib
+
 COPY app.py ./
 
 ENV PORT=3610

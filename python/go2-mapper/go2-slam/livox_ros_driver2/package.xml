@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>livox_ros_driver2</name>
+  <version>1.0.0</version>
+  <description>
+    Minimal vendored CustomMsg/CustomPoint so Point-LIO compiles. The Livox
+    custom-message path is never used at runtime — the Go2 publishes a standard
+    PointCloud2 and we run Point-LIO via the VELO16 path (see cloud_shim.py) —
+    but Point-LIO includes livox_ros_driver2/msg/custom_msg.hpp unconditionally,
+    so the type must exist at build time. Fields mirror the upstream driver.
+  </description>
+  <maintainer email="noreply@wendy.sh">go2-mapper</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <buildtool_depend>rosidl_default_generators</buildtool_depend>
+
+  <depend>std_msgs</depend>
+
+  <exec_depend>rosidl_default_runtime</exec_depend>
+  <member_of_group>rosidl_interface_packages</member_of_group>
+</package>

@@ -1,0 +1,99 @@
+{
+    "name": "go2-mapper",
+    "description": "Map your home with the Go2's Mid-360 LiDAR and export G1-ready navigation maps (3D .pcd + 2D Nav2 grid + waypoints). Live Foxglove view + web console with downloads.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "NETWORK_INTERFACE",
+            "description": "Host NIC on the 192.168.123.0/24 dog subnet. On the Go2's onboard Orin this is often 'enP8p1s0' (verified on a JP6.1 unit), NOT 'eth0'. Check with `ip -o addr` on the device; the right NIC is the one with a 192.168.123.x address.",
+            "type": "string",
+            "default": "eth0",
+            "prompt": "Host network interface (Orin is usually enP8p1s0)"
+        },
+        {
+            "name": "LIDAR_SOURCE",
+            "description": "Which LiDAR to map with: 'mid360' (stock Unitree Mid-360, xyz-only cloud via shim) or 'hesai' (aftermarket Hesai XT-16 with real ring+time, native Point-LIO path). 'hesai' also builds the Hesai driver.",
+            "type": "string",
+            "default": "mid360",
+            "prompt": "LiDAR source (mid360 | hesai)"
+        },
+        {
+            "name": "LIDAR_TOPIC",
+            "description": "Deskewed Mid-360 cloud from Unitree's driver (used when LIDAR_SOURCE=mid360)",
+            "type": "string",
+            "default": "/utlidar/cloud_deskewed",
+            "prompt": "LiDAR topic"
+        },
+        {
+            "name": "IMU_TOPIC",
+            "description": "IMU topic Point-LIO fuses (the Go2's /utlidar/imu for both LiDAR sources; the XT-16 has no IMU of its own)",
+            "type": "string",
+            "default": "/utlidar/imu",
+            "prompt": "IMU topic"
+        },
+        {
+            "name": "GO2_HESAI_IP",
+            "description": "Hesai XT-16 sensor IP on the dog subnet (used when LIDAR_SOURCE=hesai)",
+            "type": "string",
+            "default": "192.168.123.20",
+            "prompt": "Hesai LiDAR IP"
+        },
+        {
+            "name": "GO2_HESAI_HOST",
+            "description": "Host NIC IP on the dog subnet the Hesai sends to (the Orin's 192.168.123.x address)",
+            "type": "string",
+            "default": "192.168.123.18",
+            "prompt": "Hesai host IP"
+        },
+        {
+            "name": "CONSOLE_PORT",
+            "description": "Web console (control + downloads) port",
+            "type": "integer",
+            "default": 3600,
+            "prompt": "Console port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "FOXGLOVE_PORT",
+            "description": "Foxglove WebSocket bridge port",
+            "type": "integer",
+            "default": 8765,
+            "prompt": "Foxglove port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "SLICE_MIN_M",
+            "description": "Lower bound (m above floor) of the 2D obstacle slice — tuned for the G1's body, not the Go2's",
+            "type": "string",
+            "default": "0.15",
+            "prompt": "2D slice min height (m)"
+        },
+        {
+            "name": "SLICE_MAX_M",
+            "description": "Upper bound (m above floor) of the 2D obstacle slice (G1 head height + margin)",
+            "type": "string",
+            "default": "1.50",
+            "prompt": "2D slice max height (m)"
+        },
+        {
+            "name": "GRID_RESOLUTION_M",
+            "description": "Nav2 occupancy grid cell size in meters",
+            "type": "string",
+            "default": "0.05",
+            "prompt": "2D grid resolution (m)"
+        },
+        {
+            "name": "LIDAR_HEIGHT_OFFSET_M",
+            "description": "Mid-360 mount height above floor on the Go2 (used as a floor-fit prior; final z=0 comes from RANSAC)",
+            "type": "string",
+            "default": "0.40",
+            "prompt": "LiDAR mount height (m)"
+        }
+    ]
+}

@@ -1,0 +1,17 @@
+{
+  "configById": {
+    "3D!mapping": {
+      "cameraState": {"perspective": true, "distance": 14, "thetaDeg": 45, "phiDeg": 55},
+      "followMode": "follow-pose",
+      "followTf": "camera_init",
+      "topics": {
+        "/go2/slam/map_viz": {"visible": true, "pointSize": 2, "colorField": "z", "colorMode": "colormap", "colorMap": "turbo"},
+        "/cloud_registered": {"visible": true, "pointSize": 1.5, "flatColor": "#43d9c0"},
+        "/path": {"visible": true, "lineWidth": 2, "color": "#f0a63c"},
+        "/aft_mapped_to_init": {"visible": true, "type": "arrow"}
+      }
+    },
+    "RawMessages!pose": {"topicPath": "/go2/slam/pose_json"}
+  },
+  "layout": {"direction": "row", "first": "3D!mapping", "second": "RawMessages!pose", "splitPercentage": 78}
+}

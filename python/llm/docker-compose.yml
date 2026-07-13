@@ -1,6 +1,6 @@
 # Service topology only — this file stays fully Docker Desktop-compatible.
-# Wendy-specific config (appId, GPU entitlement) lives in the companion
-# wendy.json next to it; `wendy run` merges the two.
+# Wendy-specific config (appId, GPU entitlement, readiness/postStart hook)
+# lives in the companion wendy.json next to it; `wendy run` merges the two.
 services:
   ollama:
     build:

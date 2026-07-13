@@ -7,7 +7,7 @@ standard `docker-compose.yml` with a companion `wendy.json`.
 ```
 llm/
 ├── docker-compose.yml   ← service topology (fully Docker Desktop-compatible)
-├── wendy.json           ← companion: appId + GPU entitlement for ollama
+├── wendy.json           ← companion: appId, GPU entitlement, readiness + postStart hook
 ├── ollama/              ← Ollama server; pulls the chosen model on first start
 └── open-webui/          ← Open WebUI chat frontend with Wendy branding
 ```
@@ -29,7 +29,11 @@ and works as-is with Docker Desktop.
       "entitlements": [{ "type": "gpu" }]
     },
     "open-webui": {}
-  }
+  },
+  // App-level readiness probe + postStart hook: fires once after all
+  // services start, and opens the browser at the WebUI.
+  "readiness": { "tcpSocket": { "port": {{.PORT}} }, "timeoutSeconds": 180 },
+  "hooks": { "postStart": { "cli": "wendy utils open-browser ..." } }
 }
 ```
 
@@ -38,7 +42,8 @@ When you `wendy run`, the CLI merges both files:
 - Topology, `ports`, `environment`, named volumes, and `depends_on` come from
   `docker-compose.yml`. Port mappings become `network` entitlements; named
   volumes become `persist` entitlements automatically.
-- `appId` and the per-service `gpu` entitlement come from `wendy.json`.
+- `appId`, the per-service `gpu` entitlement, and the app-level
+  `readiness`/`hooks` come from `wendy.json`.
 
 ## Services
 
@@ -46,6 +51,22 @@ When you `wendy run`, the CLI merges both files:
 |---------|------|---------|
 | `ollama` | 11434 | Ollama API. Pulls the configured model in the background on first start; weights persist in the `…-models` volume. |
 | `open-webui` | {{.PORT}} | Chat UI. Persists user data in the `…-openwebui` volume. |
+
+## Choosing a model
+
+The model is picked when the template is scaffolded (the `OLLAMA_MODEL`
+variable; the full curated picker lives in `template.schema.json`). The
+default is `gemma4:e2b`. Rough guidance by device:
+
+| Device | Good picks |
+|--------|------------|
+| Raspberry Pi 5 | `gemma4:e2b` (slow), `qwen2.5:3b`, `llama3.2:3b` |
+| Jetson Orin Nano 8GB | `gemma4:e2b`/`e4b`, `qwen2.5:3b` (~30 tok/s), `llama3.2:3b`, `gemma3:4b`, `mistral:7b` (~15 tok/s), `nemotron-3-nano-4b` |
+| Jetson AGX Orin 32/64GB | `gemma4:26b`, `gemma4:31b` (64GB), `nemotron-3-nano:30b`, `qwen3-coder:30b` |
+| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `qwen3-coder:30b` |
+
+To switch models later, edit the `OLLAMA_MODEL` environment value in
+`docker-compose.yml` and re-run; the entrypoint pulls whatever it is set to.
 
 ## Run on a Wendy device
 
@@ -76,8 +97,12 @@ Ollama service logs before pulling manually.
 > host for discovery, but app containers do not reliably include the NSS/mDNS
 > pieces needed to resolve `.local` names from inside the container.
 
-> Compose app groups do not yet support Wendy readiness probes or
-> `postStart` hooks, so the browser is not opened automatically.
+> App groups support a top-level `readiness` probe and `postStart` hook in
+> `wendy.json` as an app-level fallback: it fires once after **all** services
+> start, probed against the device host. This template uses it to open the
+> browser at the WebUI once the port accepts connections. Requires a Wendy CLI
+> with WendyOS PR #1386; older CLIs ignore these keys harmlessly (everything
+> works, the browser just isn't opened automatically).
 
 ## Run locally with Docker Desktop
 

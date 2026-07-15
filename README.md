@@ -38,6 +38,18 @@ Each template includes:
 - `Dockerfile` — containerized deployment
 - Application source code
 
+### persistent-volume
+
+Minimal persistent volume demo: writes and reads `/data/foo.md` on startup to show that a mounted volume survives container restarts. No HTTP server. Entitlements: persist (`/data`).
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/persistent-volume/` |
+| Swift | `swift/persistent-volume/` |
+| Rust | `rust/persistent-volume/` |
+| Node | `node/persistent-volume/` |
+| C++ | `cpp/persistent-volume/` |
+
 ### fullstack
 
 Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage Dockerfile builds the React frontend then serves it alongside a CRUD API for cars.

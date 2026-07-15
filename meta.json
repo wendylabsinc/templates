@@ -17,6 +17,10 @@
             "description": "Minimal HTTP API with JSON endpoints"
         },
         {
+            "name": "persistent-volume",
+            "description": "Minimal persistent volume demo: /data survives restart"
+        },
+        {
             "name": "fullstack",
             "description": "Fullstack app: API backend + React/shadcn frontend"
         },

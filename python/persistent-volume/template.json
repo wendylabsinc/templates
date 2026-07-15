@@ -1,0 +1,13 @@
+{
+    "name": "persistent-volume",
+    "description": "Minimal persistent volume demo: /data survives restart",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

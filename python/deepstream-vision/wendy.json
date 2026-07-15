@@ -1,0 +1,29 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "vlm": {
+            "context": "./vlm",
+            "entitlements": [
+                { "type": "gpu" },
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "detector": {
+            "context": "./detector",
+            "dependsOn": ["vlm"],
+            "entitlements": [
+                { "type": "gpu" },
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "gpu-stats": {
+            "context": "./gpu-stats",
+            "entitlements": [
+                { "type": "gpu" },
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    }
+}

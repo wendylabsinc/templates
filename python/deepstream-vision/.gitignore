@@ -1,0 +1,9 @@
+.env
+vlm/models/
+models/
+*.safetensors
+*.engine
+detector/*.onnx
+
+# Local Claude skills and context
+.claude/

@@ -214,6 +214,22 @@ Streaming ASR web demo: captures audio from a USB microphone, uses [Silero VAD](
 |----------|-----------|-------------|-----------|
 | Python | FastAPI + NeMo + Silero VAD | 3004 | `python/asr-nemotron/` |
 
+### deepstream-vision
+
+Jetson vision app group: real-time object detection (DeepStream + YOLO11n, Prometheus metrics + MJPEG stream), optional Qwen3-VL scene descriptions for high-confidence detections, and a GPU metrics exporter (tegrastats), plus a static `monitor.html` dashboard you open locally that talks to all three services directly over CORS. A **3-service app group** defined by one native `wendy.json` `services` map; `detector` depends on `vlm` since it calls out to it for scene descriptions. Entitlements: gpu, network (host) on every service.
+
+| Service | Port | Role |
+|---------|------|------|
+| `detector` | 9090 | DeepStream YOLO11n detection, Prometheus metrics (`/metrics`), MJPEG stream (`/stream`) |
+| `vlm` | 8090 | Qwen3-VL-2B (INT4) scene descriptions (`/describe`) |
+| `gpu-stats` | 9091 | tegrastats-derived GPU temperature/memory/utilization metrics (`/metrics`) |
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/deepstream-vision/` |
+
+Targets NVIDIA Jetson Orin devices (DeepStream + TensorRT). Ports 9090/8090/9091 are fixed service-mesh constants — `monitor.html` hardcodes them and is not itself served by any container, so it is not templated.
+
 ### voice-assistant
 
 Local, fully offline voice assistant: wake-word detection ("wendy" via [openWakeWord](https://github.com/dscripka/openWakeWord)) -> [OpenAI Whisper](https://github.com/openai/whisper) STT -> a local LLM with tool-calling support (stubbed light-control tools) -> [Piper](https://github.com/rhasspy/piper) TTS, all running on-device on an NVIDIA Jetson. No HTTP server, no cloud calls beyond initial model downloads. Includes a `run-mac.sh` helper for local development on macOS. Entitlements: network (host), audio, gpu.

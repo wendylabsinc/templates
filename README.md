@@ -6,6 +6,8 @@
 
 Project templates for the [Wendy CLI](https://github.com/wendylabsinc/wendy-agent). Used by `wendy init --template` to scaffold new projects.
 
+> This repository supersedes the older [`wendylabsinc/samples`](https://github.com/wendylabsinc/samples) repo. Every sample worth keeping now lives here as a `wendy init --template` archetype; `samples` is being archived.
+
 ## Usage
 
 ```bash

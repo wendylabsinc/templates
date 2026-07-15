@@ -22,3 +22,6 @@ __pycache__/
 
 # Git worktrees
 .worktrees/
+
+# subagent-driven-development scratch (progress ledger)
+.superpowers/

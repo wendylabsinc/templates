@@ -135,6 +135,18 @@ wendy init --app-id mlx-llm-chat --language python --template mlx-llm-chat --ass
 wendy init --app-id mlx-llm-chat --language swift --template mlx-llm-chat --assistant skip --git-init no
 ```
 
+### llm-gguf
+
+Swift Hummingbird server that shells out to `llama-cli` (llama.cpp, GGUF weights) to serve Qwen3-4B chat, with a React/shadcn frontend. Built on the `dustynv/tensorrt` Jetson base image with CUDA-enabled llama.cpp, so it targets NVIDIA Jetson devices. Entitlements: gpu, network (host).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Swift | Hummingbird + llama.cpp (`llama-cli`, GGUF) | 6002 | `swift/llm-gguf/` |
+
+```bash
+wendy init --app-id llm-gguf --language swift --template llm-gguf --assistant skip --git-init no
+```
+
 ### hello-pytorch
 
 GPU sanity-check app: polls PyTorch every 2 seconds and prints CUDA (NVIDIA GPU), MPS (Apple Silicon GPU), and CPU availability plus the PyTorch version. No HTTP server. Entitlements: gpu.

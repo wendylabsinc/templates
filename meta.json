@@ -116,6 +116,11 @@
             "name": "mlx-llm-chat",
             "description": "Self-contained MLX LLM chat with React frontend (mlx-lm/transformers on Python, MLX-Swift + Hummingbird on Swift)",
             "languages": ["python", "swift"]
+        },
+        {
+            "name": "llm-gguf",
+            "description": "Swift server driving llama.cpp (GGUF) for Qwen3-4B chat on Jetson",
+            "languages": ["swift"]
         }
     ],
     "languages": [

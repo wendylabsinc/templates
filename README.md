@@ -50,6 +50,18 @@ Minimal persistent volume demo: writes and reads `/data/foo.md` on startup to sh
 | Node | `node/persistent-volume/` |
 | C++ | `cpp/persistent-volume/` |
 
+### sqlite-persistence
+
+SQLite on a persistent volume: appends a timestamped row and queries all rows on every startup, showing that data survives container restarts. Database lives at `/data/app.db`. No HTTP server. Entitlements: persist (`/data`).
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/sqlite-persistence/` |
+| Swift | `swift/sqlite-persistence/` |
+| Rust | `rust/sqlite-persistence/` |
+| Node | `node/sqlite-persistence/` |
+| C++ | `cpp/sqlite-persistence/` |
+
 ### fullstack
 
 Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage Dockerfile builds the React frontend then serves it alongside a CRUD API for cars.

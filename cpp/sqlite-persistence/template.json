@@ -1,0 +1,13 @@
+{
+    "name": "sqlite-persistence",
+    "description": "SQLite on a persistent volume: append + query rows across restarts",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

@@ -21,6 +21,10 @@
             "description": "Minimal persistent volume demo: /data survives restart"
         },
         {
+            "name": "sqlite-persistence",
+            "description": "SQLite on a persistent volume: append + query rows across restarts"
+        },
+        {
             "name": "fullstack",
             "description": "Fullstack app: API backend + React/shadcn frontend"
         },

@@ -1,0 +1,12 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        {
+            "type": "persist",
+            "name": "database",
+            "path": "/data"
+        }
+    ]
+}

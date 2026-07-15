@@ -121,6 +121,16 @@ Native macOS MLX LLM chat app with Open WebUI for Wendy Agent for Mac. The Swift
 wendy init --app-id mac-llm --target darwin --language swift --template mac-llm --assistant skip --git-init no
 ```
 
+### hello-pytorch
+
+GPU sanity-check app: polls PyTorch every 2 seconds and prints CUDA (NVIDIA GPU), MPS (Apple Silicon GPU), and CPU availability plus the PyTorch version. No HTTP server. Entitlements: gpu.
+
+Ships two Dockerfiles: the default `Dockerfile` is CPU-only (works everywhere, no GPU required); `Dockerfile.jetson-slim` targets NVIDIA Jetson devices and requires a JetPack-matched `TORCH_WHL_URL` build-arg (see `python/hello-pytorch/README-JETSON.md`).
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/hello-pytorch/` |
+
 ### common
 
 Shared building blocks (not selectable as templates):

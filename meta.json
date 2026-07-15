@@ -86,6 +86,11 @@
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
             "languages": ["python"]
+        },
+        {
+            "name": "hello-pytorch",
+            "description": "PyTorch CUDA/MPS/CPU availability check (CPU + Jetson images)",
+            "languages": ["python"]
         }
     ],
     "languages": [

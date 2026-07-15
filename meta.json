@@ -121,6 +121,11 @@
             "name": "llm-gguf",
             "description": "Swift server driving llama.cpp (GGUF) for Qwen3-4B chat on Jetson",
             "languages": ["swift"]
+        },
+        {
+            "name": "tensorrt-hello",
+            "description": "Minimal Swift↔TensorRT binding demo",
+            "languages": ["swift"]
         }
     ],
     "languages": [

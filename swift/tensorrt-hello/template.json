@@ -1,0 +1,13 @@
+{
+    "name": "tensorrt-hello",
+    "description": "Minimal Swift↔TensorRT binding demo",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

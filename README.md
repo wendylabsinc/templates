@@ -147,6 +147,18 @@ Swift Hummingbird server that shells out to `llama-cli` (llama.cpp, GGUF weights
 wendy init --app-id llm-gguf --language swift --template llm-gguf --assistant skip --git-init no
 ```
 
+### tensorrt-hello
+
+Minimal Swift↔TensorRT binding demo: prints a `TensorShape` via `import TensorRT` (`tensorrt-swift`). No HTTP server. Built on the `dustynv/tensorrt` Jetson base image, so it targets NVIDIA Jetson devices. Entitlements: gpu.
+
+| Language | Directory |
+|----------|-----------|
+| Swift | `swift/tensorrt-hello/` |
+
+```bash
+wendy init --app-id tensorrt-hello --language swift --template tensorrt-hello --assistant skip --git-init no
+```
+
 ### hello-pytorch
 
 GPU sanity-check app: polls PyTorch every 2 seconds and prints CUDA (NVIDIA GPU), MPS (Apple Silicon GPU), and CPU availability plus the PyTorch version. No HTTP server. Entitlements: gpu.

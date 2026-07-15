@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bluetooth Discovery</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+      <img src="/logo.svg" alt="Wendy Logo" class="h-10 mb-4" />
+      <h1 class="text-3xl font-bold text-gray-800 mb-1">Bluetooth Discovery</h1>
+      <p class="mb-2">
+        <span id="status" class="inline-flex items-center gap-1.5 text-sm font-medium">
+          <span id="status-dot" class="w-2 h-2 rounded-full bg-green-500"></span>
+          <span id="status-text" class="text-green-600">Connected</span>
+        </span>
+      </p>
+      <p class="text-gray-600 mb-6">Scanning for nearby Bluetooth devices...</p>
+
+      <div class="bg-white rounded-lg shadow overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200">
+          <thead class="bg-gray-50">
+            <tr>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Device Name
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Address
+              </th>
+              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                RSSI
+              </th>
+            </tr>
+          </thead>
+          <tbody id="devices-table" class="bg-white divide-y divide-gray-200">
+            <tr id="loading-row">
+              <td colspan="3" class="px-6 py-4 text-center text-gray-500">
+                <div class="flex items-center justify-center gap-2">
+                  <svg class="animate-spin h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Scanning for devices...
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mt-4 text-sm text-gray-500">
+        <span id="device-count">0</span> devices discovered
+      </div>
+    </div>
+
+    <script>
+      const devices = new Map();
+      const table = document.getElementById('devices-table');
+      const loadingRow = document.getElementById('loading-row');
+      const deviceCount = document.getElementById('device-count');
+      const statusDot = document.getElementById('status-dot');
+      const statusText = document.getElementById('status-text');
+
+      function updateTable() {
+        // Remove loading row if we have devices
+        if (devices.size > 0 && loadingRow) {
+          loadingRow.remove();
+        }
+
+        // Sort devices by RSSI (strongest signal first)
+        const sortedDevices = [...devices.values()].sort((a, b) => (b.rssi || -100) - (a.rssi || -100));
+
+        // Clear and rebuild table
+        table.innerHTML = '';
+        for (const device of sortedDevices) {
+          const row = document.createElement('tr');
+          row.className = 'hover:bg-gray-50 transition-colors';
+          row.innerHTML = `
+            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+              ${device.name || '<span class="text-gray-400 italic">Unknown</span>'}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
+              ${device.address}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+              <span class="inline-flex items-center gap-1">
+                ${getRssiIndicator(device.rssi)}
+                ${device.rssi !== null ? device.rssi + ' dBm' : 'N/A'}
+              </span>
+            </td>
+          `;
+          table.appendChild(row);
+        }
+
+        deviceCount.textContent = devices.size;
+      }
+
+      function getRssiIndicator(rssi) {
+        if (rssi === null) return '';
+        let color = 'text-red-500';
+        if (rssi > -50) color = 'text-green-500';
+        else if (rssi > -70) color = 'text-yellow-500';
+        else if (rssi > -80) color = 'text-orange-500';
+
+        return `<svg class="w-4 h-4 ${color}" fill="currentColor" viewBox="0 0 20 20">
+          <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+        </svg>`;
+      }
+
+      // Connect to SSE endpoint
+      const eventSource = new EventSource('/events');
+
+      eventSource.addEventListener('device', (event) => {
+        const device = JSON.parse(event.data);
+        devices.set(device.address, device);
+        updateTable();
+      });
+
+      eventSource.addEventListener('keepalive', () => {
+        // Just a keepalive, no action needed
+      });
+
+      eventSource.addEventListener('error', (event) => {
+        const data = JSON.parse(event.data);
+        console.error('Scan error:', data.error);
+      });
+
+      eventSource.onerror = () => {
+        statusDot.className = 'w-2 h-2 rounded-full bg-red-500';
+        statusText.textContent = 'Disconnected';
+        statusText.className = 'text-red-600';
+      };
+
+      eventSource.onopen = () => {
+        statusDot.className = 'w-2 h-2 rounded-full bg-green-500';
+        statusText.textContent = 'Connected';
+        statusText.className = 'text-green-600';
+      };
+    </script>
+  </body>
+</html>

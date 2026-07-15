@@ -91,6 +91,11 @@
             "name": "hello-pytorch",
             "description": "PyTorch CUDA/MPS/CPU availability check (CPU + Jetson images)",
             "languages": ["python"]
+        },
+        {
+            "name": "bluetooth-discovery",
+            "description": "BLE scanner: live device stream (bleak + FastAPI + SSE + web UI)",
+            "languages": ["python"]
         }
     ],
     "languages": [

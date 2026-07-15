@@ -131,6 +131,14 @@ Ships two Dockerfiles: the default `Dockerfile` is CPU-only (works everywhere, n
 |----------|-----------|
 | Python | `python/hello-pytorch/` |
 
+### bluetooth-discovery
+
+BLE scanner: discovers nearby Bluetooth devices with [bleak](https://github.com/hbldh/bleak) and streams them live to a web UI over SSE (`/events`), alongside a one-shot `/discovered` JSON endpoint. Entitlements: network (host), bluetooth (bluez).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + bleak + sse-starlette | 8000 | `python/bluetooth-discovery/` |
+
 ### common
 
 Shared building blocks (not selectable as templates):

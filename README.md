@@ -230,6 +230,16 @@ Jetson vision app group: real-time object detection (DeepStream + YOLO11n, Prome
 
 Targets NVIDIA Jetson Orin devices (DeepStream + TensorRT). Ports 9090/8090/9091 are fixed service-mesh constants — `monitor.html` hardcodes them and is not itself served by any container, so it is not templated.
 
+### ai-security-camera
+
+AI security camera for NVIDIA Jetson: ingests one or more IP-camera RTSP streams (ONVIF auto-discovery or a pinned `cameras.json`/`CAMERA_URLS` list), runs DeepStream YOLO11n object detection + NvDCF tracking on the GPU, and raises debounced security events (with saved snapshots) for people/vehicles. Single web dashboard with MJPEG preview, event log, Prometheus metrics (`/metrics`), and events API (`/events`). Ported from samples PR #13. Entitlements: gpu, network (host), persist (data).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | Flask + DeepStream + pyds | 8080 | `python/ai-security-camera/` |
+
+Camera configuration (RTSP URLs, ONVIF discovery toggle, credentials) is runtime config in `cameras.json`/env vars, not a template variable — there is no single hardcoded stream to parameterize.
+
 ### voice-assistant
 
 Local, fully offline voice assistant: wake-word detection ("wendy" via [openWakeWord](https://github.com/dscripka/openWakeWord)) -> [OpenAI Whisper](https://github.com/openai/whisper) STT -> a local LLM with tool-calling support (stubbed light-control tools) -> [Piper](https://github.com/rhasspy/piper) TTS, all running on-device on an NVIDIA Jetson. No HTTP server, no cloud calls beyond initial model downloads. Includes a `run-mac.sh` helper for local development on macOS. Entitlements: network (host), audio, gpu.

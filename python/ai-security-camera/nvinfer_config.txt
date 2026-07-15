@@ -1,0 +1,51 @@
+################################################################################
+# nvinfer (primary GIE) configuration — YOLO11n object detector
+#
+# The TensorRT engine is built from the ONNX model on first launch and cached to
+# the persistent volume at /data/engines so subsequent starts are fast. The first
+# build takes several minutes on a Jetson Orin — that is expected.
+################################################################################
+[property]
+gpu-id=0
+net-scale-factor=0.0039215697906911373
+
+# ONNX model exported by the Docker build (DeepStream-Yolo format, static batch=2)
+onnx-file=/app/yolo11n.onnx
+
+# Cached TensorRT engine on the persistent volume. Built from the ONNX on first
+# run; reused on every subsequent start.
+model-engine-file=/data/engines/model_b2_gpu0_fp16.engine
+
+labelfile-path=/app/labels.txt
+batch-size=2
+# 0=FP32, 1=INT8, 2=FP16 — FP16 is the sweet spot on Jetson Orin
+network-mode=2
+num-detected-classes=80
+# Run inference every Nth frame (0 = every frame). 1 = every other frame, which
+# is plenty for security monitoring and roughly doubles throughput.
+interval=1
+gie-unique-id=1
+process-mode=1
+
+# Network type: 0=detector
+network-type=0
+# Cluster mode: 2=NMS (required for YOLO)
+cluster-mode=2
+
+# YOLO11 uses center padding — required for correct detection geometry
+maintain-aspect-ratio=1
+symmetric-padding=1
+model-color-format=0
+infer-dims=3;640;640
+force-implicit-batch-dim=1
+
+# Custom YOLO library + parser from https://github.com/marcoslucianops/DeepStream-Yolo
+custom-lib-path=/app/lib/libnvdsinfer_custom_impl_Yolo.so
+engine-create-func-name=NvDsInferYoloCudaEngineGet
+parse-bbox-func-name=NvDsInferParseYolo
+
+[class-attrs-all]
+nms-iou-threshold=0.45
+# Confidence floor. Raise to cut false positives, lower to catch more.
+pre-cluster-threshold=0.4
+topk=300

@@ -139,6 +139,14 @@ BLE scanner: discovers nearby Bluetooth devices with [bleak](https://github.com/
 |----------|-----------|-------------|-----------|
 | Python | FastAPI + bleak + sse-starlette | 8000 | `python/bluetooth-discovery/` |
 
+### whisper-stt
+
+Headless Whisper speech-to-text for NVIDIA Jetson: captures audio from a USB microphone via ALSA/PortAudio and continuously transcribes it to a file using [OpenAI Whisper](https://github.com/openai/whisper) on a JetPack 6 / CUDA 12.6 base image. No HTTP server. Entitlements: network (host), audio, gpu.
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/whisper-stt/` |
+
 ### common
 
 Shared building blocks (not selectable as templates):

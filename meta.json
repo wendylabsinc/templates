@@ -96,6 +96,11 @@
             "name": "bluetooth-discovery",
             "description": "BLE scanner: live device stream (bleak + FastAPI + SSE + web UI)",
             "languages": ["python"]
+        },
+        {
+            "name": "whisper-stt",
+            "description": "Headless Whisper speech-to-text on Jetson (USB mic → transcript file)",
+            "languages": ["python"]
         }
     ],
     "languages": [

@@ -1,0 +1,13 @@
+{
+    "name": "whisper-stt",
+    "description": "Headless Whisper speech-to-text on Jetson (USB mic → transcript file)",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

@@ -1,0 +1,10 @@
+[project]
+name = "mlx-llm-chat"
+version = "0.1.0"
+description = "Qwen3 4B chat with mlx-lm on macOS Metal"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "mlx-lm",
+]

@@ -111,6 +111,11 @@
             "name": "voice-assistant",
             "description": "Local voice assistant: wake-word + Whisper STT + local LLM tools + Piper TTS",
             "languages": ["python"]
+        },
+        {
+            "name": "mlx-llm-chat",
+            "description": "Self-contained MLX LLM chat with React frontend (mlx-lm/transformers on Python, MLX-Swift + Hummingbird on Swift)",
+            "languages": ["python", "swift"]
         }
     ],
     "languages": [

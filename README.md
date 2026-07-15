@@ -121,6 +121,20 @@ Native macOS MLX LLM chat app with Open WebUI for Wendy Agent for Mac. The Swift
 wendy init --app-id mac-llm --target darwin --language swift --template mac-llm --assistant skip --git-init no
 ```
 
+### mlx-llm-chat
+
+Self-contained MLX LLM chat app with its own React/shadcn frontend — distinct from `llm` (Ollama + Open WebUI) and `mac-llm` (native macOS + Open WebUI, no Dockerfile). Both language variants ship a Dockerfile and run as a normal WendyOS linux container with a `gpu` entitlement, so they build and deploy like any other template rather than relying on the Mac-only Wendy Agent supervisor.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | mlx-lm (macOS/Metal) / transformers (Linux CUDA/CPU) + FastAPI, serving Qwen3-4B-4bit | 3009 | `python/mlx-llm-chat/` |
+| Swift | MLX-Swift (`mlx-swift-lm`) + Hummingbird | 6002 | `swift/mlx-llm-chat/` |
+
+```bash
+wendy init --app-id mlx-llm-chat --language python --template mlx-llm-chat --assistant skip --git-init no
+wendy init --app-id mlx-llm-chat --language swift --template mlx-llm-chat --assistant skip --git-init no
+```
+
 ### hello-pytorch
 
 GPU sanity-check app: polls PyTorch every 2 seconds and prints CUDA (NVIDIA GPU), MPS (Apple Silicon GPU), and CPU availability plus the PyTorch version. No HTTP server. Entitlements: gpu.

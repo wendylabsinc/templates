@@ -1,0 +1,14 @@
+openwakeword>=0.5.0
+openai-whisper>=20231117
+piper-tts>=0.0.2
+numpy>=1.24.0
+sounddevice>=0.4.6
+scipy>=1.11.0
+transformers>=4.35.0
+pydub>=0.25.1
+requests>=2.31.0
+
+# ONNX Runtime GPU for Jetson Orin Nano (JetPack 6, CUDA 12.6)
+# Install with: pip install onnxruntime-gpu --extra-index-url https://pypi.jetson-ai-lab.io/jp6/cu126
+# Note: This must be installed separately due to custom index URL
+# onnxruntime-gpu==1.23.0

@@ -155,6 +155,16 @@ Streaming ASR web demo: captures audio from a USB microphone, uses [Silero VAD](
 |----------|-----------|-------------|-----------|
 | Python | FastAPI + NeMo + Silero VAD | 3004 | `python/asr-nemotron/` |
 
+### voice-assistant
+
+Local, fully offline voice assistant: wake-word detection ("wendy" via [openWakeWord](https://github.com/dscripka/openWakeWord)) -> [OpenAI Whisper](https://github.com/openai/whisper) STT -> a local LLM with tool-calling support (stubbed light-control tools) -> [Piper](https://github.com/rhasspy/piper) TTS, all running on-device on an NVIDIA Jetson. No HTTP server, no cloud calls beyond initial model downloads. Includes a `run-mac.sh` helper for local development on macOS. Entitlements: network (host), audio, gpu.
+
+**Distinct from `voice-ai-pipecat`**: `voice-ai-pipecat` is a Pipecat-orchestrated pipeline that calls out to Gemini 2.5 Flash for the LLM step and ships a React visualizer; `voice-assistant` keeps the entire pipeline local (local LLM, no cloud inference, no web UI) and is headless.
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/voice-assistant/` |
+
 ### common
 
 Shared building blocks (not selectable as templates):

@@ -1,0 +1,13 @@
+{
+    "name": "voice-assistant",
+    "description": "Local voice assistant: wake-word + Whisper STT + local LLM tools + Piper TTS",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

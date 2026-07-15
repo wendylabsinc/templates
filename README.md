@@ -147,6 +147,14 @@ Headless Whisper speech-to-text for NVIDIA Jetson: captures audio from a USB mic
 |----------|-----------|
 | Python | `python/whisper-stt/` |
 
+### asr-nemotron
+
+Streaming ASR web demo: captures audio from a USB microphone, uses [Silero VAD](https://github.com/snakers4/silero-vad) to detect speech, and transcribes it with NVIDIA's Nemotron streaming ASR model, with a live waveform visualization and transcription/log tabs in the web UI. Model weights are cached on a persistent volume. Entitlements: network (host), audio, gpu, persist (model-cache).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + NeMo + Silero VAD | 3004 | `python/asr-nemotron/` |
+
 ### common
 
 Shared building blocks (not selectable as templates):

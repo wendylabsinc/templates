@@ -101,6 +101,11 @@
             "name": "whisper-stt",
             "description": "Headless Whisper speech-to-text on Jetson (USB mic → transcript file)",
             "languages": ["python"]
+        },
+        {
+            "name": "asr-nemotron",
+            "description": "Streaming ASR web demo: USB mic + Silero VAD + NVIDIA Nemotron",
+            "languages": ["python"]
         }
     ],
     "languages": [

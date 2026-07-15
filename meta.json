@@ -126,6 +126,11 @@
             "name": "tensorrt-hello",
             "description": "Minimal Swift↔TensorRT binding demo",
             "languages": ["swift"]
+        },
+        {
+            "name": "tensorrt-llm",
+            "description": "Swift TensorRT-LLM token streaming to stdout (GPU)",
+            "languages": ["swift"]
         }
     ],
     "languages": [

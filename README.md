@@ -159,6 +159,18 @@ Minimal Swift↔TensorRT binding demo: prints a `TensorShape` via `import Tensor
 wendy init --app-id tensorrt-hello --language swift --template tensorrt-hello --assistant skip --git-init no
 ```
 
+### tensorrt-llm
+
+Swift TensorRT-LLM token-streaming demo: autoregressive token-by-token generation with a simulated KV-cache, streamed to stdout via `import TensorRTLLM`/`TensorRTNative` (`tensorrt-swift`). No HTTP server. Built on the `dustynv/tensorrt` Jetson base image, so it targets NVIDIA Jetson devices. Entitlements: gpu, network (host).
+
+| Language | Directory |
+|----------|-----------|
+| Swift | `swift/tensorrt-llm/` |
+
+```bash
+wendy init --app-id tensorrt-llm --language swift --template tensorrt-llm --assistant skip --git-init no
+```
+
 ### hello-pytorch
 
 GPU sanity-check app: polls PyTorch every 2 seconds and prints CUDA (NVIDIA GPU), MPS (Apple Silicon GPU), and CPU availability plus the PyTorch version. No HTTP server. Entitlements: gpu.

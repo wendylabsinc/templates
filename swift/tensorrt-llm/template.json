@@ -1,0 +1,13 @@
+{
+    "name": "tensorrt-llm",
+    "description": "Swift TensorRT-LLM token streaming to stdout (GPU)",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

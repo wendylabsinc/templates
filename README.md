@@ -70,6 +70,15 @@ Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage
 
 Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
 
+### webcam
+
+Generic USB/UVC webcam viewer: enumerates `/dev/video*`, uses GStreamer WebRTC when hardware encoding is available, and falls back to MJPEG-over-WebSocket otherwise. Distinct from `camera-feed`, which is MJPEG-over-WebSocket only (no WebRTC path, no auto HW-encode detection). Entitlements: network (host), camera, gpu.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + GStreamer (PyGObject) | 3003 | `python/webcam/` |
+| Swift | Hummingbird + gstreamer-swift | 3003 | `swift/webcam/` |
+
 ### realsense-camera
 
 Live Intel RealSense D415 multi-stream viewer: color, left IR, right IR, and colorized depth as MJPEG streams.

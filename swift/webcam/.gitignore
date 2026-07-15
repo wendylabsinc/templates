@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+Package.resolved
+.DS_Store
+*.xcodeproj
+*.xcworkspace
+.playwright-mcp/
+*.png

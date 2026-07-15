@@ -58,6 +58,11 @@
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },
         {
+            "name": "webcam",
+            "description": "Generic USB/UVC webcam: GStreamer WebRTC with MJPEG fallback",
+            "languages": ["python", "swift"]
+        },
+        {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]

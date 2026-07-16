@@ -77,7 +77,9 @@ actor Transcriber {
         }
     }
 
-    deinit { whisper_free(ctx) }
+    // No deinit: this actor is a process-lifetime singleton (the capture loop
+    // never returns), so the whisper context is reclaimed at process exit.
+    // (A Swift 6 nonisolated deinit cannot touch the non-Sendable ctx pointer.)
 }
 
 // MARK: - Helpers

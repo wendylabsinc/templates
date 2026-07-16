@@ -1,0 +1,21 @@
+{
+    "name": "bluetooth-discovery",
+    "description": "BLE scanner in Swift: live device stream (wendylabsinc/bluetooth + Hummingbird + SSE + web UI)",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Primary HTTP port",
+            "type": "integer",
+            "default": 8000,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

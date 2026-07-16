@@ -154,8 +154,8 @@ struct Qwen3ChatServer {
             HealthResponse(status: "ok", model: config.model)
         }
 
-        router.post("/api/chat") { request, _ async throws -> ChatResponse in
-            let body = try await request.decode(as: ChatRequest.self, context: JSONDecoder())
+        router.post("/api/chat") { request, context async throws -> ChatResponse in
+            let body = try await request.decode(as: ChatRequest.self, context: context)
             return try await runner.generate(for: body)
         }
 

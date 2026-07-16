@@ -1,0 +1,21 @@
+{
+    "phases": [
+        {
+            "id": "backend",
+            "title": "Inference backend",
+            "questions": [
+                {
+                    "id": "BACKEND",
+                    "label": "Choose the inference backend",
+                    "type": "radio",
+                    "required": true,
+                    "default": "gguf",
+                    "options": [
+                        { "value": "gguf", "label": "llama.cpp (GGUF)", "comments": "Jetson/CUDA. Default." },
+                        { "value": "mlx", "label": "MLX-Swift", "comments": "Apple Silicon only (Metal); not for Linux/Jetson." }
+                    ]
+                }
+            ]
+        }
+    ]
+}

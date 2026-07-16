@@ -29,10 +29,6 @@
             "description": "Fullstack app: API backend + React/shadcn frontend"
         },
         {
-            "name": "camera-feed",
-            "description": "Live camera feed: GStreamer MJPEG over WebSocket"
-        },
-        {
             "name": "audio",
             "description": "Live audio waveform visualization with mic capture"
         },
@@ -59,8 +55,7 @@
         },
         {
             "name": "webcam",
-            "description": "Generic USB/UVC webcam: GStreamer WebRTC with MJPEG fallback",
-            "languages": ["python", "swift"]
+            "description": "Generic USB/UVC webcam: GStreamer MJPEG over WebSocket with multi-camera enumeration + switching"
         },
         {
             "name": "realsense-camera",

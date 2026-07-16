@@ -68,18 +68,17 @@ SQLite on a persistent volume: appends a timestamped row and queries all rows on
 
 Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage Dockerfile builds the React frontend then serves it alongside a CRUD API for cars.
 
-### camera-feed
-
-Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
-
 ### webcam
 
-Generic USB/UVC webcam viewer: enumerates `/dev/video*`, uses GStreamer WebRTC when hardware encoding is available, and falls back to MJPEG-over-WebSocket otherwise. Distinct from `camera-feed`, which is MJPEG-over-WebSocket only (no WebRTC path, no auto HW-encode detection). Entitlements: network (host), camera, gpu.
+Generic USB/UVC webcam viewer: enumerates `/dev/video*` and streams MJPEG-over-WebSocket via GStreamer, with multi-camera enumeration + switching. Entitlements: network (host), camera, gpu.
 
 | Language | Framework | Default Port | Directory |
 |----------|-----------|-------------|-----------|
 | Python | FastAPI + GStreamer (PyGObject) | 3003 | `python/webcam/` |
 | Swift | Hummingbird + gstreamer-swift | 3003 | `swift/webcam/` |
+| Rust | Axum + GStreamer (gstreamer-rs) | 4003 | `rust/webcam/` |
+| C++ | Drogon + GStreamer | 7003 | `cpp/webcam/` |
+| Node | Express + ws + GStreamer (gst-launch-1.0 CLI) | 5003 | `node/webcam/` |
 
 ### realsense-camera
 

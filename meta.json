@@ -78,6 +78,11 @@
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
             "languages": ["python"]
+        },
+        {
+            "name": "ros2-talker-listener",
+            "description": "ROS 2 talker/listener demo in Swift (swift-ros2 over CycloneDDS): std_msgs/String publisher + subscriber as a two-service app group",
+            "languages": ["swift"]
         }
     ],
     "languages": [

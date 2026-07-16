@@ -1,0 +1,21 @@
+{
+    "name": "ros2-talker-listener",
+    "description": "ROS 2 talker/listener demo in Swift (swift-ros2 over CycloneDDS): a std_msgs/String publisher and subscriber as a two-service app group",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "ROS_DOMAIN_ID",
+            "description": "ROS 2 domain ID for CycloneDDS discovery — talker and listener share it, and it must match any peer ROS 2 node you want to interoperate with",
+            "type": "integer",
+            "default": 0,
+            "prompt": "ROS domain ID",
+            "validate": { "min": 0, "max": 232 }
+        }
+    ]
+}

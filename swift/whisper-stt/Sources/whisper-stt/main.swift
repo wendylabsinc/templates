@@ -5,16 +5,14 @@ internal import Foundation
 import GStreamer
 import CWhisper
 
-#if canImport(Glibc)
-import Glibc
-#elseif canImport(Darwin)
-import Darwin
-#endif
-
-// Line-buffer stdout so `wendy device logs` sees each transcription promptly
-// (Swift 6 fully-buffers stdout on Linux when not a TTY — see the
-// swift-ros2-template-gotchas memory).
-setvbuf(stdout, nil, _IOLBF, 0)
+// Write straight to the stdout file descriptor rather than `print`. This is
+// unbuffered, so `wendy device logs` sees each transcription immediately
+// (Swift fully-buffers `print` on Linux when stdout is not a TTY — see the
+// swift-ros2-template-gotchas memory), and it avoids referencing the Glibc
+// `stdout` global, which Swift 6 rejects as not concurrency-safe.
+func emit(_ line: String) {
+    FileHandle.standardOutput.write(Data((line + "\n").utf8))
+}
 
 // MARK: - Configuration (environment-driven)
 
@@ -101,7 +99,7 @@ func appendLine(_ line: String, to path: String) {
         try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
     }
     if !fm.fileExists(atPath: path) {
-        fm.createFile(atPath: path, contents: nil)
+        _ = fm.createFile(atPath: path, contents: nil)
     }
     guard let handle = FileHandle(forWritingAtPath: path) else { return }
     defer { try? handle.close() }
@@ -121,9 +119,9 @@ let source = try AudioSource.microphone()
     .withFormat(.s16le)
     .build()
 
-print("[whisper-stt] model=\(modelPath) lang=\(language) chunk=\(chunkSeconds)s threshold=\(silenceThreshold)")
-print("[whisper-stt] transcript=\(transcriptFile)")
-print("[whisper-stt] Listening...")
+emit("[whisper-stt] model=\(modelPath) lang=\(language) chunk=\(chunkSeconds)s threshold=\(silenceThreshold)")
+emit("[whisper-stt] transcript=\(transcriptFile)")
+emit("[whisper-stt] Listening...")
 
 var pcm: [Float] = []
 pcm.reserveCapacity(samplesPerChunk * 2)
@@ -147,7 +145,7 @@ for await buffer in source.buffers() {
         guard !text.isEmpty else { continue }
 
         let line = "[\(timestamp())] \(text)"
-        print(line)
+        emit(line)
         appendLine(line, to: transcriptFile)
     }
 }

@@ -26,6 +26,8 @@ RUN git clone --depth 1 --branch ${WHISPER_CPP_TAG} \
  && cmake -S /opt/whisper.cpp -B /opt/whisper.cpp/build -G Ninja \
       -DGGML_CUDA=ON \
       -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
+      -DGGML_NATIVE=OFF \
+      -DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16 \
       -DBUILD_SHARED_LIBS=ON \
       -DWHISPER_BUILD_EXAMPLES=OFF \
       -DWHISPER_BUILD_TESTS=OFF \

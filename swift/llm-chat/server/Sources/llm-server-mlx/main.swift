@@ -2,6 +2,9 @@ import Foundation
 import Hummingbird
 @preconcurrency import MLXLLM
 @preconcurrency import MLXLMCommon
+import MLXHuggingFace
+import HuggingFace
+import Tokenizers
 
 struct ChatMessage: Decodable, Sendable {
     let role: String
@@ -36,9 +39,13 @@ actor ChatManager {
         self.modelId = modelId
     }
 
-    func loadModel() async throws {
+    func load() async throws {
         print("Loading model: \(modelId)...")
-        let model = try await MLXLMCommon.loadModel(id: modelId)
+        // Self-contained model loading: MLXHuggingFace's #huggingFaceLoadModel
+        // macro wires up a default HuggingFace.HubClient() downloader and a
+        // Tokenizers.AutoTokenizer-backed TokenizerLoader, so this downloads
+        // (and caches) the model + tokenizer from the Hub by id.
+        let model = try await #huggingFaceLoadModel(configuration: ModelConfiguration(id: modelId))
         session = ChatSession(model)
         print("Model loaded successfully!")
     }
@@ -114,7 +121,7 @@ struct MLXLLMServer {
 
         // Load the model
         let chatManager = ChatManager(modelId: modelId)
-        try await chatManager.loadModel()
+        try await chatManager.load()
 
         let router = Router()
 

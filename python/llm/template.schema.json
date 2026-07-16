@@ -40,6 +40,48 @@
                             "comments": "Use AGX Orin 64GB, Thor, or larger. Avoid Pi 5, Orin Nano 8GB, and AGX 32GB."
                         },
                         {
+                            "value": "gemma3:4b",
+                            "label": "gemma3:4b",
+                            "size": "edge",
+                            "parameters": "4B",
+                            "comments": "Good reasoning for its size. Jetson Orin Nano 8GB fits comfortably; Pi 5 is tight."
+                        },
+                        {
+                            "value": "llama3.2:3b",
+                            "label": "llama3.2:3b",
+                            "size": "edge",
+                            "parameters": "3B",
+                            "comments": "Solid all-rounder. Pi 5 possible but slow; Jetson Orin Nano 8GB is a good fit."
+                        },
+                        {
+                            "value": "qwen2.5:3b",
+                            "label": "qwen2.5:3b",
+                            "size": "edge",
+                            "parameters": "3B",
+                            "comments": "Fast responses (~30 tok/s on Orin Nano 8GB). Pi 5 possible; Orin Nano 8GB is a great fit."
+                        },
+                        {
+                            "value": "mistral:7b",
+                            "label": "mistral:7b",
+                            "size": "edge+",
+                            "parameters": "7B Q4_K_M",
+                            "comments": "Strong general model (~15 tok/s on Orin Nano 8GB). Orin Nano 8GB fits; not for Pi 5."
+                        },
+                        {
+                            "value": "qwen3-coder:30b",
+                            "label": "qwen3-coder:30b",
+                            "size": "edge server",
+                            "parameters": "30B/3B active",
+                            "comments": "Coding-focused MoE, 19GB download. Use AGX Orin 32GB or 64GB, Thor, or larger."
+                        },
+                        {
+                            "value": "gpt-oss:120b",
+                            "label": "gpt-oss:120b",
+                            "size": "workstation+",
+                            "parameters": "120B/5.1B active",
+                            "comments": "Powerful open reasoning model, 65GB download. Thor 128GB class or larger only."
+                        },
+                        {
                             "value": "hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",
                             "label": "nemotron-3-nano-4b",
                             "size": "edge",
@@ -52,6 +94,13 @@
                             "size": "edge server",
                             "parameters": "30B/3B active",
                             "comments": "Local 24GB VRAM class. Use AGX Orin 32GB or 64GB, Thor, or larger."
+                        },
+                        {
+                            "value": "nemotron-3-super:120b",
+                            "label": "nemotron-3-super:120b",
+                            "size": "workstation+",
+                            "parameters": "120B/12B active",
+                            "comments": "Local nemotron-3-super, 87GB download. Thor 128GB class only; otherwise use the :cloud variant."
                         },
                         {
                             "value": "nemotron-3-super:cloud",

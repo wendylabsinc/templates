@@ -218,12 +218,47 @@ class MJPEGCamera {
 
       const proc = spawn("gst-launch-1.0", args);
 
+      // Named so they can be individually detached below -- both on success
+      // (so the probe's stdout listener doesn't keep accumulating
+      // `probeBuffer` forever alongside the steady-state one) and on
+      // failure (so a killed candidate doesn't leak listeners/backing
+      // buffers while we wait for it to fully exit).
+      const onStdoutData = (chunk: Buffer) => {
+        probeBuffer = Buffer.concat([probeBuffer, chunk]);
+        if (this.hasCompleteFrame(probeBuffer)) {
+          succeed();
+        }
+      };
+      const onStderrData = (data: Buffer) => {
+        console.error(`[gst] ${data.toString()}`);
+      };
+      const onError = () => fail();
+      const onClose = (code: number | null) => {
+        if (!settled) {
+          console.log(`[gst] pipeline candidate exited (code ${code}) before producing a frame`);
+          fail();
+        }
+      };
+
+      proc.stdout?.on("data", onStdoutData);
+      proc.stderr?.on("data", onStderrData);
+      proc.on("error", onError);
+      proc.on("close", onClose);
+
       const timer = setTimeout(() => fail(), 3000);
+
+      const detachProbeListeners = () => {
+        proc.stdout?.removeListener("data", onStdoutData);
+        proc.stderr?.removeListener("data", onStderrData);
+        proc.removeListener("error", onError);
+        proc.removeListener("close", onClose);
+      };
 
       const succeed = () => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        detachProbeListeners();
         this.process = proc;
         this.buffer = probeBuffer;
         this.attachStreamingHandlers(proc);
@@ -235,33 +270,43 @@ class MJPEGCamera {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        proc.removeAllListeners();
+        detachProbeListeners();
+        probeBuffer = Buffer.alloc(0);
+
+        // v4l2 capture devices are exclusive-open: if we resolve (letting
+        // the caller spawn the next candidate for the same device) before
+        // this process has actually released the device fd, the next
+        // gst-launch-1.0 can race it and fail with a false "device busy".
+        // Wait for the killed process to fully exit before resolving,
+        // bounded by a short guard so a stuck process can't hang the
+        // ladder forever.
+        if (proc.exitCode !== null || proc.signalCode !== null) {
+          resolve(false);
+          return;
+        }
+
+        let exited = false;
+        const guard = setTimeout(() => {
+          if (!exited) {
+            exited = true;
+            resolve(false);
+          }
+        }, 1000);
+
+        proc.once("close", () => {
+          if (!exited) {
+            exited = true;
+            clearTimeout(guard);
+            resolve(false);
+          }
+        });
+
         try {
           proc.kill("SIGTERM");
         } catch {
           // already exited
         }
-        resolve(false);
       };
-
-      proc.stdout?.on("data", (chunk: Buffer) => {
-        probeBuffer = Buffer.concat([probeBuffer, chunk]);
-        if (this.hasCompleteFrame(probeBuffer)) {
-          succeed();
-        }
-      });
-
-      proc.stderr?.on("data", (data: Buffer) => {
-        console.error(`[gst] ${data.toString()}`);
-      });
-
-      proc.on("error", () => fail());
-      proc.on("close", (code) => {
-        if (!settled) {
-          console.log(`[gst] pipeline candidate exited (code ${code}) before producing a frame`);
-          fail();
-        }
-      });
     });
   }
 

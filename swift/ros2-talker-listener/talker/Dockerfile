@@ -5,7 +5,7 @@
 FROM swift:6.3-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      cmake git build-essential \
+      cmake git build-essential pkg-config \
  && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --branch 0.10.5 \

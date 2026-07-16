@@ -26,8 +26,8 @@ const INDEX_HTML: &str = include_str!("../index.html");
 /// (as opposed to a metadata-only or output-only node some UVC cameras
 /// expose alongside their capture node).
 fn v4l2_is_capture(path: &str) -> bool {
-    std::process::Command::new("v4l2-ctl")
-        .args(["--device", path, "--all"])
+    std::process::Command::new("timeout")
+        .args(["2", "v4l2-ctl", "--device", path, "--all"])
         .output()
         .map(|out| String::from_utf8_lossy(&out.stdout).contains("Video Capture"))
         .unwrap_or(false)
@@ -37,8 +37,8 @@ fn v4l2_is_capture(path: &str) -> bool {
 /// back to the device basename if `v4l2-ctl` is unavailable or the field is
 /// missing.
 fn v4l2_device_name(path: &str) -> String {
-    let output = std::process::Command::new("v4l2-ctl")
-        .args(["--device", path, "--info"])
+    let output = std::process::Command::new("timeout")
+        .args(["2", "v4l2-ctl", "--device", path, "--info"])
         .output();
 
     if let Ok(out) = output {
@@ -89,8 +89,8 @@ fn enumerate_cameras_fallback() -> Vec<CameraInfo> {
 /// `v4l2-ctl --list-devices`, keep only capture-capable nodes, and fall
 /// back to scanning `/dev/video*` directly if that yields nothing.
 fn enumerate_cameras() -> Vec<CameraInfo> {
-    let output = std::process::Command::new("v4l2-ctl")
-        .arg("--list-devices")
+    let output = std::process::Command::new("timeout")
+        .args(["2", "v4l2-ctl", "--list-devices"])
         .output();
 
     let mut cameras = match output {

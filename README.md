@@ -217,11 +217,12 @@ BLE scanner: discovers nearby Bluetooth devices with [bleak](https://github.com/
 
 ### whisper-stt
 
-Headless Whisper speech-to-text for NVIDIA Jetson: captures audio from a USB microphone via ALSA/PortAudio and continuously transcribes it to a file using [OpenAI Whisper](https://github.com/openai/whisper) on a JetPack 6 / CUDA 12.6 base image. No HTTP server. Entitlements: network (host), audio, gpu.
+Headless Whisper speech-to-text for NVIDIA Jetson: captures audio from a USB microphone and continuously transcribes it to a file on a JetPack / CUDA base image. No HTTP server. The Python build uses [OpenAI Whisper](https://github.com/openai/whisper) over ALSA/PortAudio; the Swift build uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) in-process (via a `CWhisper` C-interop target) with [gstreamer-swift](https://github.com/wendylabsinc/gstreamer-swift) mic capture, and appends transcriptions to `/data` on a persistent volume. Entitlements: network (host), audio, gpu (Swift adds persist).
 
 | Language | Directory |
 |----------|-----------|
 | Python | `python/whisper-stt/` |
+| Swift | `swift/whisper-stt/` |
 
 ### asr-nemotron
 

@@ -1,17 +1,26 @@
 import Foundation
 import Hummingbird
-import MLXLLM
-import MLXLMCommon
+@preconcurrency import MLXLLM
+@preconcurrency import MLXLMCommon
+
+struct ChatMessage: Decodable, Sendable {
+    let role: String
+    let content: String
+}
 
 struct ChatRequest: Decodable, Sendable {
-    let prompt: String
+    let messages: [ChatMessage]
+    let system: String?
     let maxTokens: Int?
+    let temperature: Double?
+    let topP: Double?
+    let topK: Int?
 }
 
 struct ChatResponse: ResponseEncodable {
-    let text: String
-    let tokensGenerated: Int
-    let generationTimeMs: Int64
+    let reply: String
+    let model: String
+    let durationMs: Int64
 }
 
 struct HealthResponse: ResponseEncodable {
@@ -20,7 +29,7 @@ struct HealthResponse: ResponseEncodable {
 }
 
 actor ChatManager {
-    private var session: ChatSession?
+    private nonisolated(unsafe) var session: ChatSession?
     private let modelId: String
 
     init(modelId: String) {
@@ -29,33 +38,55 @@ actor ChatManager {
 
     func loadModel() async throws {
         print("Loading model: \(modelId)...")
-        let model = try await loadModel(id: modelId)
+        let model = try await MLXLMCommon.loadModel(id: modelId)
         session = ChatSession(model)
         print("Model loaded successfully!")
     }
 
-    func respond(to prompt: String) async throws -> (String, Int, Int64) {
+    func respond(to prompt: String) async throws -> (String, Int64) {
         guard let session = session else {
             throw ChatError.notLoaded
         }
 
         let startTime = DispatchTime.now()
-        var tokensGenerated = 0
-
-        let response = try await session.respond(to: prompt) { tokens in
-            tokensGenerated = tokens.count
-            return .more
-        }
-
+        let response = try await session.respond(to: prompt)
         let endTime = DispatchTime.now()
         let elapsedMs = Int64((endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000)
 
-        return (response, tokensGenerated, elapsedMs)
+        return (response, elapsedMs)
     }
 
     enum ChatError: Error {
         case notLoaded
     }
+}
+
+/// Builds a single prompt string from the request's system prompt + message
+/// history, mirroring the gguf server's prompt construction so both backends
+/// behave identically for the shared frontend.
+func buildPrompt(system: String?, messages: [ChatMessage]) -> String {
+    var sections: [String] = []
+    let systemPrompt = (system ?? "You are a helpful assistant.").trimmingCharacters(in: .whitespacesAndNewlines)
+    if !systemPrompt.isEmpty {
+        sections.append("System: \(systemPrompt)")
+    }
+
+    for message in messages {
+        let role = message.role.lowercased()
+        let label: String
+        switch role {
+        case "assistant":
+            label = "Assistant"
+        case "system":
+            label = "System"
+        default:
+            label = "User"
+        }
+        sections.append("\(label): \(message.content)")
+    }
+
+    sections.append("Assistant:")
+    return sections.joined(separator: "\n\n")
 }
 
 @main
@@ -93,15 +124,16 @@ struct MLXLLMServer {
         }
 
         // Chat endpoint
-        router.post("/v1/chat") { request, _ async throws -> ChatResponse in
-            let body = try await request.decode(as: ChatRequest.self, context: JSONDecoder())
+        router.post("/api/chat") { request, context async throws -> ChatResponse in
+            let body = try await request.decode(as: ChatRequest.self, context: context)
+            let prompt = buildPrompt(system: body.system, messages: body.messages)
 
-            let (text, tokens, timeMs) = try await chatManager.respond(to: body.prompt)
+            let (reply, durationMs) = try await chatManager.respond(to: prompt)
 
             return ChatResponse(
-                text: text,
-                tokensGenerated: tokens,
-                generationTimeMs: timeMs
+                reply: reply,
+                model: modelId,
+                durationMs: durationMs
             )
         }
 

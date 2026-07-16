@@ -76,6 +76,7 @@ router.get("/events") { _, _ -> Response in
                 if ContinuousClock.now >= deadline { break }
                 let data = try encoder.encode(device(from: result))
                 var buf = ByteBuffer()
+                buf.writeString("event: device\n")
                 buf.writeString("data: ")
                 buf.writeBytes(data)
                 buf.writeString("\n\n")

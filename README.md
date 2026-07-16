@@ -272,7 +272,6 @@ Local, fully offline voice assistant: wake-word detection ("wendy" via [openWake
 Shared building blocks (not selectable as templates):
 
 - `shadcn-vite-frontend/` — Vite + React + shadcn/ui dashboard
-- `camera-feed-html/` — Webcam viewer HTML page
 - `audio-feed-html/` — Audio waveform visualizer HTML page
 - `realsense-camera-frontend/` — React + Vite viewer for the `realsense-camera` template (color + IR + depth streams)
 - `voice-ai-pipecat-frontend/` — React + Three.js visualizer for the `voice-ai-pipecat` template (blue mic lines + emerald bot lines)

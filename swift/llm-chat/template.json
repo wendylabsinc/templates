@@ -1,6 +1,6 @@
 {
     "name": "llm-chat",
-    "description": "Swift LLM chat (Hummingbird + React): llama.cpp/GGUF on Jetson or MLX-Swift on Apple Silicon",
+    "description": "Swift LLM chat (Hummingbird + React) on Jetson/CUDA: llama.cpp/GGUF or MLX-Swift backend",
     "variables": [
         {
             "name": "APP_ID",
@@ -22,7 +22,7 @@
             "description": "Inference backend",
             "type": "string",
             "default": "gguf",
-            "prompt": "Inference backend (gguf=Jetson/llama.cpp, mlx=Apple Silicon)",
+            "prompt": "Inference backend (gguf=llama.cpp, mlx=MLX-Swift; both Jetson/CUDA)",
             "validate": { "enum": ["gguf", "mlx"] }
         }
     ]

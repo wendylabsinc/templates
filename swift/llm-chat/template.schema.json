@@ -11,8 +11,8 @@
                     "required": true,
                     "default": "gguf",
                     "options": [
-                        { "value": "gguf", "label": "llama.cpp (GGUF)", "comments": "Jetson/CUDA. Default." },
-                        { "value": "mlx", "label": "MLX-Swift", "comments": "Apple Silicon only (Metal); not for Linux/Jetson." }
+                        { "value": "gguf", "label": "llama.cpp (GGUF)", "comments": "Jetson/CUDA (llama.cpp). Default." },
+                        { "value": "mlx", "label": "MLX-Swift", "comments": "Jetson/CUDA (MLX-Swift CUDA backend)." }
                     ]
                 }
             ]

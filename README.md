@@ -213,6 +213,7 @@ BLE scanner: discovers nearby Bluetooth devices with [bleak](https://github.com/
 | Language | Framework | Default Port | Directory |
 |----------|-----------|-------------|-----------|
 | Python | FastAPI + bleak + sse-starlette | 8000 | `python/bluetooth-discovery/` |
+| Swift | Hummingbird + [wendylabsinc/bluetooth](https://github.com/wendylabsinc/bluetooth) (BlueZ) | 8000 | `swift/bluetooth-discovery/` |
 
 ### whisper-stt
 

@@ -146,6 +146,11 @@
             "name": "tensorrt-llm",
             "description": "Swift TensorRT-LLM token streaming to stdout (GPU)",
             "languages": ["swift"]
+        },
+        {
+            "name": "ros2-talker-listener",
+            "description": "ROS 2 talker/listener demo in Swift (swift-ros2 over CycloneDDS): std_msgs/String publisher + subscriber as a two-service app group",
+            "languages": ["swift"]
         }
     ],
     "languages": [

@@ -147,28 +147,28 @@ wendy init --app-id mac-llm --target darwin --language swift --template mac-llm 
 
 ### mlx-llm-chat
 
-Self-contained MLX LLM chat app with its own React/shadcn frontend — distinct from `llm` (Ollama + Open WebUI) and `mac-llm` (native macOS + Open WebUI, no Dockerfile). Both language variants ship a Dockerfile and run as a normal WendyOS linux container with a `gpu` entitlement, so they build and deploy like any other template rather than relying on the Mac-only Wendy Agent supervisor.
+Self-contained MLX LLM chat app with its own React/shadcn frontend — distinct from `llm` (Ollama + Open WebUI) and `mac-llm` (native macOS + Open WebUI, no Dockerfile). Ships a Dockerfile and runs as a normal WendyOS linux container with a `gpu` entitlement, so it builds and deploys like any other template rather than relying on the Mac-only Wendy Agent supervisor.
 
 | Language | Framework | Default Port | Directory |
 |----------|-----------|-------------|-----------|
 | Python | mlx-lm (macOS/Metal) / transformers (Linux CUDA/CPU) + FastAPI, serving Qwen3-4B-4bit | 3009 | `python/mlx-llm-chat/` |
-| Swift | MLX-Swift (`mlx-swift-lm`) + Hummingbird | 6002 | `swift/mlx-llm-chat/` |
 
 ```bash
 wendy init --app-id mlx-llm-chat --language python --template mlx-llm-chat --assistant skip --git-init no
-wendy init --app-id mlx-llm-chat --language swift --template mlx-llm-chat --assistant skip --git-init no
 ```
 
-### llm-gguf
+### llm-chat
 
-Swift Hummingbird server that shells out to `llama-cli` (llama.cpp, GGUF weights) to serve Qwen3-4B chat, with a React/shadcn frontend. Built on the `dustynv/tensorrt` Jetson base image with CUDA-enabled llama.cpp, so it targets NVIDIA Jetson devices. Entitlements: gpu, network (host).
+Swift LLM chat: Hummingbird server + React/shadcn frontend, with a `BACKEND` template variable selecting the inference engine — `gguf` (default) shells out to `llama-cli` (llama.cpp, GGUF weights); `mlx` uses MLX-Swift (`mlx-swift-lm`) in-process. Both backends run on the `dustynv/tensorrt` Jetson/CUDA base image as a normal WendyOS linux container, so they target NVIDIA Jetson (and other CUDA Linux) devices rather than Apple Silicon. Entitlements: gpu, network (host).
 
-| Language | Framework | Default Port | Directory |
-|----------|-----------|-------------|-----------|
-| Swift | Hummingbird + llama.cpp (`llama-cli`, GGUF) | 6002 | `swift/llm-gguf/` |
+| Language | Backend | Framework | Default Port | Directory |
+|----------|---------|-----------|-------------|-----------|
+| Swift | `gguf` (default) | Hummingbird + llama.cpp (`llama-cli`, GGUF) | 6002 | `swift/llm-chat/` |
+| Swift | `mlx` | Hummingbird + MLX-Swift (`mlx-swift-lm`) | 6002 | `swift/llm-chat/` |
 
 ```bash
-wendy init --app-id llm-gguf --language swift --template llm-gguf --assistant skip --git-init no
+wendy init --app-id llm-chat --language swift --template llm-chat --assistant skip --git-init no --var BACKEND=gguf
+wendy init --app-id llm-chat --language swift --template llm-chat --assistant skip --git-init no --var BACKEND=mlx
 ```
 
 ### tensorrt-hello

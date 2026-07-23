@@ -1,0 +1,188 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Webcam Stream</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="bg-gray-100 min-h-screen p-8">
+    <div class="max-w-4xl mx-auto">
+      <img src="/logo.svg" alt="Wendy Logo" class="h-10 mb-4" />
+      <h1 class="text-3xl font-bold text-gray-800 mb-1">Webcam Stream</h1>
+      <p class="mb-2">
+        <span class="inline-flex items-center gap-1.5 text-sm font-medium">
+          <span id="status-dot" class="w-2 h-2 rounded-full bg-yellow-500"></span>
+          <span id="status-text" class="text-yellow-600">Connecting...</span>
+        </span>
+      </p>
+      <p class="text-gray-600 mb-6">Low-latency video stream from the edge device</p>
+
+      <div class="bg-black rounded-lg shadow overflow-hidden relative flex items-center justify-center">
+        <canvas
+          id="video-frame"
+          class="bg-gray-900 max-w-full h-auto"
+          style="display: block;"
+          aria-label="Video stream"
+        ></canvas>
+        <div
+          id="loading-overlay"
+          class="absolute inset-0 flex items-center justify-center bg-gray-900"
+        >
+          <div class="text-center">
+            <svg
+              class="animate-spin h-10 w-10 text-blue-500 mx-auto mb-3"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              ></circle>
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+            <p class="text-gray-400">Connecting to camera...</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4 flex items-center gap-6 text-sm text-gray-500">
+        <span><span class="font-medium">FPS:</span> <span id="fps">0</span></span>
+        <span><span class="font-medium">Resolution:</span> <span id="resolution">--</span></span>
+      </div>
+    </div>
+
+    <script>
+      const videoFrame = document.getElementById("video-frame");
+      const loadingOverlay = document.getElementById("loading-overlay");
+      const statusDot = document.getElementById("status-dot");
+      const statusText = document.getElementById("status-text");
+      const fpsDisplay = document.getElementById("fps");
+      const resolutionDisplay = document.getElementById("resolution");
+      const ctx = videoFrame.getContext("2d", { alpha: false, desynchronized: true });
+
+      let ws = null;
+      let reconnectTimeout = null;
+      let frameCount = 0;
+      let lastFpsTime = performance.now();
+      let latestFrame = null;
+      let decoding = false;
+
+      function setStatus(text, color) {
+        statusDot.className = `w-2 h-2 rounded-full bg-${color}-500`;
+        statusText.textContent = text;
+        statusText.className = `text-${color}-600`;
+      }
+
+      function updateFps() {
+        const now = performance.now();
+        const elapsed = now - lastFpsTime;
+        if (elapsed >= 1000) {
+          fpsDisplay.textContent = Math.round((frameCount * 1000) / elapsed);
+          frameCount = 0;
+          lastFpsTime = now;
+        }
+      }
+
+      function renderFrame(buffer) {
+        const blob = new Blob([buffer], { type: "image/jpeg" });
+
+        if ("createImageBitmap" in window) {
+          return createImageBitmap(blob).then((bitmap) => {
+            if (videoFrame.width !== bitmap.width || videoFrame.height !== bitmap.height) {
+              videoFrame.width = bitmap.width;
+              videoFrame.height = bitmap.height;
+              resolutionDisplay.textContent = `${bitmap.width}x${bitmap.height}`;
+            }
+
+            ctx.drawImage(bitmap, 0, 0, videoFrame.width, videoFrame.height);
+            if (typeof bitmap.close === "function") bitmap.close();
+          });
+        }
+
+        return new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => {
+            if (videoFrame.width !== img.naturalWidth || videoFrame.height !== img.naturalHeight) {
+              videoFrame.width = img.naturalWidth;
+              videoFrame.height = img.naturalHeight;
+              resolutionDisplay.textContent = `${img.naturalWidth}x${img.naturalHeight}`;
+            }
+            ctx.drawImage(img, 0, 0, videoFrame.width, videoFrame.height);
+            URL.revokeObjectURL(img.src);
+            resolve();
+          };
+          img.onerror = reject;
+          img.src = URL.createObjectURL(blob);
+        });
+      }
+
+      function scheduleRender() {
+        if (decoding || !latestFrame) return;
+        const buffer = latestFrame;
+        latestFrame = null;
+        decoding = true;
+
+        renderFrame(buffer)
+          .catch(() => null)
+          .finally(() => {
+            decoding = false;
+            if (loadingOverlay.style.display !== "none") {
+              loadingOverlay.style.display = "none";
+            }
+            frameCount++;
+            updateFps();
+            scheduleRender();
+          });
+      }
+
+      function connect() {
+        if (ws) ws.close();
+
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${protocol}//${window.location.host}/stream`);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => {
+          setStatus("Connected", "green");
+          if (reconnectTimeout) {
+            clearTimeout(reconnectTimeout);
+            reconnectTimeout = null;
+          }
+        };
+
+        ws.onmessage = (event) => {
+          if (event.data instanceof ArrayBuffer) {
+            latestFrame = event.data;
+            scheduleRender();
+          }
+        };
+
+        ws.onerror = () => setStatus("Error", "red");
+
+        ws.onclose = () => {
+          setStatus("Disconnected", "red");
+          loadingOverlay.style.display = "flex";
+          if (!reconnectTimeout) {
+            reconnectTimeout = setTimeout(() => {
+              setStatus("Reconnecting...", "yellow");
+              connect();
+            }, 2000);
+          }
+        };
+      }
+
+      connect();
+      window.addEventListener("beforeunload", () => ws?.close());
+    </script>
+  </body>
+</html>

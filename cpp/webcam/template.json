@@ -1,0 +1,21 @@
+{
+    "name": "webcam",
+    "description": "Generic USB/UVC webcam: GStreamer MJPEG over WebSocket with multi-camera enumeration",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port",
+            "type": "integer",
+            "default": 7003,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

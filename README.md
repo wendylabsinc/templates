@@ -6,6 +6,8 @@
 
 Project templates for the [Wendy CLI](https://github.com/wendylabsinc/wendy-agent). Used by `wendy init --template` to scaffold new projects.
 
+> This repository supersedes the older [`wendylabsinc/samples`](https://github.com/wendylabsinc/samples) repo. Every sample worth keeping now lives here as a `wendy init --template` archetype; `samples` is being archived.
+
 ## Usage
 
 ```bash
@@ -38,13 +40,45 @@ Each template includes:
 - `Dockerfile` — containerized deployment
 - Application source code
 
+### persistent-volume
+
+Minimal persistent volume demo: writes and reads `/data/foo.md` on startup to show that a mounted volume survives container restarts. No HTTP server. Entitlements: persist (`/data`).
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/persistent-volume/` |
+| Swift | `swift/persistent-volume/` |
+| Rust | `rust/persistent-volume/` |
+| Node | `node/persistent-volume/` |
+| C++ | `cpp/persistent-volume/` |
+
+### sqlite-persistence
+
+SQLite on a persistent volume: appends a timestamped row and queries all rows on every startup, showing that data survives container restarts. Database lives at `/data/app.db`. No HTTP server. Entitlements: persist (`/data`).
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/sqlite-persistence/` |
+| Swift | `swift/sqlite-persistence/` |
+| Rust | `rust/sqlite-persistence/` |
+| Node | `node/sqlite-persistence/` |
+| C++ | `cpp/sqlite-persistence/` |
+
 ### fullstack
 
 Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage Dockerfile builds the React frontend then serves it alongside a CRUD API for cars.
 
-### camera-feed
+### webcam
 
-Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
+Generic USB/UVC webcam viewer: enumerates `/dev/video*` and streams MJPEG-over-WebSocket via GStreamer, with multi-camera enumeration + switching. Entitlements: network (host), camera, gpu.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + GStreamer (PyGObject) | 3003 | `python/webcam/` |
+| Swift | Hummingbird + gstreamer-swift | 3003 | `swift/webcam/` |
+| Rust | Axum + GStreamer (gstreamer-rs) | 4003 | `rust/webcam/` |
+| C++ | Drogon + GStreamer | 7003 | `cpp/webcam/` |
+| Node | Express + ws + GStreamer (gst-launch-1.0 CLI) | 5003 | `node/webcam/` |
 
 ### realsense-camera
 
@@ -111,12 +145,133 @@ Native macOS MLX LLM chat app with Open WebUI for Wendy Agent for Mac. The Swift
 wendy init --app-id mac-llm --target darwin --language swift --template mac-llm --assistant skip --git-init no
 ```
 
+### mlx-llm-chat
+
+Self-contained MLX LLM chat app with its own React/shadcn frontend — distinct from `llm` (Ollama + Open WebUI) and `mac-llm` (native macOS + Open WebUI, no Dockerfile). Ships a Dockerfile and runs as a normal WendyOS linux container with a `gpu` entitlement, so it builds and deploys like any other template rather than relying on the Mac-only Wendy Agent supervisor.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | mlx-lm (macOS/Metal) / transformers (Linux CUDA/CPU) + FastAPI, serving Qwen3-4B-4bit | 3009 | `python/mlx-llm-chat/` |
+
+```bash
+wendy init --app-id mlx-llm-chat --language python --template mlx-llm-chat --assistant skip --git-init no
+```
+
+### llm-chat
+
+Swift LLM chat: Hummingbird server + React/shadcn frontend, with a `BACKEND` template variable selecting the inference engine — `gguf` (default) shells out to `llama-cli` (llama.cpp, GGUF weights); `mlx` uses MLX-Swift (`mlx-swift-lm`) in-process. Both backends run on the `dustynv/tensorrt` Jetson/CUDA base image as a normal WendyOS linux container, so they target NVIDIA Jetson (and other CUDA Linux) devices rather than Apple Silicon. Entitlements: gpu, network (host).
+
+| Language | Backend | Framework | Default Port | Directory |
+|----------|---------|-----------|-------------|-----------|
+| Swift | `gguf` (default) | Hummingbird + llama.cpp (`llama-cli`, GGUF) | 6002 | `swift/llm-chat/` |
+| Swift | `mlx` | Hummingbird + MLX-Swift (`mlx-swift-lm`) | 6002 | `swift/llm-chat/` |
+
+```bash
+wendy init --app-id llm-chat --language swift --template llm-chat --assistant skip --git-init no --var BACKEND=gguf
+wendy init --app-id llm-chat --language swift --template llm-chat --assistant skip --git-init no --var BACKEND=mlx
+```
+
+### tensorrt-hello
+
+Minimal Swift↔TensorRT binding demo: prints a `TensorShape` via `import TensorRT` (`tensorrt-swift`). No HTTP server. Built on the `dustynv/tensorrt` Jetson base image, so it targets NVIDIA Jetson devices. Entitlements: gpu.
+
+| Language | Directory |
+|----------|-----------|
+| Swift | `swift/tensorrt-hello/` |
+
+```bash
+wendy init --app-id tensorrt-hello --language swift --template tensorrt-hello --assistant skip --git-init no
+```
+
+### tensorrt-llm
+
+Swift TensorRT-LLM token-streaming demo: autoregressive token-by-token generation with a simulated KV-cache, streamed to stdout via `import TensorRTLLM`/`TensorRTNative` (`tensorrt-swift`). No HTTP server. Built on the `dustynv/tensorrt` Jetson base image, so it targets NVIDIA Jetson devices. Entitlements: gpu, network (host).
+
+| Language | Directory |
+|----------|-----------|
+| Swift | `swift/tensorrt-llm/` |
+
+```bash
+wendy init --app-id tensorrt-llm --language swift --template tensorrt-llm --assistant skip --git-init no
+```
+
+### hello-pytorch
+
+GPU sanity-check app: polls PyTorch every 2 seconds and prints CUDA (NVIDIA GPU), MPS (Apple Silicon GPU), and CPU availability plus the PyTorch version. No HTTP server. Entitlements: gpu.
+
+Ships two Dockerfiles: the default `Dockerfile` is CPU-only (works everywhere, no GPU required); `Dockerfile.jetson-slim` targets NVIDIA Jetson devices and requires a JetPack-matched `TORCH_WHL_URL` build-arg (see `python/hello-pytorch/README-JETSON.md`).
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/hello-pytorch/` |
+
+### bluetooth-discovery
+
+BLE scanner: discovers nearby Bluetooth devices with [bleak](https://github.com/hbldh/bleak) and streams them live to a web UI over SSE (`/events`), alongside a one-shot `/discovered` JSON endpoint. Entitlements: network (host), bluetooth (bluez).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + bleak + sse-starlette | 8000 | `python/bluetooth-discovery/` |
+| Swift | Hummingbird + [wendylabsinc/bluetooth](https://github.com/wendylabsinc/bluetooth) (BlueZ) | 8000 | `swift/bluetooth-discovery/` |
+
+### whisper-stt
+
+Headless Whisper speech-to-text for NVIDIA Jetson: captures audio from a USB microphone and continuously transcribes it to a file on a JetPack / CUDA base image. No HTTP server. The Python build uses [OpenAI Whisper](https://github.com/openai/whisper) over ALSA/PortAudio; the Swift build uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) in-process (via a `CWhisper` C-interop target) with [gstreamer-swift](https://github.com/wendylabsinc/gstreamer-swift) mic capture, and appends transcriptions to `/data` on a persistent volume. Entitlements: network (host), audio, gpu (Swift adds persist).
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/whisper-stt/` |
+| Swift | `swift/whisper-stt/` |
+
+### asr-nemotron
+
+Streaming ASR web demo: captures audio from a USB microphone, uses [Silero VAD](https://github.com/snakers4/silero-vad) to detect speech, and transcribes it with NVIDIA's Nemotron streaming ASR model, with a live waveform visualization and transcription/log tabs in the web UI. Model weights are cached on a persistent volume. Entitlements: network (host), audio, gpu, persist (model-cache).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | FastAPI + NeMo + Silero VAD | 3004 | `python/asr-nemotron/` |
+
+### deepstream-vision
+
+Jetson vision app group: real-time object detection (DeepStream + YOLO11n, Prometheus metrics + MJPEG stream), optional Qwen3-VL scene descriptions for high-confidence detections, and a GPU metrics exporter (tegrastats), plus a static `monitor.html` dashboard you open locally that talks to all three services directly over CORS. A **3-service app group** defined by one native `wendy.json` `services` map; `detector` depends on `vlm` since it calls out to it for scene descriptions. Entitlements: gpu, network (host) on every service.
+
+| Service | Port | Role |
+|---------|------|------|
+| `detector` | 9090 | DeepStream YOLO11n detection, Prometheus metrics (`/metrics`), MJPEG stream (`/stream`) |
+| `vlm` | 8090 | Qwen3-VL-2B (INT4) scene descriptions (`/describe`) |
+| `gpu-stats` | 9091 | tegrastats-derived GPU temperature/memory/utilization metrics (`/metrics`) |
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/deepstream-vision/` |
+
+Targets NVIDIA Jetson Orin devices (DeepStream + TensorRT). Ports 9090/8090/9091 are fixed service-mesh constants — `monitor.html` hardcodes them and is not itself served by any container, so it is not templated.
+
+### ai-security-camera
+
+AI security camera for NVIDIA Jetson: ingests one or more IP-camera RTSP streams (ONVIF auto-discovery or a pinned `cameras.json`/`CAMERA_URLS` list), runs DeepStream YOLO11n object detection + NvDCF tracking on the GPU, and raises debounced security events (with saved snapshots) for people/vehicles. Single web dashboard with MJPEG preview, event log, Prometheus metrics (`/metrics`), and events API (`/events`). Ported from samples PR #13. Entitlements: gpu, network (host), persist (data).
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Python | Flask + DeepStream + pyds | 8080 | `python/ai-security-camera/` |
+
+Camera configuration (RTSP URLs, ONVIF discovery toggle, credentials) is runtime config in `cameras.json`/env vars, not a template variable — there is no single hardcoded stream to parameterize.
+
+### voice-assistant
+
+Local, fully offline voice assistant: wake-word detection ("wendy" via [openWakeWord](https://github.com/dscripka/openWakeWord)) -> [OpenAI Whisper](https://github.com/openai/whisper) STT -> a local LLM with tool-calling support (stubbed light-control tools) -> [Piper](https://github.com/rhasspy/piper) TTS, all running on-device on an NVIDIA Jetson. No HTTP server, no cloud calls beyond initial model downloads. Includes a `run-mac.sh` helper for local development on macOS. Entitlements: network (host), audio, gpu.
+
+**Distinct from `voice-ai-pipecat`**: `voice-ai-pipecat` is a Pipecat-orchestrated pipeline that calls out to Gemini 2.5 Flash for the LLM step and ships a React visualizer; `voice-assistant` keeps the entire pipeline local (local LLM, no cloud inference, no web UI) and is headless.
+
+| Language | Directory |
+|----------|-----------|
+| Python | `python/voice-assistant/` |
+
 ### common
 
 Shared building blocks (not selectable as templates):
 
 - `shadcn-vite-frontend/` — Vite + React + shadcn/ui dashboard
-- `camera-feed-html/` — Webcam viewer HTML page
 - `audio-feed-html/` — Audio waveform visualizer HTML page
 - `realsense-camera-frontend/` — React + Vite viewer for the `realsense-camera` template (color + IR + depth streams)
 - `voice-ai-pipecat-frontend/` — React + Three.js visualizer for the `voice-ai-pipecat` template (blue mic lines + emerald bot lines)

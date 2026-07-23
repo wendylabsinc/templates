@@ -1,0 +1,22 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "audio"
+        },
+        {
+            "type": "gpu"
+        },
+        {
+            "type": "persist",
+            "name": "transcript",
+            "path": "/data"
+        }
+    ]
+}

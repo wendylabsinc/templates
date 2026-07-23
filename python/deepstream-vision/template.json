@@ -1,0 +1,13 @@
+{
+    "name": "deepstream-vision",
+    "description": "Jetson vision group: DeepStream YOLO11n + Qwen3-VL scene descriptions + GPU metrics dashboard",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

@@ -1,0 +1,21 @@
+{
+    "name": "mlx-llm-chat",
+    "description": "Self-contained Qwen3-4B chat: mlx-lm (macOS) / transformers (Linux) + React frontend",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Primary HTTP port",
+            "type": "integer",
+            "default": 3009,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

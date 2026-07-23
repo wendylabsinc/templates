@@ -1,0 +1,21 @@
+{
+  "_comment": "Leave 'discovery.enabled' true and the app will auto-find ONVIF/RTSP cameras on the network at startup (set CAMERA_USER/CAMERA_PASS for the login). To pin specific cameras instead, add them under 'cameras' with enabled:true (that takes priority over discovery), or set the CAMERA_URLS env var. Discovery only finds cameras that already have an IP — a camera on a bare direct cable with no DHCP needs a static IP first (see README).",
+  "_examples": {
+    "reolink_main": "rtsp://<user>:<pass>@<camera-ip>:554/h264Preview_01_main",
+    "reolink_sub": "rtsp://<user>:<pass>@<camera-ip>:554/h264Preview_01_sub",
+    "amcrest_dahua": "rtsp://<user>:<pass>@<camera-ip>:554/cam/realmonitor?channel=1&subtype=0",
+    "hikvision": "rtsp://<user>:<pass>@<camera-ip>:554/Streaming/Channels/101",
+    "onvif_generic": "rtsp://<user>:<pass>@<camera-ip>:554/stream1"
+  },
+  "discovery": {
+    "enabled": true,
+    "scan_port_554": true
+  },
+  "cameras": [
+    {
+      "name": "front-door",
+      "url": "rtsp://admin:password@192.168.1.108:554/h264Preview_01_main",
+      "enabled": false
+    }
+  ]
+}

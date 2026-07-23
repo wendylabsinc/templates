@@ -1,0 +1,10 @@
+[project]
+name = "webcam"
+version = "1.0.0"
+description = "Webcam streaming using GStreamer WebRTC"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "PyGObject",
+]

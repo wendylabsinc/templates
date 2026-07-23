@@ -1,0 +1,13 @@
+{
+    "name": "hello-pytorch",
+    "description": "PyTorch CUDA/MPS/CPU availability check",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        }
+    ]
+}

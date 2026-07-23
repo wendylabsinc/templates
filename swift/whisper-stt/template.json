@@ -1,0 +1,20 @@
+{
+    "name": "whisper-stt",
+    "description": "Headless Whisper speech-to-text in Swift (whisper.cpp, GPU on Jetson): USB mic → transcript file",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "WHISPER_MODEL",
+            "description": "Whisper GGML model baked into the image (e.g. tiny.en, base.en, small.en)",
+            "type": "string",
+            "default": "base.en",
+            "prompt": "Whisper model"
+        }
+    ]
+}

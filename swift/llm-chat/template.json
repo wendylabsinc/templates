@@ -1,0 +1,29 @@
+{
+    "name": "llm-chat",
+    "description": "Swift LLM chat (Hummingbird + React) on Jetson/CUDA: llama.cpp/GGUF or MLX-Swift backend",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Primary HTTP port",
+            "type": "integer",
+            "default": 6002,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "BACKEND",
+            "description": "Inference backend",
+            "type": "string",
+            "default": "gguf",
+            "prompt": "Inference backend (gguf=llama.cpp, mlx=MLX-Swift; both Jetson/CUDA)",
+            "validate": { "enum": ["gguf", "mlx"] }
+        }
+    ]
+}

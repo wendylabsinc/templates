@@ -17,12 +17,16 @@
             "description": "Minimal HTTP API with JSON endpoints"
         },
         {
-            "name": "fullstack",
-            "description": "Fullstack app: API backend + React/shadcn frontend"
+            "name": "persistent-volume",
+            "description": "Minimal persistent volume demo: /data survives restart"
         },
         {
-            "name": "camera-feed",
-            "description": "Live camera feed: GStreamer MJPEG over WebSocket"
+            "name": "sqlite-persistence",
+            "description": "SQLite on a persistent volume: append + query rows across restarts"
+        },
+        {
+            "name": "fullstack",
+            "description": "Fullstack app: API backend + React/shadcn frontend"
         },
         {
             "name": "audio",
@@ -50,6 +54,10 @@
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },
         {
+            "name": "webcam",
+            "description": "Generic USB/UVC webcam: GStreamer MJPEG over WebSocket with multi-camera enumeration + switching"
+        },
+        {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]
@@ -75,9 +83,64 @@
             "languages": ["python"]
         },
         {
+            "name": "deepstream-vision",
+            "description": "Jetson vision group: DeepStream YOLO11n + Qwen3-VL scene descriptions + GPU metrics dashboard",
+            "languages": ["python"]
+        },
+        {
+            "name": "ai-security-camera",
+            "description": "AI security camera: DeepStream YOLO11n + NvDCF tracking + person/vehicle events + ONVIF discovery",
+            "languages": ["python"]
+        },
+        {
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
             "languages": ["python"]
+        },
+        {
+            "name": "hello-pytorch",
+            "description": "PyTorch CUDA/MPS/CPU availability check (CPU + Jetson images)",
+            "languages": ["python"]
+        },
+        {
+            "name": "bluetooth-discovery",
+            "description": "BLE scanner: live device stream (bleak + FastAPI + SSE + web UI)",
+            "languages": ["python", "swift"]
+        },
+        {
+            "name": "whisper-stt",
+            "description": "Headless Whisper speech-to-text on Jetson (USB mic → transcript file)",
+            "languages": ["python", "swift"]
+        },
+        {
+            "name": "asr-nemotron",
+            "description": "Streaming ASR web demo: USB mic + Silero VAD + NVIDIA Nemotron",
+            "languages": ["python"]
+        },
+        {
+            "name": "voice-assistant",
+            "description": "Local voice assistant: wake-word + Whisper STT + local LLM tools + Piper TTS",
+            "languages": ["python"]
+        },
+        {
+            "name": "mlx-llm-chat",
+            "description": "Self-contained MLX LLM chat with React frontend (mlx-lm/transformers on Python)",
+            "languages": ["python"]
+        },
+        {
+            "name": "llm-chat",
+            "description": "Swift LLM chat (Hummingbird + React) on Jetson/CUDA with a gguf (llama.cpp) or mlx (MLX-Swift) backend",
+            "languages": ["swift"]
+        },
+        {
+            "name": "tensorrt-hello",
+            "description": "Minimal Swift↔TensorRT binding demo",
+            "languages": ["swift"]
+        },
+        {
+            "name": "tensorrt-llm",
+            "description": "Swift TensorRT-LLM token streaming to stdout (GPU)",
+            "languages": ["swift"]
         },
         {
             "name": "ros2-talker-listener",

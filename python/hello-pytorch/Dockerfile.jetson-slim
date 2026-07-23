@@ -1,0 +1,35 @@
+# Jetson slim runtime image (smaller than l4t-pytorch). Requires torch wheel URL.
+# Build with: docker build -f Dockerfile.jetson-slim --build-arg TORCH_WHL_URL=<jetpack-matched-wheel> .
+FROM nvcr.io/nvidia/l4t-base:r35.2.1
+
+WORKDIR /app
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY pyproject.toml .
+COPY main.py .
+
+# Provide Jetson-compatible torch wheel URL at build time
+# Example (adjust for your JetPack version):
+#   --build-arg TORCH_WHL_URL=https://developer.download.nvidia.com/compute/redist/jp/v51/pytorch/torch-2.0.0-cp38-cp38-linux_aarch64.whl
+ARG TORCH_WHL_URL
+
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install --no-cache-dir numpy && \
+    sh -c 'if [ -n "$TORCH_WHL_URL" ]; then \
+      echo "Installing torch from $TORCH_WHL_URL"; \
+      python3 -m pip install --no-cache-dir "$TORCH_WHL_URL"; \
+    else \
+      echo "TORCH_WHL_URL not set; skipping torch install"; \
+    fi'
+
+CMD ["python3", "main.py"]
+
+

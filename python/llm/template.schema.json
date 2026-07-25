@@ -89,6 +89,13 @@
                             "comments": "Poolside coding MoE, 75GB download. Thor 128GB / DGX Spark class or larger only."
                         },
                         {
+                            "value": "laguna-s-2.1-dflash",
+                            "label": "laguna-s-2.1 (DFlash • vLLM)",
+                            "size": "workstation+",
+                            "parameters": "118B/8B active NVFP4 + 1B draft",
+                            "comments": "Laguna served by vLLM with DFlash speculative decoding, ~60GB download. Thor 128GB / DGX Spark class only; replaces the Ollama backend."
+                        },
+                        {
                             "value": "hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",
                             "label": "nemotron-3-nano-4b",
                             "size": "edge",

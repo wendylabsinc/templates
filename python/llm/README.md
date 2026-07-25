@@ -9,6 +9,7 @@ llm/
 ├── docker-compose.yml   ← service topology (fully Docker Desktop-compatible)
 ├── wendy.json           ← companion: appId, GPU entitlement, readiness + postStart hook
 ├── ollama/              ← Ollama server; pulls the chosen model on first start
+├── vllm/                ← vLLM + DFlash serving path (laguna-s-2.1-dflash pick only)
 └── open-webui/          ← Open WebUI chat frontend with Wendy branding
 ```
 
@@ -52,6 +53,10 @@ When you `wendy run`, the CLI merges both files:
 | `ollama` | 11434 | Ollama API. Pulls the configured model in the background on first start; weights persist in the `…-models` volume. |
 | `open-webui` | {{.PORT}} | Chat UI. Persists user data in the `…-openwebui` volume. |
 
+With the `laguna-s-2.1-dflash` pick, the `ollama` service is replaced by
+`vllm` (port 8000): an OpenAI-compatible API with DFlash speculative
+decoding; weights persist in the `…-hf` volume. See "DFlash mode" below.
+
 ## Choosing a model
 
 The model is picked when the template is scaffolded (the `OLLAMA_MODEL`
@@ -63,10 +68,36 @@ default is `gemma4:e2b`. Rough guidance by device:
 | Raspberry Pi 5 | `gemma4:e2b` (slow), `qwen2.5:3b`, `llama3.2:3b` |
 | Jetson Orin Nano 8GB | `gemma4:e2b`/`e4b`, `qwen2.5:3b` (~30 tok/s), `llama3.2:3b`, `gemma3:4b`, `mistral:7b` (~15 tok/s), `nemotron-3-nano-4b` |
 | Jetson AGX Orin 32/64GB | `gemma4:26b`, `gemma4:31b` (64GB), `nemotron-3-nano:30b`, `qwen3-coder:30b` |
-| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-s-2.1` (~16 tok/s), `qwen3-coder:30b` |
+| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-s-2.1` (~16 tok/s), `laguna-s-2.1 (DFlash • vLLM)`, `qwen3-coder:30b` |
 
 To switch models later, edit the `OLLAMA_MODEL` environment value in
 `docker-compose.yml` and re-run; the entrypoint pulls whatever it is set to.
+
+## DFlash mode (`laguna-s-2.1-dflash`)
+
+DFlash is lossless speculative decoding: a small block-diffusion draft model
+proposes a block of tokens and Laguna verifies the whole block in one forward
+pass, so output is identical to running Laguna alone but ~2-4x faster. Ollama
+does not support it, so this pick swaps the backend at scaffold time — the
+rendered `docker-compose.yml`/`wendy.json` define a `vllm` service (serving
+`poolside/Laguna-S-2.1-NVFP4` with the paired DFlash draft model behind an
+OpenAI-compatible API) instead of `ollama`, and Open WebUI points at that.
+
+Things to know:
+
+- First start downloads ~60GB of weights into the `…-hf` volume, and unlike
+  Ollama's background pull the API stays down until the model is loaded — the
+  UI comes up with an empty model list; watch the `[vllm]` log lines.
+- If the container's vLLM build lacks DFlash support (it is landing upstream
+  via vllm-project/vllm#46853), the entrypoint logs a `WARNING:` and serves
+  Laguna on plain vLLM — everything still works, just without the speedup.
+  Set `DFLASH_DISABLE=1` on the service to force plain serving.
+- Model and quantization are env overrides on the `vllm` service:
+  `VLLM_TARGET_MODEL` (e.g. `poolside/Laguna-S-2.1-INT4` if NVFP4 misbehaves
+  on your GPU) and `DFLASH_DRAFT_MODEL`.
+- The poolside repos are public today. If they become gated, add `HF_TOKEN`
+  to the `vllm` service `environment` in `docker-compose.yml` —
+  huggingface_hub picks it up automatically.
 
 ## Run on a Wendy device
 
@@ -90,9 +121,10 @@ picker, the model is still downloading or the puller is retrying; check the
 Ollama service logs before pulling manually.
 
 > On WendyOS, app groups do not get Docker Compose's service-name DNS, so
-> the local Compose URL (`http://ollama:11434`) does not resolve from Open
-> WebUI. The entrypoint rewrites that URL to `http://127.0.0.1:11434` on
-> device because Ollama publishes its API on the shared device network stack.
+> the local Compose URLs (`http://ollama:11434`, `http://vllm:8000`) do not
+> resolve from Open WebUI. The entrypoint rewrites whichever is configured to
+> its `http://127.0.0.1:<port>` form on device because both backends publish
+> their API on the shared device network stack.
 > This deliberately avoids the device's `.local` hostname: mDNS works on the
 > host for discovery, but app containers do not reliably include the NSS/mDNS
 > pieces needed to resolve `.local` names from inside the container.
@@ -113,7 +145,8 @@ docker compose up
 ```
 
 Locally the WebUI reaches Ollama at `http://ollama:11434` via Docker's
-built-in service-name DNS.
+built-in service-name DNS. In DFlash mode the rendered compose file needs an
+NVIDIA GPU host with ~64GB+ of free memory to be useful.
 
 ## Useful commands
 

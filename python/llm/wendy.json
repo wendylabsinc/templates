@@ -3,12 +3,21 @@
     "version": "0.1.0",
     "platform": "linux",
     "services": {
+{{if eq .OLLAMA_MODEL "laguna-s-2.1-dflash"}}
+        "vllm": {
+            "context": "./vllm",
+            "entitlements": [
+                { "type": "gpu" }
+            ]
+        },
+{{else}}
         "ollama": {
             "context": "./ollama",
             "entitlements": [
                 { "type": "gpu" }
             ]
         },
+{{end}}
         "open-webui": {
             "context": "./open-webui"
         }

@@ -1,0 +1,35 @@
+{
+    "name": "g1-rc",
+    "description": "Remote-control the Unitree G1 humanoid: a 3-service app group (motion API + camera stream + teleop web UI) that lets you drive the robot and watch its camera from a browser.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "RC_PORT",
+            "description": "Port for the teleop web UI — open http://<device>:<port> in a browser to drive the robot",
+            "type": "integer",
+            "default": 3500,
+            "prompt": "Teleop UI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "NETWORK_INTERFACE",
+            "description": "NIC on the deploy host that has the 192.168.123.0/24 address. On the G1's onboard computer this is normally 'eth0'.",
+            "type": "string",
+            "default": "eth0",
+            "prompt": "CycloneDDS / SDK network interface"
+        },
+        {
+            "name": "CAMERA_SOURCE",
+            "description": "Camera capture source: a V4L2 index or /dev/videoN path, an rtsp:// or http:// MJPEG URL, or a GStreamer pipeline ending in appsink. On the G1's RealSense D435i the colour node is typically 4.",
+            "type": "string",
+            "default": "4",
+            "prompt": "Camera source"
+        }
+    ]
+}

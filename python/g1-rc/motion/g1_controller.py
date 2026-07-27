@@ -24,6 +24,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from typing import Any, Optional
 
 logger = logging.getLogger("g1-motion")
@@ -43,6 +44,19 @@ SDK_CALL_TIMEOUT_S = float(os.environ.get("MOTION_SDK_CALL_TIMEOUT_S", "0.5"))
 # ShakeHand) trigger an internal FSM transition and routinely take
 # 1-5 s. Use a longer timeout.
 SDK_SKILL_TIMEOUT_S = float(os.environ.get("MOTION_SDK_SKILL_TIMEOUT_S", "8.0"))
+
+# Native stand-up FSM ids — the sequence this G1 firmware actually
+# requires (verified on hardware by wendy-studio-hermes-voice and
+# g1-upper-control; `Start()`/`BalanceStand()` do NOT work there):
+#
+#     StopMove → select "ai" motion mode → DAMP (1) → LOCK STAND (4)
+#                                                   → RUNNING (801)
+#
+# LOCK STAND is the standing pose; RUNNING is the walk-ready policy.
+DAMP_FSM = int(os.environ.get("G1_LOCO_DAMP_FSM_ID", "1"))
+LOCK_STAND_FSM = int(os.environ.get("G1_LOCO_LOCK_STAND_FSM_ID", "4"))
+RUNNING_FSM = int(os.environ.get("G1_LOCO_RUNNING_FSM_ID", "801"))
+FSM_WAIT_S = float(os.environ.get("G1_LOCO_FSM_WAIT_S", "12.0"))
 
 
 def _clamp(value: float, limit: float) -> float:
@@ -88,6 +102,8 @@ class G1Controller:
             "G1_NETWORK_INTERFACE", "eth0"
         )
         self._loco_client = None
+        self._switcher = None
+        self._estop = threading.Event()
         self._lowstate_sub = None
         self._move_lock = asyncio.Lock()
         self._watchdog: Optional[asyncio.Task] = None
@@ -116,6 +132,21 @@ class G1Controller:
         client.Init()
         self._loco_client = client
         logger.info("LocoClient ready")
+
+        # MotionSwitcher selects the "ai" motion mode — a prerequisite
+        # for the DAMP → LOCK STAND → RUNNING stand-up sequence on the
+        # firmware this was verified against. Degrade gracefully: the
+        # FSM sequence still runs without it.
+        try:
+            from unitree_sdk2py.comm.motion_switcher.motion_switcher_client import (
+                MotionSwitcherClient,
+            )
+            sw = MotionSwitcherClient()
+            sw.SetTimeout(5.0)
+            sw.Init()
+            self._switcher = sw
+        except Exception as exc:
+            logger.warning("MotionSwitcher unavailable (ai-mode select off): %s", exc)
 
 
         sub = ChannelSubscriber("rt/lowstate", LowState_)
@@ -233,6 +264,17 @@ class G1Controller:
         vx = _clamp(vx, MAX_VX)
         vy = _clamp(vy, MAX_VY)
         vyaw = _clamp(vyaw, MAX_VYAW)
+        # Walking only actuates in RUNNING — surface that instead of
+        # silently acking commands the firmware will ignore. The extra
+        # GetFsmId per tick is proven at 10 Hz on hardware (g1-upper-
+        # control's pilot does exactly this).
+        try:
+            fsm = await asyncio.to_thread(self._get_fsm_sync)
+        except Exception:
+            fsm = None
+        if fsm is not None and fsm != RUNNING_FSM:
+            return (f"ignored: walking needs RUNNING({RUNNING_FSM}), "
+                    f"current FSM is {fsm} — press ready-to-walk first")
         result = "ok"
         try:
             await self._call_sdk("Move", vx, vy, vyaw)
@@ -277,19 +319,148 @@ class G1Controller:
     # Each cancels any pending watchdog so a recently-armed StopMove
     # can't interrupt mid-skill.
 
-    async def stand_up(self) -> str:
-        """Wake from Damping / ZeroTorque into BalanceStand.
+    # The stand-up path uses the native FSM sequence (DAMP → LOCK STAND
+    # → RUNNING) rather than `Start()`/`BalanceStand()`: the latter were
+    # verified NOT to work on the firmware this template was developed
+    # against (g1-upper-control/locomotion.py, hermes deployment).
 
-        On this LocoClient firmware there's no `StandUp` method — the
-        wake transition is `Start()`. (Verified by AttributeError when
-        we tried `StandUp` on 2026-06-12.) If your firmware uses a
-        different name, set MOTION_STAND_METHOD env to override.
-        """
-        method = os.environ.get("MOTION_STAND_METHOD", "Start")
+    def _get_fsm_sync(self) -> int:
+        client = self._require_client()
+        res = client.GetFsmId()
+        if isinstance(res, (tuple, list)):
+            code, val = res[0], res[1]
+            if code != 0 or val is None:
+                raise RuntimeError(f"GetFsmId failed (code={code})")
+            return int(val)
+        return int(res)
+
+    def _wait_fsm_sync(self, target: int, timeout: float = FSM_WAIT_S) -> int:
+        deadline = time.monotonic() + timeout
+        last = -1
+        while time.monotonic() < deadline:
+            last = self._get_fsm_sync()
+            if last == target:
+                return last
+            time.sleep(0.3)
+        return last
+
+    def _select_ai_sync(self) -> None:
+        if self._switcher is None:
+            return
+        self._switcher.SelectMode("ai")
+        time.sleep(0.5)
+
+    def _stand_fsm_sync(self, force: bool) -> dict[str, Any]:
+        """StopMove → ai mode → DAMP(1) → LOCK STAND(4). LOCK STAND is
+        standing. From an UNEXPECTED FSM this must pass through DAMP,
+        which collapses an upright robot — refuse unless force=True
+        (operator has confirmed crane support)."""
+        client = self._require_client()
+        try:
+            client.StopMove()
+            self._select_ai_sync()
+            fsm = self._get_fsm_sync()
+            if fsm == RUNNING_FSM:
+                return {"ok": True, "fsm_id": fsm, "standing": True,
+                        "note": "already running"}
+            if fsm not in (DAMP_FSM, LOCK_STAND_FSM):
+                if not force:
+                    return {"ok": False, "fsm_id": fsm,
+                            "error": f"unexpected FSM {fsm}; DAMP from here can "
+                                     "collapse the robot if it is not "
+                                     "crane-supported. Retry with force=true."}
+                client.SetFsmId(DAMP_FSM)
+                fsm = self._wait_fsm_sync(DAMP_FSM)
+            if fsm == DAMP_FSM:
+                client.SetFsmId(LOCK_STAND_FSM)
+                fsm = self._wait_fsm_sync(LOCK_STAND_FSM)
+            ok = fsm == LOCK_STAND_FSM
+            return {"ok": ok, "fsm_id": fsm, "standing": ok}
+        except Exception as exc:
+            try:
+                client.StopMove()
+            except Exception:
+                pass
+            return {"ok": False, "error": str(exc)}
+
+    def _enter_running_sync(self) -> dict[str, Any]:
+        """LOCK STAND(4) → RUNNING(801), with one retry (per hermes)."""
+        client = self._require_client()
+        try:
+            fsm = self._get_fsm_sync()
+            if fsm == RUNNING_FSM:
+                return {"ok": True, "fsm_id": fsm, "ready_to_walk": True,
+                        "note": "already running"}
+            if fsm != LOCK_STAND_FSM:
+                return {"ok": False, "fsm_id": fsm,
+                        "error": "not in LOCK STAND; POST /stand first"}
+            client.SetFsmId(RUNNING_FSM)
+            fsm = self._wait_fsm_sync(RUNNING_FSM)
+            if fsm != RUNNING_FSM and self._get_fsm_sync() == LOCK_STAND_FSM:
+                client.SetFsmId(RUNNING_FSM)  # one retry from stable LOCK STAND
+                fsm = self._wait_fsm_sync(RUNNING_FSM)
+            ok = fsm == RUNNING_FSM
+            return {"ok": ok, "fsm_id": fsm, "ready_to_walk": ok}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    async def stand_up(self, force: bool = False) -> dict[str, Any]:
+        """Stand via the native FSM: DAMP → LOCK STAND."""
         self._cancel_watchdog()
         async with self._move_lock:
-            await self._call_sdk(method, timeout=SDK_SKILL_TIMEOUT_S)
-        return f"standing (via {method})"
+            return await asyncio.to_thread(self._stand_fsm_sync, force)
+
+    async def enter_running(self) -> dict[str, Any]:
+        """LOCK STAND → RUNNING: the walk-ready policy. Velocity
+        commands only actuate in this state."""
+        self._cancel_watchdog()
+        async with self._move_lock:
+            return await asyncio.to_thread(self._enter_running_sync)
+
+    async def fsm_status(self) -> dict[str, Any]:
+        if self._loco_client is None:
+            return {"connected": False, "estop_latched": self._estop.is_set()}
+        try:
+            fsm = await asyncio.to_thread(self._get_fsm_sync)
+            return {
+                "connected": True,
+                "fsm_id": fsm,
+                "standing": fsm in (LOCK_STAND_FSM, RUNNING_FSM),
+                "ready_to_walk": fsm == RUNNING_FSM,
+                "estop_latched": self._estop.is_set(),
+            }
+        except Exception as exc:
+            return {"connected": True, "error": str(exc),
+                    "estop_latched": self._estop.is_set()}
+
+    # -- e-stop (latching) -------------------------------------------------------
+
+    def estop_latched(self) -> bool:
+        return self._estop.is_set()
+
+    async def estop(self) -> dict[str, Any]:
+        """Latching soft e-stop: halt walking, fade the arms back to the
+        balance controller, and refuse all motion until cleared. Soft on
+        purpose — a hard torque cut would drop the robot; the wireless
+        remote's e-stop remains the primary hardware stop."""
+        self._estop.set()
+        self._cancel_watchdog()
+        try:
+            await self._call_sdk("StopMove")
+        except Exception:
+            pass
+        if self._arm is not None:
+            try:
+                await asyncio.to_thread(self._arm._release, 0.5)
+            except Exception:
+                logger.exception("estop: arm release failed")
+        logger.warning("E-STOP latched: walking stopped, arms released")
+        return {"ok": True, "estop_latched": True}
+
+    async def clear_estop(self) -> dict[str, Any]:
+        self._estop.clear()
+        logger.info("E-stop cleared")
+        return {"ok": True, "estop_latched": False}
 
     async def squat(self) -> str:
         self._cancel_watchdog()
@@ -327,14 +498,25 @@ class G1Controller:
             )
         return f"balance-stand mode={int(balance_mode)}"
 
-    async def damp(self) -> str:
-        """Soft-stop into damping mode (joints go compliant). The
-        safest 'something is wrong' state — used by the watchdog on
-        repeated SDK failures."""
+    def _damp_sync(self) -> dict[str, Any]:
+        client = self._require_client()
+        client.StopMove()
+        try:
+            client.SetFsmId(DAMP_FSM)
+            fsm = self._wait_fsm_sync(DAMP_FSM)
+            return {"ok": fsm == DAMP_FSM, "fsm_id": fsm}
+        except Exception:
+            # Older firmwares expose Damp() instead of the FSM id.
+            client.Damp()
+            return {"ok": True, "note": "via Damp()"}
+
+    async def damp(self) -> dict[str, Any]:
+        """Soft-stop into damping mode (joints go compliant). The robot
+        will collapse if it is standing unsupported — the caller is
+        responsible for confirming crane support."""
         self._cancel_watchdog()
         async with self._move_lock:
-            await self._call_sdk("Damp", timeout=SDK_SKILL_TIMEOUT_S)
-        return "damping"
+            return await asyncio.to_thread(self._damp_sync)
 
     # -- hand gestures (LocoClient arms; NOT Dex3 fingers) ----------------------
 

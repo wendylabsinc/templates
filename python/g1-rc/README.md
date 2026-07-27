@@ -32,27 +32,39 @@ open it for you.)
 
 ## Driving
 
-**Press `balance` before driving** — the G1 only executes velocity commands
-in balanced stand (FSM `BalanceStand`). The safe wake-up sequence from a
-fresh boot, with the robot suspended or well clear of obstacles:
+Locomotion uses the G1's **native stand-up FSM** — the sequence verified on
+real hardware (`Start()`/`BalanceStand()` do not work on the firmware this
+template targets):
 
-1. `damp` → joints soft
-2. `stand` → wake transition
-3. `balance` → accepts velocity
-4. drive with the joystick / WASD (Q/E turn, shift to run, space = STOP)
+```
+stand  = StopMove → "ai" mode → DAMP (FSM 1) → LOCK STAND (FSM 4)
+ready-to-walk = LOCK STAND (4) → RUNNING (FSM 801)
+```
 
-`damp` is the soft-stop: joints go compliant. Use it whenever you're done
-or unsure.
+With the robot suspended or well clear of obstacles:
+
+1. `🧍 stand` → the robot stands (from an unexpected FSM state the UI asks
+   you to confirm crane support first, because the path passes through DAMP)
+2. `🚶 ready-to-walk` → enters the RUNNING policy; the fsm pill turns green
+3. Drive with the joystick / WASD (Q/E turn, shift to run, space = STOP).
+   Velocity commands are ignored (with an explicit message) outside RUNNING.
+
+`💤 damp` is the soft-stop: joints go compliant — the robot collapses if
+unsupported, so the UI always asks first. Use it whenever you're done or
+unsure.
 
 ## Safety
 
+- **🛑 E-STOP latches**: it halts walking, fades the arms back to the
+  balance controller, and every motion endpoint returns 409 until you
+  press `clear e-stop`. It is deliberately *soft* (no torque cut — that
+  would drop the robot); the wireless remote's E-stop remains the
+  primary hardware stop.
 - Velocity commands stop automatically 1 s after the last input
   (watchdog on the motion service).
 - Arm presets command only arm joints (15–28); legs and waist stay with
   the robot's balance controller, blended in and out with a weight ramp.
-- First sessions: keep the robot on its gantry/hoist. The STOP button
-  zeroes velocity but does not power off the robot; the wireless E-stop
-  remains your primary safety.
+- First sessions: keep the robot on its gantry/hoist.
 
 ## Known limitations (v1)
 

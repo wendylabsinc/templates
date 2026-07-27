@@ -392,17 +392,23 @@
         <span class="pill"
           ><span id="battery-label">battery: —</span></span
         >
+        <span class="pill"
+          ><span class="dot" id="dot-fsm"></span
+          ><span id="fsm-label">fsm: …</span></span
+        >
       </div>
 
       <div class="actions">
-        <button class="btn" data-action="balance">balance</button>
-        <button class="btn" data-action="stand">stand</button>
+        <button class="btn" id="btn-stand">🧍 stand</button>
+        <button class="btn" data-action="running">🚶 ready-to-walk</button>
         <button class="btn" data-action="squat">squat</button>
         <button class="btn" data-action="sit">sit</button>
         <button class="btn" data-action="lie">recover</button>
         <button class="btn" data-action="hello">wave</button>
         <button class="btn" data-action="shake">shake</button>
-        <button class="btn" data-action="damp">damp</button>
+        <button class="btn" id="btn-damp">💤 damp</button>
+        <button class="btn danger" id="btn-estop">🛑 E-STOP</button>
+        <button class="btn" id="btn-estop-clear">clear e-stop</button>
       </div>
 
       <div class="actions">
@@ -735,6 +741,49 @@
           postJSON(`/api/${b.dataset.action}`);
         });
       });
+
+      // Pilot buttons — these need more than fire-and-forget:
+      // stand retries with force after an explicit crane confirmation,
+      // damp always confirms (it collapses an unsupported robot), and
+      // e-stop latches until cleared.
+      async function postFull(path, body) {
+        try {
+          const r = await fetch(path, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body || {}),
+          });
+          let data = null;
+          try { data = await r.json(); } catch { /* no body */ }
+          return { ok: r.ok, data };
+        } catch { return { ok: false, data: null }; }
+      }
+      document.getElementById("btn-stand").addEventListener("click", async () => {
+        const r = await postFull("/api/stand", { force: false });
+        const res = r.data && r.data.result;
+        if (res && res.ok === false && /force/i.test(res.error || "")) {
+          if (confirm(
+            "Standing from this state must pass through DAMP — the robot " +
+            "will collapse if it is not crane-supported. Continue?"
+          )) {
+            await postFull("/api/stand", { force: true });
+          }
+        }
+      });
+      document.getElementById("btn-damp").addEventListener("click", () => {
+        if (confirm(
+          "DAMP makes the robot go LIMP — it will collapse if not " +
+          "crane-supported. Continue?"
+        )) {
+          postJSON("/api/damp");
+        }
+      });
+      document.getElementById("btn-estop").addEventListener("click", () => {
+        postJSON("/api/estop");
+      });
+      document.getElementById("btn-estop-clear").addEventListener("click", () => {
+        postJSON("/api/estop/clear");
+      });
       const stopBtn = document.getElementById("stop");
       stopBtn.addEventListener("click", () => {
         // Zero the target FIRST so the next tick doesn't immediately
@@ -754,6 +803,8 @@
       const motionDot = document.getElementById("dot-motion");
       const motionLabel = document.getElementById("motion-label");
       const batteryLabel = document.getElementById("battery-label");
+      const fsmDot = document.getElementById("dot-fsm");
+      const fsmLabel = document.getElementById("fsm-label");
 
       async function pollStatus() {
         const h = await getJSON("/api/health");
@@ -778,6 +829,20 @@
           null;
         batteryLabel.textContent =
           soc != null ? `battery: ${Math.round(soc)}%` : "battery: —";
+        // FSM: green = walk-ready (velocity actuates), amber = standing
+        // or in transition, red = e-stop latched or unreachable.
+        const l = await getJSON("/api/locomotion");
+        if (l && l.estop_latched) {
+          fsmDot.className = "dot bad";
+          fsmLabel.textContent = "E-STOP latched";
+        } else if (l && l.connected && l.fsm_id != null) {
+          fsmDot.className = "dot " + (l.ready_to_walk ? "ok" : "warn");
+          fsmLabel.textContent = "fsm: " + l.fsm_id +
+            (l.ready_to_walk ? " (walk-ready)" : l.standing ? " (stand)" : "");
+        } else {
+          fsmDot.className = "dot bad";
+          fsmLabel.textContent = "fsm: —";
+        }
       }
       pollStatus();
       setInterval(pollStatus, 2000);

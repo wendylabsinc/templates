@@ -74,6 +74,14 @@ class MoveBody(BaseModel):
     duration: float = Field(2.0, description="How long to move, seconds (0.1–10)")
 
 
+class StandBody(BaseModel):
+    force: bool = Field(
+        False,
+        description="Allow the DAMP transition from an unexpected FSM state "
+                    "(collapses the robot unless crane-supported)",
+    )
+
+
 class WaveBody(BaseModel):
     with_turn: bool = Field(False, description="Add a body turn while waving")
 
@@ -82,13 +90,30 @@ class ShakeBody(BaseModel):
     stage: int = Field(0, description="Handshake stage: 0=extend, 1=complete")
 
 
+def _require_not_estopped() -> None:
+    """Gate for every motion-causing endpoint. /stop and /damp stay
+    reachable while latched — they make the robot safer, not less."""
+    if controller.estop_latched():
+        raise HTTPException(
+            409, "E-stop latched — POST /estop/clear first"
+        )
+
+
 @app.get("/health")
 async def health():
     if controller._loco_client is None:
         return JSONResponse(
             {"ok": False, "reason": "loco_client_not_ready"}, status_code=503
         )
+    if controller.estop_latched():
+        return {"ok": True, "estop_latched": True}
     return {"ok": True}
+
+
+@app.get("/locomotion")
+async def locomotion() -> dict:
+    """FSM snapshot: fsm_id, standing, ready_to_walk, estop_latched."""
+    return await controller.fsm_status()
 
 
 @app.get("/state")
@@ -99,6 +124,7 @@ async def state() -> dict:
 
 @app.post("/velocity")
 async def set_velocity(body: VelocityBody) -> dict:
+    _require_not_estopped()
     return {
         "result": await controller.set_velocity(
             vx=body.vx, vy=body.vy, vyaw=body.vyaw
@@ -108,6 +134,7 @@ async def set_velocity(body: VelocityBody) -> dict:
 
 @app.post("/move")
 async def move(body: MoveBody) -> dict:
+    _require_not_estopped()
     return {
         "result": await controller.move(
             vx=body.vx, vy=body.vy, vyaw=body.vyaw, duration=body.duration
@@ -121,29 +148,43 @@ async def stop() -> dict:
 
 
 @app.post("/stand")
-async def stand() -> dict:
-    """Stand up from sit/lie into a static standing posture."""
-    return {"result": await controller.stand_up()}
+async def stand(body: StandBody | None = None) -> dict:
+    """Stand via the native FSM (StopMove → ai mode → DAMP → LOCK STAND).
+
+    From an unexpected FSM state the sequence must pass through DAMP,
+    which collapses an unsupported robot — that path is refused unless
+    the body carries `force: true`.
+    """
+    _require_not_estopped()
+    return {"result": await controller.stand_up(force=bool(body and body.force))}
+
+
+@app.post("/running")
+async def running() -> dict:
+    """LOCK STAND → RUNNING: the walk-ready policy. Velocity commands
+    only actuate in this state. Call /stand first."""
+    _require_not_estopped()
+    return {"result": await controller.enter_running()}
 
 
 @app.post("/balance")
-async def balance(balance_mode: int = 0) -> dict:
-    """Active balance-stand — the 'ready to walk' pose.
-
-    `balance_mode` query param: 0 = static (default, safest), 1 =
-    dynamic. The G1's LocoClient requires this argument; some
-    firmware versions silently accept invalid values.
-    """
-    return {"result": await controller.balance_stand(balance_mode)}
+async def balance() -> dict:
+    """Deprecated alias of /running. `BalanceStand()` was verified not
+    to work on the firmware this template targets; 'ready to walk' is
+    the RUNNING FSM policy."""
+    _require_not_estopped()
+    return {"result": await controller.enter_running()}
 
 
 @app.post("/squat")
 async def squat() -> dict:
+    _require_not_estopped()
     return {"result": await controller.squat()}
 
 
 @app.post("/sit")
 async def sit() -> dict:
+    _require_not_estopped()
     """Sit down on the floor. G1 doesn't have a chair-sit; this is
     the full SitDown posture, equivalent to `/lie` on go2-motion."""
     return {"result": await controller.sit_down()}
@@ -157,13 +198,27 @@ async def lie() -> dict:
     *recovery* direction (Lie → Stand). LocoClient v1 has no
     'go lie down' command — use `/sit` to end up on the floor instead.
     """
+    _require_not_estopped()
     return {"result": await controller.lie_to_stand()}
 
 
 @app.post("/damp")
 async def damp() -> dict:
-    """Damping mode — joints go compliant. Safest soft-stop."""
+    """Damping mode — joints go compliant. Safest soft-stop. NOT gated
+    by the e-stop latch (it makes the robot safer, not less)."""
     return {"result": await controller.damp()}
+
+
+@app.post("/estop")
+async def estop() -> dict:
+    """Latching soft e-stop: halt walking, release arms, refuse all
+    motion until /estop/clear."""
+    return {"result": await controller.estop()}
+
+
+@app.post("/estop/clear")
+async def estop_clear() -> dict:
+    return {"result": await controller.clear_estop()}
 
 
 # -- hand gestures (arms via LocoClient; NOT Dex3 fingers) --------------------
@@ -171,11 +226,13 @@ async def damp() -> dict:
 @app.post("/hello")
 async def hello() -> dict:
     """Alias of /wave for compatibility with go2-motion's API."""
+    _require_not_estopped()
     return {"result": await controller.wave_hand(with_turn=False)}
 
 
 @app.post("/wave")
 async def wave(body: WaveBody | None = None) -> dict:
+    _require_not_estopped()
     return {
         "result": await controller.wave_hand(
             with_turn=bool(body and body.with_turn)
@@ -185,6 +242,7 @@ async def wave(body: WaveBody | None = None) -> dict:
 
 @app.post("/shake")
 async def shake(body: ShakeBody | None = None) -> dict:
+    _require_not_estopped()
     return {
         "result": await controller.shake_hand(
             stage=int(body.stage) if body else 0
@@ -206,6 +264,7 @@ class ArmPresetBody(BaseModel):
 @app.post("/arm")
 async def arm_pose(body: ArmPresetBody) -> dict:
     """Move arms to a named preset. See `g1_arm.PRESETS_LEFT` for the list."""
+    _require_not_estopped()
     duration = max(0.5, min(body.duration, 8.0))
     return {
         "result": await controller.arm_preset(
@@ -220,26 +279,31 @@ async def arm_pose(body: ArmPresetBody) -> dict:
 # (defaults below match the natural side of the gesture).
 @app.post("/arm/raise_left")
 async def arm_raise_left() -> dict:
+    _require_not_estopped()
     return {"result": await controller.arm_preset("raise", side="left")}
 
 
 @app.post("/arm/raise_right")
 async def arm_raise_right() -> dict:
+    _require_not_estopped()
     return {"result": await controller.arm_preset("raise", side="right")}
 
 
 @app.post("/arm/hands_up")
 async def arm_hands_up() -> dict:
+    _require_not_estopped()
     return {"result": await controller.arm_preset("hands_up", side="both")}
 
 
 @app.post("/arm/point_forward")
 async def arm_point_forward() -> dict:
+    _require_not_estopped()
     return {"result": await controller.arm_preset("point_forward", side="both")}
 
 
 @app.post("/arm/salute")
 async def arm_salute() -> dict:
+    _require_not_estopped()
     return {"result": await controller.arm_preset("salute", side="right")}
 
 
@@ -247,6 +311,7 @@ async def arm_salute() -> dict:
 async def arm_home() -> dict:
     """Return arms to home (hanging at sides) and release control back
     to LocoClient so the next walk command isn't fought by arm_sdk."""
+    _require_not_estopped()
     return {
         "result": await controller.arm_preset(
             "home", side="both", duration=2.0, release=True,

@@ -147,9 +147,33 @@ async def stop() -> dict:
     return await _motion_post("/stop")
 
 
+class StandBody(BaseModel):
+    force: bool = Field(False)
+
+
 @app.post("/api/stand")
-async def stand() -> dict:
-    return await _motion_post("/stand")
+async def stand(body: StandBody | None = None) -> dict:
+    return await _motion_post("/stand", {"force": bool(body and body.force)})
+
+
+@app.post("/api/running")
+async def running() -> dict:
+    return await _motion_post("/running")
+
+
+@app.get("/api/locomotion")
+async def locomotion() -> dict:
+    return await _motion_get("/locomotion")
+
+
+@app.post("/api/estop")
+async def estop() -> dict:
+    return await _motion_post("/estop")
+
+
+@app.post("/api/estop/clear")
+async def estop_clear() -> dict:
+    return await _motion_post("/estop/clear")
 
 
 @app.post("/api/sit")

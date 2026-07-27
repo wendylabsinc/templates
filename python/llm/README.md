@@ -85,13 +85,23 @@ OpenAI-compatible API) instead of `ollama`, and Open WebUI points at that.
 
 Things to know:
 
-- First start downloads ~60GB of weights into the `…-hf` volume, and unlike
+- **Platform requirements are tighter than the Ollama path.** The pinned NGC
+  image (26.06) is the earliest whose vLLM natively supports Laguna, but its
+  torch is built on CUDA 13.3, and Tegra devices have no CUDA forward
+  compatibility — on JetPack 7.2 (CUDA 13.2, e.g. WendyOS 0.18 on Thor) it
+  segfaults at CUDA init, and the older CUDA-13.2 image (26.05) predates
+  Laguna support entirely. This pick therefore needs a JetPack/driver with
+  CUDA 13.3+. PyPI vLLM wheels are not an alternative: they ship no sm_110
+  (Thor) kernels.
+- DFlash itself additionally needs vLLM >= 0.25.1 (the Laguna DFlash drafter
+  from vllm-project/vllm#46853). No NGC tag ships that yet, so today the
+  entrypoint's probe logs a `WARNING:` and serves Laguna on plain vLLM —
+  everything works, just without the speedup. When a capable NGC tag lands,
+  the Dockerfile `FROM` bump is the only change needed. Set
+  `DFLASH_DISABLE=1` on the service to force plain serving.
+- First start downloads ~72GB of weights into the `…-hf` volume, and unlike
   Ollama's background pull the API stays down until the model is loaded — the
   UI comes up with an empty model list; watch the `[vllm]` log lines.
-- If the container's vLLM build lacks DFlash support (it is landing upstream
-  via vllm-project/vllm#46853), the entrypoint logs a `WARNING:` and serves
-  Laguna on plain vLLM — everything still works, just without the speedup.
-  Set `DFLASH_DISABLE=1` on the service to force plain serving.
 - Model and quantization are env overrides on the `vllm` service:
   `VLLM_TARGET_MODEL` (e.g. `poolside/Laguna-S-2.1-INT4` if NVFP4 misbehaves
   on your GPU) and `DFLASH_DRAFT_MODEL`.
@@ -146,7 +156,7 @@ docker compose up
 
 Locally the WebUI reaches Ollama at `http://ollama:11434` via Docker's
 built-in service-name DNS. In DFlash mode the rendered compose file needs an
-NVIDIA GPU host with ~64GB+ of free memory to be useful.
+NVIDIA GPU host with ~80GB+ of free memory to be useful.
 
 ## Useful commands
 

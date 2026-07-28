@@ -1,0 +1,29 @@
+{
+    "name": "wifi-sensing",
+    "description": "WiFi CSI sensing: ingests ESP32 CSI over UDP, derives presence/motion/breathing/heart rate (DSP), live React dashboard",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Primary HTTP port",
+            "type": "integer",
+            "default": 3001,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "CSI_UDP_PORT",
+            "description": "UDP port that ESP32 CSI sensors send to",
+            "type": "integer",
+            "default": 5566,
+            "prompt": "CSI UDP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

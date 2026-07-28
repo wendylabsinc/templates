@@ -1,0 +1,11 @@
+# Build output (frontend is built into ./static inside the Docker image)
+static/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Local runtime data (calibration baseline, etc.)
+data/

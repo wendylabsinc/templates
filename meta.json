@@ -21,6 +21,11 @@
             "description": "Fullstack app: API backend + React/shadcn frontend"
         },
         {
+            "name": "wifi-sensing",
+            "description": "WiFi CSI sensing: ingests ESP32 CSI over UDP, derives presence/motion/breathing/heart rate (DSP), live React dashboard with CSI waterfall",
+            "languages": ["python"]
+        },
+        {
             "name": "camera-feed",
             "description": "Live camera feed: GStreamer MJPEG over WebSocket"
         },

@@ -1,0 +1,29 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-data",
+            "path": "/data"
+        },
+        {
+            "type": "mcp",
+            "port": 8000
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 30
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

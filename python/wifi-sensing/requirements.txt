@@ -1,0 +1,6 @@
+fastapi==0.135.3
+uvicorn[standard]
+numpy==2.2.1
+scipy==1.15.1
+mcp>=1.2.0
+websockets

@@ -1,0 +1,3 @@
+# MCP server deps (mcp/server.py) — exposes live sensing data to LLMs.
+mcp>=1.2.0
+websockets

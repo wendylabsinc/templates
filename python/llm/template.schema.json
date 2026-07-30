@@ -108,6 +108,20 @@
                             "size": "cloud",
                             "parameters": "120B/12B active",
                             "comments": "Use Ollama Cloud or datacenter serving. Thor/B200 class if self-hosting."
+                        },
+                        {
+                            "value": "laguna-xs-2.1:q4_K_M",
+                            "label": "laguna-xs-2.1",
+                            "size": "edge server",
+                            "parameters": "33B/3B active",
+                            "comments": "Agentic coding MoE, 256K context, 20GB download. Use AGX Orin 32GB or 64GB, Thor, or larger. Not for Pi 5 or Orin Nano 8GB."
+                        },
+                        {
+                            "value": "laguna-s-2.1:q4_K_M",
+                            "label": "laguna-s-2.1",
+                            "size": "workstation+",
+                            "parameters": "118B/8B active",
+                            "comments": "Most capable Laguna, 1M context, 96GB download and ~75GB resident. Thor 128GB class only; not for Pi 5, Orin Nano 8GB, or AGX 32GB."
                         }
                     ]
                 }

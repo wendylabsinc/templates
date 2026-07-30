@@ -67,8 +67,18 @@ default is `gemma4:e2b`. Rough guidance by device:
 |--------|------------|
 | Raspberry Pi 5 | `gemma4:e2b` (slow), `qwen2.5:3b`, `llama3.2:3b` |
 | Jetson Orin Nano 8GB | `gemma4:e2b`/`e4b`, `qwen2.5:3b` (~30 tok/s), `llama3.2:3b`, `gemma3:4b`, `mistral:7b` (~15 tok/s), `nemotron-3-nano-4b` |
-| Jetson AGX Orin 32/64GB | `gemma4:26b`, `gemma4:31b` (64GB), `nemotron-3-nano:30b`, `qwen3-coder:30b` |
-| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-s-2.1` (~16 tok/s), `laguna-s-2.1 (DFlash • vLLM)`, `qwen3-coder:30b` |
+| Jetson AGX Orin 32/64GB | `gemma4:26b`, `gemma4:31b` (64GB), `nemotron-3-nano:30b`, `qwen3-coder:30b`, `laguna-xs-2.1` (20GB download) |
+| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-s-2.1` (~20 tok/s, 96GB download), `laguna-s-2.1 (DFlash • vLLM)`, `qwen3-coder:30b` |
+
+The Laguna entries are agentic-coding Mixture-of-Experts models from
+Poolside, pinned to the `q4_K_M` tag so a scaffolded project gets a known
+quantisation. `laguna-xs-2.1` (33B total, 3B active, 20GB) needs an AGX
+Orin 32GB or larger; `laguna-s-2.1` (118B total, 8B active, 96GB) needs a
+Thor 128GB class device. Neither fits a Pi 5 or an Orin Nano 8GB. Both
+Ollama picks require an Ollama new enough to know the `laguna`
+architecture, which is why the Ollama service here tracks the stock image
+rather than a pinned JetPack build; the `laguna-s-2.1-dflash` pick replaces
+Ollama with vLLM entirely (see "DFlash mode" below).
 
 To switch models later, edit the `OLLAMA_MODEL` environment value in
 `docker-compose.yml` and re-run; the entrypoint pulls whatever it is set to.

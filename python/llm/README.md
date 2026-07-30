@@ -68,7 +68,7 @@ default is `gemma4:e2b`. Rough guidance by device:
 | Raspberry Pi 5 | `gemma4:e2b` (slow), `qwen2.5:3b`, `llama3.2:3b` |
 | Jetson Orin Nano 8GB | `gemma4:e2b`/`e4b`, `qwen2.5:3b` (~30 tok/s), `llama3.2:3b`, `gemma3:4b`, `mistral:7b` (~15 tok/s), `nemotron-3-nano-4b` |
 | Jetson AGX Orin 32/64GB | `gemma4:26b`, `gemma4:31b` (64GB), `nemotron-3-nano:30b`, `qwen3-coder:30b`, `laguna-xs-2.1` (20GB download) |
-| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-s-2.1` (~20 tok/s, 96GB download), `laguna-s-2.1 (DFlash • vLLM)`, `qwen3-coder:30b` |
+| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-xs-2.1` (~59 tok/s), `laguna-s-2.1` (~20 tok/s, 96GB download), `laguna-s-2.1 (DFlash • vLLM)`, `qwen3-coder:30b` |
 
 The Laguna entries are agentic-coding Mixture-of-Experts models from
 Poolside, pinned to the `q4_K_M` tag so a scaffolded project gets a known
@@ -79,6 +79,16 @@ Ollama picks require an Ollama new enough to know the `laguna`
 architecture, which is why the Ollama service here tracks the stock image
 rather than a pinned JetPack build; the `laguna-s-2.1-dflash` pick replaces
 Ollama with vLLM entirely (see "DFlash mode" below).
+
+Two Thor-specific notes from on-device benchmarks (200 decoded tokens,
+median of five runs). Decode speed tracks *active* parameters while prefill
+tracks *total* ones, so XS decodes near a 3B dense model (~59 tok/s vs
+~63 tok/s for `qwen2.5:3b`) despite 11x the total parameters — on Thor,
+prefer XS unless you need S's extra capability, at a fifth of the download
+and resident memory. And when capacity-planning either Laguna model, pin
+`num_ctx`: left unpinned, Ollama sizes the KV cache from free memory, and
+at 96GB of weights on a 128GB device that can tip into a partial CPU
+offload that produces plausible-looking but degraded throughput.
 
 To switch models later, edit the `OLLAMA_MODEL` environment value in
 `docker-compose.yml` and re-run; the entrypoint pulls whatever it is set to.
@@ -102,7 +112,11 @@ Things to know:
   segfaults at CUDA init, and the older CUDA-13.2 image (26.05) predates
   Laguna support entirely. This pick therefore needs a JetPack/driver with
   CUDA 13.3+. PyPI vLLM wheels are not an alternative: they ship no sm_110
-  (Thor) kernels.
+  (Thor) kernels. The entrypoint preflights CUDA at startup and exits with
+  a clear error — before the 72GB download — when the driver can't run this
+  image, and also gives up (non-zero, restarted with backoff by compose)
+  after repeated fast crashes, so a permanently broken platform surfaces as
+  a restarting container instead of a healthy-looking crash loop.
 - DFlash itself additionally needs vLLM >= 0.25.1 (the Laguna DFlash drafter
   from vllm-project/vllm#46853). No NGC tag ships that yet, so today the
   entrypoint's probe logs a `WARNING:` and serves Laguna on plain vLLM —
@@ -118,6 +132,11 @@ Things to know:
 - The poolside repos are public today. If they become gated, add `HF_TOKEN`
   to the `vllm` service `environment` in `docker-compose.yml` —
   huggingface_hub picks it up automatically.
+- The API on :8000 requires the shared local API key (`wendy-local`) that
+  Open WebUI is preconfigured with. It is a public template constant, not a
+  secret — it stops casual unauthenticated use of the published port, same
+  spirit as the Ollama port. Change `VLLM_API_KEY` (vllm service) and
+  `OPENAI_API_KEY` (open-webui service) together.
 
 ## Run on a Wendy device
 

@@ -11,6 +11,10 @@ services:
   vllm:
     build:
       context: ./vllm
+    # The entrypoint exits non-zero on permanent failures (CUDA preflight,
+    # repeated fast crashes); restarting with backoff keeps those visible
+    # as a restarting container rather than a silent in-container loop.
+    restart: unless-stopped
     ports:
       - "8000:8000"
     volumes:

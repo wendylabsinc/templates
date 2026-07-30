@@ -86,7 +86,7 @@
                             "label": "laguna-xs-2.1",
                             "size": "edge server",
                             "parameters": "33B/3B active Q4",
-                            "comments": "Poolside agentic coding MoE, 256K context, 20GB download. Use AGX Orin 32GB or 64GB, Thor, or larger. Not for Pi 5 or Orin Nano 8GB."
+                            "comments": "Poolside agentic coding MoE, 256K context, 20GB download, ~59 tok/s on Thor. Use AGX Orin 32GB or 64GB, Thor, or larger. Not for Pi 5 or Orin Nano 8GB."
                         },
                         {
                             "value": "laguna-s-2.1:q4_K_M",
@@ -97,10 +97,10 @@
                         },
                         {
                             "value": "laguna-s-2.1-dflash",
-                            "label": "laguna-s-2.1 (DFlash • vLLM)",
+                            "label": "laguna-s-2.1 (DFlash • vLLM, experimental)",
                             "size": "workstation+",
                             "parameters": "118B/8B active NVFP4 + 1B draft",
-                            "comments": "Laguna on vLLM with DFlash speculative decoding, ~72GB download; replaces the Ollama backend. Needs a JetPack with CUDA 13.3+ and falls back to plain vLLM until NGC ships vLLM 0.25.1+."
+                            "comments": "Experimental: Laguna on vLLM with DFlash speculative decoding, ~72GB download; replaces the Ollama backend and serves 128K of Laguna's 256K context (KV-cache budget on unified memory). Needs a JetPack with CUDA 13.3+ and falls back to plain vLLM until NGC ships vLLM 0.25.1+."
                         },
                         {
                             "value": "hf.co/nvidia/NVIDIA-Nemotron-3-Nano-4B-GGUF:Q4_K_M",

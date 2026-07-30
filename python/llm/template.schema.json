@@ -82,11 +82,18 @@
                             "comments": "Powerful open reasoning model, 65GB download. Thor 128GB class or larger only."
                         },
                         {
-                            "value": "laguna-s-2.1:q4_k_m",
+                            "value": "laguna-xs-2.1:q4_K_M",
+                            "label": "laguna-xs-2.1",
+                            "size": "edge server",
+                            "parameters": "33B/3B active Q4",
+                            "comments": "Poolside agentic coding MoE, 256K context, 20GB download. Use AGX Orin 32GB or 64GB, Thor, or larger. Not for Pi 5 or Orin Nano 8GB."
+                        },
+                        {
+                            "value": "laguna-s-2.1:q4_K_M",
                             "label": "laguna-s-2.1",
                             "size": "workstation+",
                             "parameters": "118B/8B active Q4",
-                            "comments": "Poolside coding MoE, ~96GB download. Thor 128GB / DGX Spark class or larger only."
+                            "comments": "Most capable Poolside coding MoE, 256K context, 96GB download. Thor 128GB / DGX Spark class or larger only."
                         },
                         {
                             "value": "laguna-s-2.1-dflash",

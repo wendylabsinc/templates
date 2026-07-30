@@ -32,13 +32,20 @@ FROM nvcr.io/nvidia/vllm:26.06-py3
 # that don't fit next to 72GB of weights in the 0.70 budget; 131072 keeps
 # first boot reliable. NUM_SPECULATIVE_TOKENS=15 per the vLLM recipe for
 # this model (recipes.vllm.ai/poolside/Laguna-S-2.1).
+#
+# VLLM_API_KEY: the same non-secret local constant docker-compose.yml hands
+# Open WebUI as OPENAI_API_KEY — change both together. TRUST_REMOTE_CODE=1
+# is only needed when VLLM_TARGET_MODEL is swapped to a repo this vLLM has
+# no native implementation for (see entrypoint.sh).
 ENV HF_HOME="/models/hf" \
     VLLM_TARGET_MODEL="poolside/Laguna-S-2.1-NVFP4" \
     DFLASH_DRAFT_MODEL="poolside/Laguna-S-2.1-DFlash" \
     SERVED_MODEL_NAME="laguna-s-2.1" \
     NUM_SPECULATIVE_TOKENS="15" \
     MAX_MODEL_LEN="131072" \
-    GPU_MEMORY_UTILIZATION="0.70"
+    GPU_MEMORY_UTILIZATION="0.70" \
+    VLLM_API_KEY="wendy-local" \
+    TRUST_REMOTE_CODE="0"
 
 RUN mkdir -p /models/hf
 

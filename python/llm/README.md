@@ -9,6 +9,7 @@ llm/
 ├── docker-compose.yml   ← service topology (fully Docker Desktop-compatible)
 ├── wendy.json           ← companion: appId, GPU entitlement, readiness + postStart hook
 ├── ollama/              ← Ollama server; pulls the chosen model on first start
+├── vllm/                ← vLLM + DFlash serving path (laguna-s-2.1-dflash pick only)
 └── open-webui/          ← Open WebUI chat frontend with Wendy branding
 ```
 
@@ -52,6 +53,10 @@ When you `wendy run`, the CLI merges both files:
 | `ollama` | 11434 | Ollama API. Pulls the configured model in the background on first start; weights persist in the `…-models` volume. |
 | `open-webui` | {{.PORT}} | Chat UI. Persists user data in the `…-openwebui` volume. |
 
+With the `laguna-s-2.1-dflash` pick, the `ollama` service is replaced by
+`vllm` (port 8000): an OpenAI-compatible API with DFlash speculative
+decoding; weights persist in the `…-hf` volume. See "DFlash mode" below.
+
 ## Choosing a model
 
 The model is picked when the template is scaffolded (the `OLLAMA_MODEL`
@@ -62,11 +67,76 @@ default is `gemma4:e2b`. Rough guidance by device:
 |--------|------------|
 | Raspberry Pi 5 | `gemma4:e2b` (slow), `qwen2.5:3b`, `llama3.2:3b` |
 | Jetson Orin Nano 8GB | `gemma4:e2b`/`e4b`, `qwen2.5:3b` (~30 tok/s), `llama3.2:3b`, `gemma3:4b`, `mistral:7b` (~15 tok/s), `nemotron-3-nano-4b` |
-| Jetson AGX Orin 32/64GB | `gemma4:26b`, `gemma4:31b` (64GB), `nemotron-3-nano:30b`, `qwen3-coder:30b` |
-| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `qwen3-coder:30b` |
+| Jetson AGX Orin 32/64GB | `gemma4:26b`, `gemma4:31b` (64GB), `nemotron-3-nano:30b`, `qwen3-coder:30b`, `laguna-xs-2.1` (20GB download) |
+| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-xs-2.1` (~59 tok/s), `laguna-s-2.1` (~20 tok/s, 96GB download), `laguna-s-2.1 (DFlash • vLLM)`, `qwen3-coder:30b` |
+
+The Laguna entries are agentic-coding Mixture-of-Experts models from
+Poolside, pinned to the `q4_K_M` tag so a scaffolded project gets a known
+quantisation. `laguna-xs-2.1` (33B total, 3B active, 20GB) needs an AGX
+Orin 32GB or larger; `laguna-s-2.1` (118B total, 8B active, 96GB) needs a
+Thor 128GB class device. Neither fits a Pi 5 or an Orin Nano 8GB. Both
+Ollama picks require an Ollama new enough to know the `laguna`
+architecture, which is why the Ollama service here tracks the stock image
+rather than a pinned JetPack build; the `laguna-s-2.1-dflash` pick replaces
+Ollama with vLLM entirely (see "DFlash mode" below).
+
+Two Thor-specific notes from on-device benchmarks (200 decoded tokens,
+median of five runs). Decode speed tracks *active* parameters while prefill
+tracks *total* ones, so XS decodes near a 3B dense model (~59 tok/s vs
+~63 tok/s for `qwen2.5:3b`) despite 11x the total parameters — on Thor,
+prefer XS unless you need S's extra capability, at a fifth of the download
+and resident memory. And when capacity-planning either Laguna model, pin
+`num_ctx`: left unpinned, Ollama sizes the KV cache from free memory, and
+at 96GB of weights on a 128GB device that can tip into a partial CPU
+offload that produces plausible-looking but degraded throughput.
 
 To switch models later, edit the `OLLAMA_MODEL` environment value in
 `docker-compose.yml` and re-run; the entrypoint pulls whatever it is set to.
+
+## DFlash mode (`laguna-s-2.1-dflash`)
+
+DFlash is lossless speculative decoding: a small block-diffusion draft model
+proposes a block of tokens and Laguna verifies the whole block in one forward
+pass, so output is identical to running Laguna alone but ~2-4x faster. Ollama
+does not support it, so this pick swaps the backend at scaffold time — the
+rendered `docker-compose.yml`/`wendy.json` define a `vllm` service (serving
+`poolside/Laguna-S-2.1-NVFP4` with the paired DFlash draft model behind an
+OpenAI-compatible API) instead of `ollama`, and Open WebUI points at that.
+
+Things to know:
+
+- **Platform requirements are tighter than the Ollama path.** The pinned NGC
+  image (26.06) is the earliest whose vLLM natively supports Laguna, but its
+  torch is built on CUDA 13.3, and Tegra devices have no CUDA forward
+  compatibility — on JetPack 7.2 (CUDA 13.2, e.g. WendyOS 0.18 on Thor) it
+  segfaults at CUDA init, and the older CUDA-13.2 image (26.05) predates
+  Laguna support entirely. This pick therefore needs a JetPack/driver with
+  CUDA 13.3+. PyPI vLLM wheels are not an alternative: they ship no sm_110
+  (Thor) kernels. The entrypoint preflights CUDA at startup and exits with
+  a clear error — before the 72GB download — when the driver can't run this
+  image, and also gives up (non-zero, restarted with backoff by compose)
+  after repeated fast crashes, so a permanently broken platform surfaces as
+  a restarting container instead of a healthy-looking crash loop.
+- DFlash itself additionally needs vLLM >= 0.25.1 (the Laguna DFlash drafter
+  from vllm-project/vllm#46853). No NGC tag ships that yet, so today the
+  entrypoint's probe logs a `WARNING:` and serves Laguna on plain vLLM —
+  everything works, just without the speedup. When a capable NGC tag lands,
+  the Dockerfile `FROM` bump is the only change needed. Set
+  `DFLASH_DISABLE=1` on the service to force plain serving.
+- First start downloads ~72GB of weights into the `…-hf` volume, and unlike
+  Ollama's background pull the API stays down until the model is loaded — the
+  UI comes up with an empty model list; watch the `[vllm]` log lines.
+- Model and quantization are env overrides on the `vllm` service:
+  `VLLM_TARGET_MODEL` (e.g. `poolside/Laguna-S-2.1-INT4` if NVFP4 misbehaves
+  on your GPU) and `DFLASH_DRAFT_MODEL`.
+- The poolside repos are public today. If they become gated, add `HF_TOKEN`
+  to the `vllm` service `environment` in `docker-compose.yml` —
+  huggingface_hub picks it up automatically.
+- The API on :8000 requires the shared local API key (`wendy-local`) that
+  Open WebUI is preconfigured with. It is a public template constant, not a
+  secret — it stops casual unauthenticated use of the published port, same
+  spirit as the Ollama port. Change `VLLM_API_KEY` (vllm service) and
+  `OPENAI_API_KEY` (open-webui service) together.
 
 ## Run on a Wendy device
 
@@ -90,9 +160,10 @@ picker, the model is still downloading or the puller is retrying; check the
 Ollama service logs before pulling manually.
 
 > On WendyOS, app groups do not get Docker Compose's service-name DNS, so
-> the local Compose URL (`http://ollama:11434`) does not resolve from Open
-> WebUI. The entrypoint rewrites that URL to `http://127.0.0.1:11434` on
-> device because Ollama publishes its API on the shared device network stack.
+> the local Compose URLs (`http://ollama:11434`, `http://vllm:8000`) do not
+> resolve from Open WebUI. The entrypoint rewrites whichever is configured to
+> its `http://127.0.0.1:<port>` form on device because both backends publish
+> their API on the shared device network stack.
 > This deliberately avoids the device's `.local` hostname: mDNS works on the
 > host for discovery, but app containers do not reliably include the NSS/mDNS
 > pieces needed to resolve `.local` names from inside the container.
@@ -113,7 +184,8 @@ docker compose up
 ```
 
 Locally the WebUI reaches Ollama at `http://ollama:11434` via Docker's
-built-in service-name DNS.
+built-in service-name DNS. In DFlash mode the rendered compose file needs an
+NVIDIA GPU host with ~80GB+ of free memory to be useful.
 
 ## Useful commands
 

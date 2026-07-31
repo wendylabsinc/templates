@@ -10,6 +10,7 @@ llm/
 ├── wendy.json           ← companion: appId, GPU entitlement, readiness + postStart hook
 ├── ollama/              ← Ollama server; pulls the chosen model on first start
 ├── vllm/                ← vLLM + DFlash serving path (laguna-s-2.1-dflash pick only)
+├── max/                 ← Modular MAX serving path (laguna-s-2.1-max pick only)
 └── open-webui/          ← Open WebUI chat frontend with Wendy branding
 ```
 
@@ -53,9 +54,10 @@ When you `wendy run`, the CLI merges both files:
 | `ollama` | 11434 | Ollama API. Pulls the configured model in the background on first start; weights persist in the `…-models` volume. |
 | `open-webui` | {{.PORT}} | Chat UI. Persists user data in the `…-openwebui` volume. |
 
-With the `laguna-s-2.1-dflash` pick, the `ollama` service is replaced by
-`vllm` (port 8000): an OpenAI-compatible API with DFlash speculative
-decoding; weights persist in the `…-hf` volume. See "DFlash mode" below.
+Two picks replace the `ollama` service with an OpenAI-compatible backend on
+port 8000, weights persisting in the `…-hf` volume: `laguna-s-2.1-dflash`
+brings up `vllm` (DFlash speculative decoding — see "DFlash mode" below), and
+`laguna-s-2.1-max` brings up `max` (Modular MAX — see "MAX mode" below).
 
 ## Choosing a model
 
@@ -68,7 +70,7 @@ default is `gemma4:e2b`. Rough guidance by device:
 | Raspberry Pi 5 | `gemma4:e2b` (slow), `qwen2.5:3b`, `llama3.2:3b` |
 | Jetson Orin Nano 8GB | `gemma4:e2b`/`e4b`, `qwen2.5:3b` (~30 tok/s), `llama3.2:3b`, `gemma3:4b`, `mistral:7b` (~15 tok/s), `nemotron-3-nano-4b` |
 | Jetson AGX Orin 32/64GB | `gemma4:26b`, `gemma4:31b` (64GB), `nemotron-3-nano:30b`, `qwen3-coder:30b`, `laguna-xs-2.1` (20GB download) |
-| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-xs-2.1` (~59 tok/s), `laguna-s-2.1` (~20 tok/s, 96GB download), `laguna-s-2.1 (DFlash • vLLM)`, `qwen3-coder:30b` |
+| Jetson AGX Thor (128GB) | `gpt-oss:120b`, `nemotron-3-super:120b`, `laguna-xs-2.1` (~59 tok/s), `laguna-s-2.1` (~20 tok/s, 96GB download), `laguna-s-2.1 (DFlash • vLLM)`, `laguna-s-2.1 (MAX • Modular)`, `qwen3-coder:30b` |
 
 The Laguna entries are agentic-coding Mixture-of-Experts models from
 Poolside, pinned to the `q4_K_M` tag so a scaffolded project gets a known
@@ -138,6 +140,45 @@ Things to know:
   spirit as the Ollama port. Change `VLLM_API_KEY` (vllm service) and
   `OPENAI_API_KEY` (open-webui service) together.
 
+## MAX mode (`laguna-s-2.1-max`)
+
+[Modular MAX](https://docs.modular.com/max/) is a second way to serve Laguna:
+its own graph compiler and kernels instead of vLLM's, behind the same
+OpenAI-compatible API. This pick swaps the backend at scaffold time — the
+rendered `docker-compose.yml`/`wendy.json` define a `max` service serving
+`poolside/Laguna-S-2.1-NVFP4` instead of `ollama`, and Open WebUI points at it.
+No speculative decoding here; it is a straight comparison point against the
+Ollama and vLLM paths on the same weights.
+
+Things to know:
+
+- **The image is a pinned MAX nightly.** MAX added the Laguna architecture on
+  2026-06-24, six days after 26.4.0 shipped, so no stable release can load this
+  model yet. `Dockerfile` pins a dated `26.5.0.dev…` tag (multi-arch, so arm64
+  Jetson/Spark hosts get an arm64 image); bump it to 26.5.0 once that releases.
+- **Thor is a "known compatible for development" target for MAX, not a tested
+  serving one** — only B200 is, and Modular verified Laguna itself on a B200.
+  Expect to confirm throughput on your device rather than trusting a number
+  from elsewhere. If NVFP4 Laguna will not load on your GPU, the fallbacks in
+  order are: a newer nightly tag, then `MAX_TARGET_MODEL=poolside/Laguna-XS-2.1-NVFP4`
+  (33B/3B, ~20GB, same code path). bfloat16 is the only other encoding MAX
+  supports for Laguna and S 2.1 needs ~236GB of it, so it is not an option on a
+  128GB device.
+- Like the DFlash mode, the entrypoint preflights CUDA before the ~72GB
+  download and exits non-zero (restarted with backoff by compose) on repeated
+  fast crashes, so a platform mismatch surfaces as a restarting container
+  instead of a healthy-looking crash loop.
+- First start downloads ~72GB into the `…-hf` volume **and** compiles the model
+  graph into the `…-maxcache` volume; the API stays down until both finish, so
+  the UI comes up with an empty model list. Later starts reuse both — keep the
+  volumes if you care about restart time.
+- **The API on :8000 is unauthenticated.** MAX serve has no API-key option, so
+  unlike the vLLM mode anything that can reach the device can use the model.
+  The `OPENAI_API_KEY: "wendy-local"` on the open-webui service is a
+  placeholder Open WebUI requires, not a credential.
+- Tokens/second comes from MAX's Prometheus endpoint on :8001 — see
+  "Useful commands" below.
+
 ## Run on a Wendy device
 
 ```sh
@@ -160,10 +201,10 @@ picker, the model is still downloading or the puller is retrying; check the
 Ollama service logs before pulling manually.
 
 > On WendyOS, app groups do not get Docker Compose's service-name DNS, so
-> the local Compose URLs (`http://ollama:11434`, `http://vllm:8000`) do not
-> resolve from Open WebUI. The entrypoint rewrites whichever is configured to
-> its `http://127.0.0.1:<port>` form on device because both backends publish
-> their API on the shared device network stack.
+> the local Compose URLs (`http://ollama:11434`, `http://vllm:8000`,
+> `http://max:8000`) do not resolve from Open WebUI. The entrypoint rewrites
+> whichever is configured to its `http://127.0.0.1:<port>` form on device
+> because every backend publishes its API on the shared device network stack.
 > This deliberately avoids the device's `.local` hostname: mDNS works on the
 > host for discovery, but app containers do not reliably include the NSS/mDNS
 > pieces needed to resolve `.local` names from inside the container.
@@ -184,8 +225,8 @@ docker compose up
 ```
 
 Locally the WebUI reaches Ollama at `http://ollama:11434` via Docker's
-built-in service-name DNS. In DFlash mode the rendered compose file needs an
-NVIDIA GPU host with ~80GB+ of free memory to be useful.
+built-in service-name DNS. In DFlash or MAX mode the rendered compose file
+needs an NVIDIA GPU host with ~80GB+ of free memory to be useful.
 
 ## Useful commands
 
@@ -194,3 +235,12 @@ wendy run --detach           # start and return; stream later with:
 wendy device logs {{.APP_ID}} --service ollama --tail 100
 wendy device apps list       # list both containers
 ```
+
+In MAX mode, tokens/second after a generation — decode speed is the inverse of
+time-per-output-token:
+
+```sh
+curl -s http://<device-hostname>:8001/metrics | grep time_per_output_token
+# tok/s = 1000 / (…_sum / …_count)
+```
+

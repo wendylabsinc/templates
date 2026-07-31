@@ -10,6 +10,13 @@
                 { "type": "gpu" }
             ]
         },
+{{else if eq .OLLAMA_MODEL "laguna-s-2.1-max"}}
+        "max": {
+            "context": "./max",
+            "entitlements": [
+                { "type": "gpu" }
+            ]
+        },
 {{else}}
         "ollama": {
             "context": "./ollama",

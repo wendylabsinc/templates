@@ -1,15 +1,19 @@
 {
     "appId": "{{.APP_ID}}",
     "version": "0.2.0",
-    "context": "./bridge",
-    "entitlements": [
-        { "type": "network", "mode": "host" }
-    ],
-    "readiness": {
-        "tcpSocket": { "port": 8766 },
-        "initialDelaySeconds": 3,
-        "timeoutSeconds": 2,
-        "periodSeconds": 2,
-        "failureThreshold": 30
+    "services": {
+        "bridge": {
+            "context": "./bridge",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ],
+            "readiness": {
+                "tcpSocket": { "port": 8766 },
+                "initialDelaySeconds": 3,
+                "timeoutSeconds": 2,
+                "periodSeconds": 2,
+                "failureThreshold": 30
+            }
+        }
     }
 }

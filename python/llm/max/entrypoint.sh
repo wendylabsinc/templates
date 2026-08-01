@@ -44,8 +44,40 @@ SERVE_ARGS=(
   --served-model-name "$SERVED_MODEL_NAME"
   --quantization-encoding "$QUANTIZATION_ENCODING"
   --max-length "$MAX_LENGTH"
-  --device-memory-utilization "$DEVICE_MEMORY_UTILIZATION"
 )
+
+# Two MAX behaviours need adjusting on Tegra (Jetson). /dev/nvmap exists only
+# there, so it distinguishes Jetson from the discrete NVIDIA GPUs this image
+# also runs on. Both were verified on a Jetson AGX Thor (JetPack 7.2, MAX
+# 26.5 nightly).
+if [[ -e /dev/nvmap ]]; then
+  # 1. Tegra has no CUDA virtual-memory-management support, so MAX's device
+  #    graph capture (which calls vmmCreate) aborts the model worker with
+  #    CUDA_ERROR_INVALID_DEVICE right after the model loads. Discrete GPUs
+  #    keep capture and the decode speedup that comes with it.
+  echo "Tegra detected (/dev/nvmap); disabling MAX device graph capture (Tegra has no CUDA VMM)."
+  SERVE_ARGS+=(--no-device-graph-capture)
+
+  # 2. On Tegra, MAX reports GPU free memory as the host's MemFree, which
+  #    excludes reclaimable page cache — so its planner sees only what is
+  #    unused *right now*, not what the model can actually have. 0.70 of that
+  #    understates the budget twice over and rejects large models; 0.95 leaves
+  #    the same practical headroom on unified memory. See "MAX mode" in the
+  #    template README for the page-cache caveat this implies.
+  DEVICE_MEMORY_UTILIZATION="${TEGRA_DEVICE_MEMORY_UTILIZATION:-0.95}"
+
+  mem_free_gib=$(awk '/^MemFree:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
+  mem_avail_gib=$(awk '/^MemAvailable:/ {printf "%.1f", $2/1048576}' /proc/meminfo)
+  echo "Tegra memory: MemFree ${mem_free_gib} GiB, MemAvailable ${mem_avail_gib} GiB (MAX plans against MemFree)."
+  if awk "BEGIN { exit !($mem_free_gib < $mem_avail_gib / 2) }"; then
+    echo "WARNING: most of this device's memory is held in reclaimable page cache."
+    echo "MAX will refuse to load a model larger than ${mem_free_gib} GiB even though"
+    echo "${mem_avail_gib} GiB is actually available. Free it before starting, e.g."
+    echo "'sync && echo 3 > /proc/sys/vm/drop_caches' on the device host, or reboot."
+  fi
+fi
+
+SERVE_ARGS+=(--device-memory-utilization "$DEVICE_MEMORY_UTILIZATION")
 
 echo "First start downloads ~72GB of weights into ${HF_HOME} and compiles the"
 echo "model graph into the max-cache volume; the OpenAI API on :${MAX_SERVE_PORT}"

@@ -164,6 +164,23 @@ Things to know:
   (33B/3B, ~20GB, same code path). bfloat16 is the only other encoding MAX
   supports for Laguna and S 2.1 needs ~236GB of it, so it is not an option on a
   128GB device.
+- **On Jetson, free the page cache before the first start.** Two MAX behaviours
+  differ on Tegra, both handled automatically by `max/entrypoint.sh` when it
+  sees `/dev/nvmap`, but one of them needs help from you:
+  - MAX's device graph capture calls CUDA's virtual-memory-management API,
+    which Tegra does not implement, so the model worker dies with
+    `CUDA_ERROR_INVALID_DEVICE` in `vmmCreate`. The entrypoint passes
+    `--no-device-graph-capture` on Tegra; discrete GPUs keep capture.
+  - MAX reports GPU free memory as the host's `MemFree`, which does **not**
+    count reclaimable page cache. On a device that has been serving models,
+    almost all memory sits in page cache, so MAX sees a few GiB and refuses:
+    `Model size exceeds available memory (66.98 GiB > 4.25 GiB)`. Nothing is
+    actually wrong with the device — `MemAvailable` is the real number. Free
+    the cache before starting (`sync && echo 3 > /proc/sys/vm/drop_caches` on
+    the device host, or reboot) and the same model loads. The entrypoint warns
+    when `MemFree` is under half of `MemAvailable`, and uses a 0.95 device
+    memory fraction on Tegra (override with `TEGRA_DEVICE_MEMORY_UTILIZATION`)
+    since 0.70 of an already-understated number rejects large models.
 - Like the DFlash mode, the entrypoint preflights CUDA before the ~72GB
   download and exits non-zero (restarted with backoff by compose) on repeated
   fast crashes, so a platform mismatch surfaces as a restarting container

@@ -49,7 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # OLLAMA_LOAD_TIMEOUT: the 5m default aborts cold loads of large models
-# (e.g. Laguna S 2.1's ~75GB weights take >5m to read from disk on Jetson).
+# (e.g. Laguna S 2.1's ~96GB weights take >5m to read from disk on Jetson).
 ENV OLLAMA_HOST="0.0.0.0:11434" \
     OLLAMA_MODELS="/models/ollama" \
     OLLAMA_MODEL="gemma4:e2b" \

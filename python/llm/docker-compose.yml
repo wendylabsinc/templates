@@ -1,7 +1,39 @@
 # Service topology only — this file stays fully Docker Desktop-compatible.
 # Wendy-specific config (appId, GPU entitlement, readiness/postStart hook)
 # lives in the companion wendy.json next to it; `wendy run` merges the two.
+#
+# Two picker options swap the inference backend at scaffold time, because
+# Ollama cannot serve them: the DFlash pick replaces the ollama service with a
+# vLLM server, and the MAX pick replaces it with a Modular MAX server. Both
+# expose an OpenAI-compatible API on 8000 instead of Ollama's 11434.
 services:
+{{if eq .OLLAMA_MODEL "laguna-s-2.1-dflash"}}
+  vllm:
+    build:
+      context: ./vllm
+    # The entrypoint exits non-zero on permanent failures (CUDA preflight,
+    # repeated fast crashes); restarting with backoff keeps those visible
+    # as a restarting container rather than a silent in-container loop.
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - {{.APP_ID}}-hf:/models
+{{else if eq .OLLAMA_MODEL "laguna-s-2.1-max"}}
+  max:
+    build:
+      context: ./max
+    # Same rationale as the vllm service above.
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      # MAX publishes Prometheus metrics on a second port; that is where the
+      # tokens/second number comes from (see "MAX mode" in the README).
+      - "8001:8001"
+    volumes:
+      - {{.APP_ID}}-hf:/models
+      - {{.APP_ID}}-maxcache:/opt/venv/share/max/.max_cache
+{{else}}
   ollama:
     build:
       context: ./ollama
@@ -11,6 +43,7 @@ services:
       - "11434:11434"
     volumes:
       - {{.APP_ID}}-models:/models
+{{end}}
 
   open-webui:
     build: ./open-webui
@@ -18,12 +51,41 @@ services:
       - "{{.PORT}}:{{.PORT}}"
     environment:
       PORT: "{{.PORT}}"
+{{if eq .OLLAMA_MODEL "laguna-s-2.1-dflash"}}
+      ENABLE_OLLAMA_API: "False"
+      ENABLE_OPENAI_API: "True"
+      OPENAI_API_BASE_URL: "http://vllm:8000/v1"
+      OPENAI_API_KEY: "wendy-local"
+      DEFAULT_MODELS: "laguna-s-2.1"
+{{else if eq .OLLAMA_MODEL "laguna-s-2.1-max"}}
+      ENABLE_OLLAMA_API: "False"
+      ENABLE_OPENAI_API: "True"
+      OPENAI_API_BASE_URL: "http://max:8000/v1"
+      # MAX has no server-side auth; Open WebUI still requires *some* key, so
+      # this is a placeholder, not a credential.
+      OPENAI_API_KEY: "wendy-local"
+      DEFAULT_MODELS: "laguna-s-2.1"
+{{else}}
       OLLAMA_BASE_URL: "http://ollama:11434"
+{{end}}
     volumes:
       - {{.APP_ID}}-openwebui:/data
     depends_on:
+{{if eq .OLLAMA_MODEL "laguna-s-2.1-dflash"}}
+      - vllm
+{{else if eq .OLLAMA_MODEL "laguna-s-2.1-max"}}
+      - max
+{{else}}
       - ollama
+{{end}}
 
 volumes:
+{{if eq .OLLAMA_MODEL "laguna-s-2.1-dflash"}}
+  {{.APP_ID}}-hf:
+{{else if eq .OLLAMA_MODEL "laguna-s-2.1-max"}}
+  {{.APP_ID}}-hf:
+  {{.APP_ID}}-maxcache:
+{{else}}
   {{.APP_ID}}-models:
+{{end}}
   {{.APP_ID}}-openwebui:

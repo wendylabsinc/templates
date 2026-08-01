@@ -8,16 +8,22 @@ export ENABLE_PERSISTENT_CONFIG="${ENABLE_PERSISTENT_CONFIG:-False}"
 export WEBUI_NAME="${WEBUI_NAME:-Wendy}"
 
 # On WendyOS app groups do not get Docker Compose's service-name DNS, so the
-# local Compose URL (http://ollama:11434) is not usable from Open WebUI. Avoid
-# rewriting to the device's .local hostname here: containers do not reliably
-# have mDNS NSS support even when the host advertises itself with Avahi. The
-# Ollama service publishes 11434 on the shared device network stack, making
-# loopback the stable in-app route.
+# local Compose URLs (http://ollama:11434, http://vllm:8000, http://max:8000)
+# are not usable from Open WebUI. Avoid rewriting to the device's .local
+# hostname here: containers do not reliably have mDNS NSS support even when the
+# host advertises itself with Avahi. Every backend publishes its API port on the
+# shared device network stack, making loopback the stable in-app route.
 if [[ -n "${WENDY_HOSTNAME:-}" ]]; then
   case "${OLLAMA_BASE_URL:-}" in
     "http://ollama:11434"|"http://${WENDY_HOSTNAME}:11434")
       export OLLAMA_BASE_URL="http://127.0.0.1:11434"
       echo "Wendy device detected; OLLAMA_BASE_URL=${OLLAMA_BASE_URL}"
+      ;;
+  esac
+  case "${OPENAI_API_BASE_URL:-}" in
+    "http://vllm:8000/v1"|"http://max:8000/v1"|"http://${WENDY_HOSTNAME}:8000/v1")
+      export OPENAI_API_BASE_URL="http://127.0.0.1:8000/v1"
+      echo "Wendy device detected; OPENAI_API_BASE_URL=${OPENAI_API_BASE_URL}"
       ;;
   esac
 fi

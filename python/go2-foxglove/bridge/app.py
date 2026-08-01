@@ -64,7 +64,7 @@ logger = logging.getLogger("go2-foxglove")
 FOXGLOVE_PORT = int(os.environ.get("FOXGLOVE_PORT", "8765"))
 FOXGLOVE_BIND_HOST = os.environ.get("FOXGLOVE_BIND_HOST", "127.0.0.1")
 DIAG_PORT = int(os.environ.get("DIAG_PORT", "8766"))
-DIAG_BIND_HOST = os.environ.get("DIAG_BIND_HOST", "127.0.0.1")
+DIAG_BIND_HOST = os.environ.get("DIAG_BIND_HOST", "0.0.0.0")
 GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
 GO2_DDS_ADDRESS = os.environ.get("GO2_DDS_ADDRESS", "")
 DDS_DOMAIN = int(os.environ.get("DDS_DOMAIN", "0"))
@@ -162,7 +162,16 @@ _last_error: dict[str, str | None] = {
     "lidar": None,
     "camera": None,
 }
-_camera = {"frames": 0, "last_monotonic": 0.0, "last_at_ns": 0, "status": "starting"}
+_camera = {
+    "frames": 0,
+    "last_monotonic": 0.0,
+    "last_at_ns": 0,
+    "status": "starting",
+    "failures": 0,
+    "restarts": 0,
+    "last_error": None,
+    "last_error_at_ns": 0,
+}
 _lidar = {"frames": 0, "last_monotonic": 0.0, "status": "starting"}
 _subscribers: list[Any] = []
 
@@ -405,20 +414,44 @@ def _camera_loop() -> None:
             client.SetTimeout(CAMERA_TIMEOUT_S)
             client.Init()
             with _lock:
+                _camera["restarts"] += 1
                 _camera["status"] = "connected"
-                _last_error["camera"] = None
+            consecutive_failures = 0
             while True:
                 started = time.monotonic()
-                code, data = client.GetImageSample()
-                if code != 0:
-                    raise RuntimeError(
-                        f"VideoClient.GetImageSample returned code {code}"
+                try:
+                    code, data = client.GetImageSample()
+                    if code != 0:
+                        raise RuntimeError(
+                            f"VideoClient.GetImageSample returned code {code}"
+                        )
+                    jpeg = bytes(data)
+                    if not 4 <= len(jpeg) <= CAMERA_MAX_JPEG_BYTES:
+                        raise ValueError(f"camera JPEG has invalid size {len(jpeg)}")
+                    if not jpeg.startswith(b"\xff\xd8") or not jpeg.endswith(
+                        b"\xff\xd9"
+                    ):
+                        raise ValueError("camera payload is not a complete JPEG")
+                except Exception as error:
+                    consecutive_failures += 1
+                    rendered = f"{type(error).__name__}: {error}"
+                    with _lock:
+                        _rejected["camera"] += 1
+                        _camera["failures"] += 1
+                        _camera["status"] = "degraded"
+                        _camera["last_error"] = rendered
+                        _camera["last_error_at_ns"] = time.time_ns()
+                        _last_error["camera"] = rendered
+                    logger.warning(
+                        "camera fetch failed (%d/3): %s", consecutive_failures, rendered
                     )
-                jpeg = bytes(data)
-                if not 4 <= len(jpeg) <= CAMERA_MAX_JPEG_BYTES:
-                    raise ValueError(f"camera JPEG has invalid size {len(jpeg)}")
-                if not jpeg.startswith(b"\xff\xd8") or not jpeg.endswith(b"\xff\xd9"):
-                    raise ValueError("camera payload is not a complete JPEG")
+                    if consecutive_failures >= 3:
+                        raise RuntimeError(
+                            "three consecutive VideoClient failures; recreating client"
+                        ) from error
+                    time.sleep(0.2)
+                    continue
+                consecutive_failures = 0
                 captured_at_ns = time.time_ns()
                 _camera_channel.log(
                     CompressedImage(
@@ -434,14 +467,12 @@ def _camera_loop() -> None:
                     _camera["last_monotonic"] = time.monotonic()
                     _camera["last_at_ns"] = captured_at_ns
                     _camera["status"] = "streaming"
-                    _last_error["camera"] = None
                 elapsed = time.monotonic() - started
                 time.sleep(max(0.0, minimum_period - elapsed))
         except Exception as error:  # noqa: BLE001 - recreate client after any stream failure
             with _lock:
-                _rejected["camera"] += 1
                 _camera["status"] = "retrying"
-            _record_error("camera", error)
+            logger.warning("camera client restarting: %s", error)
             time.sleep(2.0)
 
 
@@ -535,6 +566,10 @@ def _health_snapshot() -> dict[str, Any]:
             "age_s": None if camera_age is None else round(camera_age, 3),
             "frames": _camera["frames"],
             "last_at_ns": _camera["last_at_ns"],
+            "failures": _camera["failures"],
+            "restarts": _camera["restarts"],
+            "last_error": _camera["last_error"],
+            "last_error_at_ns": _camera["last_error_at_ns"],
         }
         lidar = {
             "fresh": lidar_age is not None and lidar_age <= CAMERA_MAX_AGE_S,

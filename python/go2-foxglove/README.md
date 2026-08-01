@@ -47,8 +47,10 @@ the kernel which local IPv4 address routes to the controller, then pins both DDS
 participants to that exact address. Set `GO2_DDS_ADDRESS` in the generated
 Dockerfile only when route-based selection is not correct for a custom topology.
 
-The WebSocket and diagnostics listeners bind to device localhost by default.
-Open two terminals and tunnel them through Wendy Cloud:
+The Foxglove WebSocket binds to device localhost by default. Diagnostics binds
+to the device interfaces so Wendy's readiness probe can reach it; do not place
+the Go2 on an untrusted network. Open two terminals and tunnel both ports through
+Wendy Cloud:
 
 ```bash
 wendy cloud tunnel 8765:8765 --device <go2>.local

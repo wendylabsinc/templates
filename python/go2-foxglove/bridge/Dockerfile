@@ -43,6 +43,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY pointcloud2.py state.py app.py ./
 
 ENV FOXGLOVE_PORT={{.FOXGLOVE_PORT}}
+ENV FOXGLOVE_BIND_HOST=0.0.0.0
 ENV DIAG_PORT=8766
 ENV INGEST_PORT=8769
 ENV GO2_IP={{.GO2_IP}}

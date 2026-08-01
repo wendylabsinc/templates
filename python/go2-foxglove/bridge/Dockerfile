@@ -40,13 +40,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # package with find_spec (NOT `import unitree_sdk2py`) — importing it fails with a
 # circular-import error precisely because b2/__init__.py doesn't exist yet.
 
-COPY pointcloud2.py app.py cyclonedds.xml ./
+COPY pointcloud2.py state.py app.py ./
 
 ENV FOXGLOVE_PORT={{.FOXGLOVE_PORT}}
-ENV INGEST_PORT=8766
+ENV DIAG_PORT=8766
+ENV GO2_IP={{.GO2_IP}}
 ENV LIDAR_TOPIC=rt/utlidar/cloud_deskewed
-# Pin the DDS NIC by address (the Go2 Orin is multi-homed).
-ENV CYCLONEDDS_URI=file:///app/cyclonedds.xml
+# app.py asks the kernel which local address routes to GO2_IP, then pins both
+# Unitree's DDS factory and the direct LiDAR participant to that exact address.
 EXPOSE {{.FOXGLOVE_PORT}}
 EXPOSE 8766
 

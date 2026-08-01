@@ -1,49 +1,42 @@
-"""go2-foxglove bridge — stream the Go2's DDS data into Foxglove.
+"""Canonical Go2 telemetry and front camera over one Foxglove connection.
 
-Runs a single Foxglove WebSocket server (default ws://<device>:8765) and
-republishes the Go2's CycloneDDS topics as Foxglove channels. The `camera`
-service forwards JPEG frames here over localhost (POST /frame), so EVERYTHING —
-LiDAR, pose, body state, UWB, and camera — shows up on ONE Foxglove connection
-and one shippable layout.
-
-Channels:
-  /go2/points  foxglove.PointCloud       ← rt/utlidar/cloud_deskewed (Livox MID-360)
-  /go2/pose    foxglove.PoseInFrame      ← rt/sportmodestate (position + orientation)
-  /tf          foxglove.FrameTransform   ← odom → base_link
-  /go2/camera  foxglove.CompressedImage  ← forwarded by the camera service
-  /go2/state   json                      ← rt/lowstate + rt/sportmodestate (plots)
-  /go2/uwb     json                      ← rt/uwbstate (range / seen / yaw)
-
-DDS binds by ADDRESS via cyclonedds.xml (GO2_DDS_ADDRESS) — the Go2 Orin is
-multi-homed, so an interface NAME is ambiguous and DDS can advertise the wrong
-subnet. CYCLONEDDS_URI (set in the Dockerfile) is honoured by both the
-unitree_sdk2py channel factory and the direct cyclonedds participant below.
-
-UNVERIFIED on a live Go2 EDU+. Verify: (1) the foxglove-sdk channel/schema API
-against the version pinned in requirements.txt; (2) the DDS topic/field names on
-your firmware (see the go2-initial-test template for the same caveats).
-
-NOTE: do NOT add `from __future__ import annotations` — cyclonedds's IdlStruct
-resolves type hints by name at class-definition time and PEP-563 breaks it.
+This adapter deliberately does not forward the raw Go2 ROS/DDS graph. Some Go2
+firmware advertises aliases such as ``rt/lowstate`` and ``rt/lf/lowstate`` with
+metadata that generic ROS bridges expose as conflicting Foxglove channels. We
+subscribe to explicit Unitree types, select one live alias, validate every
+sample, and publish stable viewer-native channels instead.
 """
+
+from __future__ import annotations
+
+import copy
 import logging
+import math
 import os
 import threading
 import time
-
-import uvicorn
-from fastapi import FastAPI, Request, Response
+from typing import Any
 
 import foxglove
+import uvicorn
+from cyclonedds.core import Policy, Qos
+from cyclonedds.domain import DomainParticipant
+from cyclonedds.sub import DataReader, Subscriber
+from cyclonedds.topic import Topic
+from fastapi import FastAPI
+from foxglove import Channel
 from foxglove.channels import (
     CompressedImageChannel,
     FrameTransformChannel,
+    JointStatesChannel,
     PointCloudChannel,
     PoseInFrameChannel,
 )
-from foxglove.schemas import (
+from foxglove.messages import (
     CompressedImage,
     FrameTransform,
+    JointState,
+    JointStates,
     PackedElementField,
     PackedElementFieldNumericType,
     PointCloud,
@@ -53,205 +46,559 @@ from foxglove.schemas import (
     Timestamp,
     Vector3,
 )
+from pointcloud2 import PointCloud2_
+from state import (
+    StickySourceSelector,
+    cyclonedds_config,
+    normalize_lowstate,
+    normalize_sportstate,
+    resolve_dds_address,
+)
 
-from cyclonedds.core import Policy, Qos
-from cyclonedds.domain import DomainParticipant
-from cyclonedds.sub import DataReader, Subscriber
-from cyclonedds.topic import Topic
-from pointcloud2 import PointCloud2_  # local IDL (sensor_msgs/PointCloud2)
-
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("go2-foxglove-bridge")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("go2-foxglove")
 
 FOXGLOVE_PORT = int(os.environ.get("FOXGLOVE_PORT", "8765"))
-INGEST_PORT = int(os.environ.get("INGEST_PORT", "8766"))
-LIDAR_TOPIC = os.environ.get("LIDAR_TOPIC", "rt/utlidar/cloud_deskewed")
+FOXGLOVE_BIND_HOST = os.environ.get("FOXGLOVE_BIND_HOST", "127.0.0.1")
+DIAG_PORT = int(os.environ.get("DIAG_PORT", "8766"))
+DIAG_BIND_HOST = os.environ.get("DIAG_BIND_HOST", "127.0.0.1")
+GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
+GO2_DDS_ADDRESS = os.environ.get("GO2_DDS_ADDRESS", "")
 DDS_DOMAIN = int(os.environ.get("DDS_DOMAIN", "0"))
+LIDAR_TOPIC = os.environ.get("LIDAR_TOPIC", "rt/utlidar/cloud_deskewed")
+LOWSTATE_TOPICS = tuple(
+    value.strip()
+    for value in os.environ.get("LOWSTATE_TOPICS", "rt/lf/lowstate,rt/lowstate").split(
+        ","
+    )
+    if value.strip()
+)
+SPORT_TOPICS = tuple(
+    value.strip()
+    for value in os.environ.get(
+        "SPORT_TOPICS", "rt/lf/sportmodestate,rt/sportmodestate"
+    ).split(",")
+    if value.strip()
+)
+STATE_PUBLISH_HZ = float(os.environ.get("STATE_PUBLISH_HZ", "20"))
+STATE_MAX_AGE_S = float(os.environ.get("STATE_MAX_AGE_S", "0.5"))
+SPORT_MAX_AGE_S = float(os.environ.get("SPORT_MAX_AGE_S", "1.0"))
+CAMERA_MAX_AGE_S = float(os.environ.get("CAMERA_MAX_AGE_S", "2.0"))
+CAMERA_MAX_FPS = float(os.environ.get("CAMERA_MAX_FPS", "15"))
+CAMERA_TIMEOUT_S = float(os.environ.get("CAMERA_TIMEOUT_S", "3.0"))
+CAMERA_MAX_JPEG_BYTES = int(
+    os.environ.get("CAMERA_MAX_JPEG_BYTES", str(8 * 1024 * 1024))
+)
 
-# ── Foxglove server + channels ──────────────────────────────────────────────
+for name, value in (
+    ("STATE_PUBLISH_HZ", STATE_PUBLISH_HZ),
+    ("STATE_MAX_AGE_S", STATE_MAX_AGE_S),
+    ("SPORT_MAX_AGE_S", SPORT_MAX_AGE_S),
+    ("CAMERA_MAX_AGE_S", CAMERA_MAX_AGE_S),
+    ("CAMERA_MAX_FPS", CAMERA_MAX_FPS),
+):
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be positive")
+if not LOWSTATE_TOPICS or not SPORT_TOPICS:
+    raise ValueError("LOWSTATE_TOPICS and SPORT_TOPICS must not be empty")
+
+DDS_ADDRESS = resolve_dds_address(GO2_IP, GO2_DDS_ADDRESS)
+DDS_CONFIG = cyclonedds_config(DDS_ADDRESS)
+# The direct CycloneDDS LiDAR participant honors this environment variable.
+os.environ["CYCLONEDDS_URI"] = DDS_CONFIG
+
 foxglove.set_log_level("INFO")
-server = foxglove.start_server(host="0.0.0.0", port=FOXGLOVE_PORT, name="go2-foxglove")
+_server = foxglove.start_server(
+    host=FOXGLOVE_BIND_HOST,
+    port=FOXGLOVE_PORT,
+    name="Unitree Go2 canonical observability",
+)
 
-points_ch = PointCloudChannel(topic="/go2/points")
-pose_ch = PoseInFrameChannel(topic="/go2/pose")
-tf_ch = FrameTransformChannel(topic="/tf")
-camera_ch = CompressedImageChannel(topic="/go2/camera")
-state_ch = foxglove.Channel(topic="/go2/state")  # json
-uwb_ch = foxglove.Channel(topic="/go2/uwb")       # json
+_state_channel = Channel(
+    topic="/go2/state",
+    schema={
+        "type": "object",
+        "required": ["schema_version", "published_at_ns", "lowstate", "sport"],
+    },
+)
+_health_channel = Channel(
+    topic="/go2/health",
+    schema={"type": "object", "required": ["ok", "dds", "state", "camera"]},
+)
+_uwb_channel = Channel(
+    topic="/go2/uwb",
+    schema={
+        "type": "object",
+        "required": ["received_at_ns", "distance_m", "yaw_rad", "error_state"],
+    },
+)
+_joints_channel = JointStatesChannel(topic="/go2/joints")
+_pose_channel = PoseInFrameChannel(topic="/go2/pose")
+_tf_channel = FrameTransformChannel(topic="/tf")
+_points_channel = PointCloudChannel(topic="/go2/points")
+_camera_channel = CompressedImageChannel(topic="/go2/camera")
 
-# ROS sensor_msgs/PointField datatype → foxglove PackedElementFieldNumericType.
-# (The two enums number their types differently, so map explicitly.)
-_T = PackedElementFieldNumericType
-_ROS_TO_FOX = {1: _T.Int8, 2: _T.Uint8, 3: _T.Int16, 4: _T.Uint16,
-               5: _T.Int32, 6: _T.Uint32, 7: _T.Float32, 8: _T.Float64}
+_lock = threading.RLock()
+_low_selector = StickySourceSelector(STATE_MAX_AGE_S)
+_sport_selector = StickySourceSelector(SPORT_MAX_AGE_S)
+_low: dict[str, Any] | None = None
+_sport: dict[str, Any] | None = None
+_low_source: str | None = None
+_sport_source: str | None = None
+_low_monotonic = 0.0
+_sport_monotonic = 0.0
+_low_received = 0
+_sport_received = 0
+_state_published = 0
+_rejected = {"lowstate": 0, "sport": 0, "uwb": 0, "lidar": 0, "camera": 0}
+_last_error: dict[str, str | None] = {
+    "dds": None,
+    "lowstate": None,
+    "sport": None,
+    "uwb": None,
+    "lidar": None,
+    "camera": None,
+}
+_camera = {"frames": 0, "last_monotonic": 0.0, "last_at_ns": 0, "status": "starting"}
+_lidar = {"frames": 0, "last_monotonic": 0.0, "status": "starting"}
+_subscribers: list[Any] = []
 
-_state = {}  # merged latest lowstate + sportmodestate fields for the plots
 
-# Diagnostics, exposed at GET /diag on the ingest port — container logs are
-# unreliable here, so this is how we see what's actually flowing.
-_diag = {
-    "unitree_init": "pending",
-    "counts": {"lidar": 0, "lowstate": 0, "sport": 0, "uwb": 0, "camera": 0},
-    "errors": [],
+def _timestamp(nanoseconds: int) -> Timestamp:
+    return Timestamp(sec=nanoseconds // 1_000_000_000, nsec=nanoseconds % 1_000_000_000)
+
+
+def _age(last_monotonic: float, now: float | None = None) -> float | None:
+    if last_monotonic <= 0:
+        return None
+    return max(0.0, (time.monotonic() if now is None else now) - last_monotonic)
+
+
+def _fresh(last_monotonic: float, max_age_s: float, now: float | None = None) -> bool:
+    age = _age(last_monotonic, now)
+    return age is not None and age <= max_age_s
+
+
+def _record_error(component: str, error: Exception | str) -> None:
+    rendered = error if isinstance(error, str) else f"{type(error).__name__}: {error}"
+    with _lock:
+        _last_error[component] = rendered
+    logger.warning("%s: %s", component, rendered)
+
+
+def _on_lowstate(source: str, message: Any) -> None:
+    global _low, _low_source, _low_monotonic, _low_received
+    now = time.monotonic()
+    with _lock:
+        accepted = _low_selector.accept(source, now)
+        next_id = _low_received + 1
+    if not accepted:
+        return
+    try:
+        normalized = normalize_lowstate(
+            message, received_at_ns=time.time_ns(), sample_id=next_id
+        )
+    except Exception as error:  # noqa: BLE001 - malformed DDS must not stop reception
+        with _lock:
+            _rejected["lowstate"] += 1
+        _record_error("lowstate", error)
+        return
+    with _lock:
+        _low = normalized
+        _low_source = source
+        _low_monotonic = now
+        _low_received = next_id
+        _last_error["lowstate"] = None
+
+
+def _on_sport(source: str, message: Any) -> None:
+    global _sport, _sport_source, _sport_monotonic, _sport_received
+    now = time.monotonic()
+    with _lock:
+        accepted = _sport_selector.accept(source, now)
+        next_id = _sport_received + 1
+    if not accepted:
+        return
+    try:
+        normalized = normalize_sportstate(
+            message, received_at_ns=time.time_ns(), sample_id=next_id
+        )
+    except Exception as error:  # noqa: BLE001
+        with _lock:
+            _rejected["sport"] += 1
+        _record_error("sport", error)
+        return
+    with _lock:
+        _sport = normalized
+        _sport_source = source
+        _sport_monotonic = now
+        _sport_received = next_id
+        _last_error["sport"] = None
+
+
+def _on_uwb(message: Any) -> None:
+    try:
+        received_at_ns = time.time_ns()
+        payload = {
+            "received_at_ns": received_at_ns,
+            "distance_m": float(message.distance_est),
+            "yaw_rad": float(getattr(message, "yaw_est", 0.0)),
+            "error_state": int(getattr(message, "error_state", 0)),
+            "enabled_from_app": int(getattr(message, "enabled_from_app", 0)),
+        }
+        if not all(math.isfinite(payload[key]) for key in ("distance_m", "yaw_rad")):
+            raise ValueError("UWB distance or yaw is not finite")
+        _uwb_channel.log(payload, log_time=received_at_ns)
+        with _lock:
+            _last_error["uwb"] = None
+    except Exception as error:  # noqa: BLE001
+        with _lock:
+            _rejected["uwb"] += 1
+        _record_error("uwb", error)
+
+
+def _start_unitree() -> None:
+    """Initialize one exact-address Unitree DDS participant and its readers."""
+
+    try:
+        import unitree_sdk2py.core.channel as unitree_channel
+        from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_, SportModeState_
+
+        # unitree_sdk2py passes an explicit auto-detect XML string to CycloneDDS,
+        # which overrides CYCLONEDDS_URI. Replace that module-level config before
+        # the singleton factory initializes so multi-homed Go2 hosts bind the
+        # exact address selected by the kernel route to GO2_IP.
+        unitree_channel.ChannelConfigAutoDetermine = DDS_CONFIG
+        unitree_channel.ChannelFactoryInitialize(DDS_DOMAIN)
+        for topic in LOWSTATE_TOPICS:
+            subscriber = unitree_channel.ChannelSubscriber(topic, LowState_)
+            subscriber.Init(
+                lambda message, source=topic: _on_lowstate(source, message), 10
+            )
+            _subscribers.append(subscriber)
+        for topic in SPORT_TOPICS:
+            subscriber = unitree_channel.ChannelSubscriber(topic, SportModeState_)
+            subscriber.Init(
+                lambda message, source=topic: _on_sport(source, message), 10
+            )
+            _subscribers.append(subscriber)
+        try:
+            from unitree_sdk2py.idl.unitree_go.msg.dds_ import UwbState_
+
+            subscriber = unitree_channel.ChannelSubscriber("rt/uwbstate", UwbState_)
+            subscriber.Init(_on_uwb, 10)
+            _subscribers.append(subscriber)
+        except Exception as error:  # noqa: BLE001 - UWB is optional
+            _record_error("uwb", error)
+        with _lock:
+            _last_error["dds"] = None
+        logger.info(
+            "Unitree DDS bound to %s; lowstate=%s sport=%s",
+            DDS_ADDRESS,
+            LOWSTATE_TOPICS,
+            SPORT_TOPICS,
+        )
+    except Exception as error:
+        _record_error("dds", error)
+        raise
+
+
+def _canonical_state(now: float) -> dict[str, Any]:
+    with _lock:
+        low = copy.deepcopy(_low)
+        sport = copy.deepcopy(_sport)
+        low_age = _age(_low_monotonic, now)
+        sport_age = _age(_sport_monotonic, now)
+        low_source = _low_source
+        sport_source = _sport_source
+    return {
+        "schema_version": 1,
+        "published_at_ns": time.time_ns(),
+        "lowstate": {
+            "fresh": low_age is not None and low_age <= STATE_MAX_AGE_S,
+            "age_ms": None if low_age is None else round(low_age * 1000, 3),
+            "source_topic": low_source,
+            "data": low,
+        },
+        "sport": {
+            "fresh": sport_age is not None and sport_age <= SPORT_MAX_AGE_S,
+            "age_ms": None if sport_age is None else round(sport_age * 1000, 3),
+            "source_topic": sport_source,
+            "data": sport,
+        },
+    }
+
+
+def _publish_loop() -> None:
+    global _state_published
+    period = 1.0 / STATE_PUBLISH_HZ
+    while True:
+        started = time.monotonic()
+        snapshot = _canonical_state(started)
+        low = snapshot["lowstate"]["data"]
+        sport = snapshot["sport"]["data"]
+        try:
+            if snapshot["lowstate"]["fresh"]:
+                log_time = int(low["received_at_ns"])
+                _state_channel.log(snapshot, log_time=log_time)
+                joints = low["joints"]
+                _joints_channel.log(
+                    JointStates(
+                        timestamp=_timestamp(log_time),
+                        joints=[
+                            JointState(
+                                name=name,
+                                position=joints["position_rad"][index],
+                                velocity=joints["velocity_rad_s"][index],
+                                effort=joints["effort_nm"][index],
+                            )
+                            for index, name in enumerate(joints["name"])
+                        ],
+                    ),
+                    log_time=log_time,
+                )
+                with _lock:
+                    _state_published += 1
+            if snapshot["sport"]["fresh"]:
+                log_time = int(sport["received_at_ns"])
+                position = sport["position_m"]
+                quaternion = sport["imu"]["quaternion_wxyz"]
+                rotation = Quaternion(
+                    x=quaternion[1], y=quaternion[2], z=quaternion[3], w=quaternion[0]
+                )
+                translation = Vector3(x=position[0], y=position[1], z=position[2])
+                pose = Pose(position=translation, orientation=rotation)
+                _pose_channel.log(
+                    PoseInFrame(
+                        timestamp=_timestamp(log_time), frame_id="odom", pose=pose
+                    ),
+                    log_time=log_time,
+                )
+                _tf_channel.log(
+                    FrameTransform(
+                        timestamp=_timestamp(log_time),
+                        parent_frame_id="odom",
+                        child_frame_id="base_link",
+                        translation=translation,
+                        rotation=rotation,
+                    ),
+                    log_time=log_time,
+                )
+        except Exception:
+            logger.exception("Foxglove state publish failed")
+        elapsed = time.monotonic() - started
+        time.sleep(max(0.0, period - elapsed))
+
+
+def _camera_loop() -> None:
+    """Read the official Go2 VideoClient JPEG stream with restart-on-error."""
+
+    minimum_period = 1.0 / CAMERA_MAX_FPS
+    while True:
+        try:
+            from unitree_sdk2py.go2.video.video_client import VideoClient
+
+            client = VideoClient()
+            client.SetTimeout(CAMERA_TIMEOUT_S)
+            client.Init()
+            with _lock:
+                _camera["status"] = "connected"
+                _last_error["camera"] = None
+            while True:
+                started = time.monotonic()
+                code, data = client.GetImageSample()
+                if code != 0:
+                    raise RuntimeError(
+                        f"VideoClient.GetImageSample returned code {code}"
+                    )
+                jpeg = bytes(data)
+                if not 4 <= len(jpeg) <= CAMERA_MAX_JPEG_BYTES:
+                    raise ValueError(f"camera JPEG has invalid size {len(jpeg)}")
+                if not jpeg.startswith(b"\xff\xd8") or not jpeg.endswith(b"\xff\xd9"):
+                    raise ValueError("camera payload is not a complete JPEG")
+                captured_at_ns = time.time_ns()
+                _camera_channel.log(
+                    CompressedImage(
+                        timestamp=_timestamp(captured_at_ns),
+                        frame_id="front_camera",
+                        format="jpeg",
+                        data=jpeg,
+                    ),
+                    log_time=captured_at_ns,
+                )
+                with _lock:
+                    _camera["frames"] += 1
+                    _camera["last_monotonic"] = time.monotonic()
+                    _camera["last_at_ns"] = captured_at_ns
+                    _camera["status"] = "streaming"
+                    _last_error["camera"] = None
+                elapsed = time.monotonic() - started
+                time.sleep(max(0.0, minimum_period - elapsed))
+        except Exception as error:  # noqa: BLE001 - recreate client after any stream failure
+            with _lock:
+                _rejected["camera"] += 1
+                _camera["status"] = "retrying"
+            _record_error("camera", error)
+            time.sleep(2.0)
+
+
+_NUMERIC = PackedElementFieldNumericType
+_ROS_TO_FOX = {
+    1: _NUMERIC.Int8,
+    2: _NUMERIC.Uint8,
+    3: _NUMERIC.Int16,
+    4: _NUMERIC.Uint16,
+    5: _NUMERIC.Int32,
+    6: _NUMERIC.Uint32,
+    7: _NUMERIC.Float32,
+    8: _NUMERIC.Float64,
 }
 
 
-def _bump(k):
-    _diag["counts"][k] = _diag["counts"].get(k, 0) + 1
+def _lidar_loop() -> None:
+    while True:
+        try:
+            qos = Qos(Policy.Reliability.BestEffort, Policy.History.KeepLast(2))
+            participant = DomainParticipant(DDS_DOMAIN)
+            reader = DataReader(
+                Subscriber(participant),
+                Topic(participant, LIDAR_TOPIC, PointCloud2_, qos=qos),
+                qos=qos,
+            )
+            with _lock:
+                _lidar["status"] = "subscribed"
+                _last_error["lidar"] = None
+            while True:
+                for message in reader.take_iter(timeout=1_000_000_000):
+                    fields = [
+                        PackedElementField(
+                            name=field.name,
+                            offset=field.offset,
+                            type=_ROS_TO_FOX.get(field.datatype, _NUMERIC.Unknown),
+                        )
+                        for field in message.fields
+                    ]
+                    if int(message.point_step) <= 0 or not fields:
+                        raise ValueError("LiDAR point cloud has no point layout")
+                    captured_at_ns = time.time_ns()
+                    _points_channel.log(
+                        PointCloud(
+                            timestamp=_timestamp(captured_at_ns),
+                            frame_id=message.header.frame_id or "base_link",
+                            pose=Pose(
+                                position=Vector3(x=0, y=0, z=0),
+                                orientation=Quaternion(x=0, y=0, z=0, w=1),
+                            ),
+                            point_stride=message.point_step,
+                            fields=fields,
+                            data=bytes(message.data),
+                        ),
+                        log_time=captured_at_ns,
+                    )
+                    with _lock:
+                        _lidar["frames"] += 1
+                        _lidar["last_monotonic"] = time.monotonic()
+                        _lidar["status"] = "streaming"
+                        _last_error["lidar"] = None
+        except Exception as error:  # noqa: BLE001 - rebuild reader after DDS failure
+            with _lock:
+                _rejected["lidar"] += 1
+                _lidar["status"] = "retrying"
+            _record_error("lidar", error)
+            time.sleep(2.0)
 
 
-def _err(where, e):
-    msg = f"{where}: {type(e).__name__}: {e}"
-    if msg not in _diag["errors"]:
-        _diag["errors"].append(msg)
-    print("DIAG-ERR", msg, flush=True)
+def _health_snapshot() -> dict[str, Any]:
+    now = time.monotonic()
+    with _lock:
+        low_age = _age(_low_monotonic, now)
+        sport_age = _age(_sport_monotonic, now)
+        camera_age = _age(float(_camera["last_monotonic"]), now)
+        lidar_age = _age(float(_lidar["last_monotonic"]), now)
+        state = {
+            "ok": low_age is not None and low_age <= STATE_MAX_AGE_S,
+            "lowstate_age_s": None if low_age is None else round(low_age, 3),
+            "sport_fresh": sport_age is not None and sport_age <= SPORT_MAX_AGE_S,
+            "sport_age_s": None if sport_age is None else round(sport_age, 3),
+            "lowstate_topic": _low_source,
+            "sport_topic": _sport_source,
+            "lowstate_received": _low_received,
+            "sport_received": _sport_received,
+            "published": _state_published,
+        }
+        camera = {
+            "ok": camera_age is not None and camera_age <= CAMERA_MAX_AGE_S,
+            "status": _camera["status"],
+            "age_s": None if camera_age is None else round(camera_age, 3),
+            "frames": _camera["frames"],
+            "last_at_ns": _camera["last_at_ns"],
+        }
+        lidar = {
+            "fresh": lidar_age is not None and lidar_age <= CAMERA_MAX_AGE_S,
+            "status": _lidar["status"],
+            "age_s": None if lidar_age is None else round(lidar_age, 3),
+            "frames": _lidar["frames"],
+        }
+        dds = {
+            "ok": _last_error["dds"] is None,
+            "address": DDS_ADDRESS,
+            "domain": DDS_DOMAIN,
+        }
+        errors = dict(_last_error)
+        rejected = dict(_rejected)
+    return {
+        "ok": bool(dds["ok"] and state["ok"] and camera["ok"]),
+        "dds": dds,
+        "state": state,
+        "camera": camera,
+        "lidar": lidar,
+        "rejected": rejected,
+        "last_error": errors,
+    }
 
 
-def _now():
-    t = time.time()
-    return Timestamp(sec=int(t), nsec=int((t % 1) * 1e9))
+def _health_publish_loop() -> None:
+    while True:
+        try:
+            _health_channel.log(_health_snapshot(), log_time=time.time_ns())
+        except Exception:
+            logger.exception("Foxglove health publish failed")
+        time.sleep(1.0)
 
 
-def _safe(fn):
-    try:
-        fn()
-    except Exception:  # noqa: BLE001 — never let one bad frame kill a subscriber
-        log.exception("publish failed")
-
-
-# ── camera frame ingest (the camera container POSTs JPEGs here) ──────────────
-api = FastAPI(title="go2-foxglove-ingest")
-
-
-@api.post("/frame")
-async def frame(request: Request):
-    jpg = await request.body()
-    if jpg:
-        _safe(lambda: camera_ch.log(
-            CompressedImage(timestamp=_now(), frame_id="camera", format="jpeg", data=jpg)))
-        _bump("camera")
-    return Response(status_code=204)
+api = FastAPI(title="Go2 canonical observability diagnostics")
 
 
 @api.get("/healthz")
-def healthz():
-    return {"ok": True}
+def healthz() -> dict[str, Any]:
+    return _health_snapshot()
 
 
-@api.get("/diag")
-def diag():
-    return _diag
+@api.get("/readyz")
+def readyz() -> dict[str, Any]:
+    return _health_snapshot()
 
 
-# ── DDS: point cloud (direct cyclonedds; PointCloud2 isn't a unitree msg) ────
-def _lidar_loop():
-    try:
-        qos = Qos(Policy.Reliability.BestEffort, Policy.History.KeepLast(2))  # Go2 LiDAR is BEST_EFFORT
-        dp = DomainParticipant(DDS_DOMAIN)
-        reader = DataReader(Subscriber(dp), Topic(dp, LIDAR_TOPIC, PointCloud2_, qos=qos), qos=qos)
-    except Exception as e:  # noqa: BLE001
-        _err("lidar_setup", e)
-        return
-    while True:
-        try:
-            for msg in reader.take_iter(timeout=1_000_000_000):
-                fields = [PackedElementField(name=f.name, offset=f.offset,
-                                             type=_ROS_TO_FOX.get(f.datatype, _T.Float32))
-                          for f in msg.fields]
-                _safe(lambda m=msg, fl=fields: points_ch.log(PointCloud(
-                    timestamp=_now(),
-                    frame_id=m.header.frame_id or "base_link",
-                    pose=Pose(position=Vector3(x=0, y=0, z=0),
-                              orientation=Quaternion(x=0, y=0, z=0, w=1)),
-                    point_stride=m.point_step,
-                    fields=fl,
-                    data=bytes(m.data),
-                )))
-                _bump("lidar")
-        except Exception as e:  # noqa: BLE001
-            _err("lidar_read", e)
-            time.sleep(0.5)
-
-
-# ── DDS: lowstate / sportmodestate / uwb via unitree_sdk2py ─────────────────
-def _on_lowstate(msg):
-    _bump("lowstate")
-    try:
-        imu = msg.imu_state
-        _state.update(soc=int(msg.bms_state.soc), voltage=float(msg.power_v),
-                      rpy=[round(float(v), 4) for v in imu.rpy],
-                      gyro=[round(float(v), 4) for v in imu.gyroscope],
-                      foot_force=[int(f) for f in msg.foot_force])
-    except Exception as e:  # noqa: BLE001
-        _err("lowstate_parse", e); return
-    _safe(lambda: state_ch.log(dict(_state)))
-
-
-def _on_sport(msg):
-    _bump("sport")
-    try:
-        pos = [float(v) for v in msg.position[:3]]
-        q = msg.imu_state.quaternion  # [w, x, y, z]
-        _state.update(position=[round(p, 4) for p in pos],
-                      velocity=[round(float(v), 4) for v in msg.velocity[:3]])
-        fox_q = Quaternion(x=q[1], y=q[2], z=q[3], w=q[0])
-    except Exception as e:  # noqa: BLE001
-        _err("sport_parse", e); return
-    ts = _now()
-    _safe(lambda: pose_ch.log(PoseInFrame(timestamp=ts, frame_id="odom",
-                                          pose=Pose(position=Vector3(x=pos[0], y=pos[1], z=pos[2]),
-                                                    orientation=fox_q))))
-    _safe(lambda: tf_ch.log(FrameTransform(timestamp=ts, parent_frame_id="odom",
-                                           child_frame_id="base_link",
-                                           translation=Vector3(x=pos[0], y=pos[1], z=pos[2]),
-                                           rotation=fox_q)))
-    _safe(lambda: state_ch.log(dict(_state)))
-
-
-def _on_uwb(msg):
-    _bump("uwb")
-    try:
-        d = {"seen": bool(msg.is_seen), "dist": round(float(msg.dist), 3),
-             "yaw_est": round(float(getattr(msg, "yaw_est", 0.0)), 4)}
-    except Exception as e:  # noqa: BLE001
-        _err("uwb_parse", e); return
-    _safe(lambda: uwb_ch.log(d))
-
-
-def _start_unitree_subs():
-    # Each step is isolated so one failure doesn't blank the others, and the
-    # result lands in _diag (visible at GET /diag).
-    try:
-        from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
-        from unitree_sdk2py.idl.unitree_go.msg.dds_ import LowState_, SportModeState_, UwbState_
-    except Exception as e:  # noqa: BLE001
-        _diag["unitree_init"] = "import_failed"; _err("sdk_import", e); return
-    try:
-        ChannelFactoryInitialize(0)  # honours CYCLONEDDS_URI from the Dockerfile
-    except Exception as e:  # noqa: BLE001
-        _diag["unitree_init"] = "factory_failed"; _err("factory_init", e); return
-    global _subs
-    _subs = []
-    for topic, typ, cb in (("rt/lowstate", LowState_, _on_lowstate),
-                           ("rt/sportmodestate", SportModeState_, _on_sport),
-                           ("rt/uwbstate", UwbState_, _on_uwb)):
-        try:
-            s = ChannelSubscriber(topic, typ)
-            s.Init(cb, 10)
-            _subs.append(s)
-        except Exception as e:  # noqa: BLE001
-            _err(f"sub_{topic}", e)
-    _diag["unitree_init"] = f"ok ({len(_subs)}/3 subscribed)"
-    print("DIAG", _diag["unitree_init"], flush=True)
-
-
-def main():
-    # Init the SDK factory FIRST, then the direct-cyclonedds LiDAR participant —
-    # in case the dual DDS stack is order-sensitive in one process.
-    _start_unitree_subs()
-    threading.Thread(target=_lidar_loop, name="lidar", daemon=True).start()
-    print(f"DIAG bridge up: foxglove :{FOXGLOVE_PORT}, ingest+diag :{INGEST_PORT}", flush=True)
-    uvicorn.run(api, host="0.0.0.0", port=INGEST_PORT, log_level="warning")
+def main() -> None:
+    _start_unitree()
+    for target, name in (
+        (_publish_loop, "state-publisher"),
+        (_camera_loop, "camera"),
+        (_lidar_loop, "lidar"),
+        (_health_publish_loop, "health-publisher"),
+    ):
+        threading.Thread(target=target, name=name, daemon=True).start()
+    logger.info(
+        "Go2 bridge ready: Foxglove %s:%d, diagnostics %s:%d",
+        FOXGLOVE_BIND_HOST,
+        FOXGLOVE_PORT,
+        DIAG_BIND_HOST,
+        DIAG_PORT,
+    )
+    uvicorn.run(api, host=DIAG_BIND_HOST, port=DIAG_PORT, log_level="warning")
 
 
 if __name__ == "__main__":

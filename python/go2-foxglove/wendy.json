@@ -9,10 +9,24 @@
             ],
             "readiness": {
                 "tcpSocket": { "port": 8766 },
-                "initialDelaySeconds": 3,
-                "timeoutSeconds": 2,
+                "initialDelaySeconds": 8,
+                "timeoutSeconds": 20,
                 "periodSeconds": 2,
-                "failureThreshold": 30
+                "failureThreshold": 10
+            }
+        },
+        "camera": {
+            "context": "./camera",
+            "dependsOn": ["bridge"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ],
+            "readiness": {
+                "tcpSocket": { "port": 8768 },
+                "initialDelaySeconds": 3,
+                "timeoutSeconds": 20,
+                "periodSeconds": 2,
+                "failureThreshold": 10
             }
         }
     }

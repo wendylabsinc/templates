@@ -44,6 +44,7 @@ COPY pointcloud2.py state.py app.py ./
 
 ENV FOXGLOVE_PORT={{.FOXGLOVE_PORT}}
 ENV DIAG_PORT=8766
+ENV INGEST_PORT=8769
 ENV GO2_IP={{.GO2_IP}}
 ENV LIDAR_TOPIC=rt/utlidar/cloud_deskewed
 # app.py asks the kernel which local address routes to GO2_IP, then pins both

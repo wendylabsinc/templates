@@ -20,7 +20,7 @@
         },
         {
             "name": "GO2_IP",
-            "description": "Go2 controller IP on the robot LAN (DDS and official VideoClient camera)",
+            "description": "Go2 controller IP on the robot LAN (DDS and WebRTC camera)",
             "type": "string",
             "default": "192.168.123.161",
             "prompt": "Go2 IP"

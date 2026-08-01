@@ -23,7 +23,7 @@ from cyclonedds.core import Policy, Qos
 from cyclonedds.domain import DomainParticipant
 from cyclonedds.sub import DataReader, Subscriber
 from cyclonedds.topic import Topic
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request, Response
 from foxglove import Channel
 from foxglove.channels import (
     CompressedImageChannel,
@@ -65,6 +65,8 @@ FOXGLOVE_PORT = int(os.environ.get("FOXGLOVE_PORT", "8765"))
 FOXGLOVE_BIND_HOST = os.environ.get("FOXGLOVE_BIND_HOST", "127.0.0.1")
 DIAG_PORT = int(os.environ.get("DIAG_PORT", "8766"))
 DIAG_BIND_HOST = os.environ.get("DIAG_BIND_HOST", "0.0.0.0")
+INGEST_PORT = int(os.environ.get("INGEST_PORT", "8769"))
+INGEST_BIND_HOST = os.environ.get("INGEST_BIND_HOST", "127.0.0.1")
 GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
 GO2_DDS_ADDRESS = os.environ.get("GO2_DDS_ADDRESS", "")
 DDS_DOMAIN = int(os.environ.get("DDS_DOMAIN", "0"))
@@ -87,8 +89,6 @@ STATE_PUBLISH_HZ = float(os.environ.get("STATE_PUBLISH_HZ", "20"))
 STATE_MAX_AGE_S = float(os.environ.get("STATE_MAX_AGE_S", "0.5"))
 SPORT_MAX_AGE_S = float(os.environ.get("SPORT_MAX_AGE_S", "1.0"))
 CAMERA_MAX_AGE_S = float(os.environ.get("CAMERA_MAX_AGE_S", "2.0"))
-CAMERA_MAX_FPS = float(os.environ.get("CAMERA_MAX_FPS", "15"))
-CAMERA_TIMEOUT_S = float(os.environ.get("CAMERA_TIMEOUT_S", "3.0"))
 CAMERA_MAX_JPEG_BYTES = int(
     os.environ.get("CAMERA_MAX_JPEG_BYTES", str(8 * 1024 * 1024))
 )
@@ -98,7 +98,6 @@ for name, value in (
     ("STATE_MAX_AGE_S", STATE_MAX_AGE_S),
     ("SPORT_MAX_AGE_S", SPORT_MAX_AGE_S),
     ("CAMERA_MAX_AGE_S", CAMERA_MAX_AGE_S),
-    ("CAMERA_MAX_FPS", CAMERA_MAX_FPS),
 ):
     if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be positive")
@@ -166,11 +165,14 @@ _camera = {
     "frames": 0,
     "last_monotonic": 0.0,
     "last_at_ns": 0,
-    "status": "starting",
+    "status": "waiting_for_webrtc",
     "failures": 0,
     "restarts": 0,
     "last_error": None,
     "last_error_at_ns": 0,
+    "session_id": None,
+    "frame_number": -1,
+    "service_seen_monotonic": 0.0,
 }
 _lidar = {"frames": 0, "last_monotonic": 0.0, "status": "starting"}
 _subscribers: list[Any] = []
@@ -402,80 +404,6 @@ def _publish_loop() -> None:
         time.sleep(max(0.0, period - elapsed))
 
 
-def _camera_loop() -> None:
-    """Read the official Go2 VideoClient JPEG stream with restart-on-error."""
-
-    minimum_period = 1.0 / CAMERA_MAX_FPS
-    while True:
-        try:
-            from unitree_sdk2py.go2.video.video_client import VideoClient
-
-            client = VideoClient()
-            client.SetTimeout(CAMERA_TIMEOUT_S)
-            client.Init()
-            with _lock:
-                _camera["restarts"] += 1
-                _camera["status"] = "connected"
-            consecutive_failures = 0
-            while True:
-                started = time.monotonic()
-                try:
-                    code, data = client.GetImageSample()
-                    if code != 0:
-                        raise RuntimeError(
-                            f"VideoClient.GetImageSample returned code {code}"
-                        )
-                    jpeg = bytes(data)
-                    if not 4 <= len(jpeg) <= CAMERA_MAX_JPEG_BYTES:
-                        raise ValueError(f"camera JPEG has invalid size {len(jpeg)}")
-                    if not jpeg.startswith(b"\xff\xd8") or not jpeg.endswith(
-                        b"\xff\xd9"
-                    ):
-                        raise ValueError("camera payload is not a complete JPEG")
-                except Exception as error:
-                    consecutive_failures += 1
-                    rendered = f"{type(error).__name__}: {error}"
-                    with _lock:
-                        _rejected["camera"] += 1
-                        _camera["failures"] += 1
-                        _camera["status"] = "degraded"
-                        _camera["last_error"] = rendered
-                        _camera["last_error_at_ns"] = time.time_ns()
-                        _last_error["camera"] = rendered
-                    logger.warning(
-                        "camera fetch failed (%d/3): %s", consecutive_failures, rendered
-                    )
-                    if consecutive_failures >= 3:
-                        raise RuntimeError(
-                            "three consecutive VideoClient failures; recreating client"
-                        ) from error
-                    time.sleep(0.2)
-                    continue
-                consecutive_failures = 0
-                captured_at_ns = time.time_ns()
-                _camera_channel.log(
-                    CompressedImage(
-                        timestamp=_timestamp(captured_at_ns),
-                        frame_id="front_camera",
-                        format="jpeg",
-                        data=jpeg,
-                    ),
-                    log_time=captured_at_ns,
-                )
-                with _lock:
-                    _camera["frames"] += 1
-                    _camera["last_monotonic"] = time.monotonic()
-                    _camera["last_at_ns"] = captured_at_ns
-                    _camera["status"] = "streaming"
-                elapsed = time.monotonic() - started
-                time.sleep(max(0.0, minimum_period - elapsed))
-        except Exception as error:  # noqa: BLE001 - recreate client after any stream failure
-            with _lock:
-                _camera["status"] = "retrying"
-            logger.warning("camera client restarting: %s", error)
-            time.sleep(2.0)
-
-
 _NUMERIC = PackedElementFieldNumericType
 _ROS_TO_FOX = {
     1: _NUMERIC.Int8,
@@ -570,6 +498,8 @@ def _health_snapshot() -> dict[str, Any]:
             "restarts": _camera["restarts"],
             "last_error": _camera["last_error"],
             "last_error_at_ns": _camera["last_error_at_ns"],
+            "session_id": _camera["session_id"],
+            "frame_number": _camera["frame_number"],
         }
         lidar = {
             "fresh": lidar_age is not None and lidar_age <= CAMERA_MAX_AGE_S,
@@ -605,6 +535,91 @@ def _health_publish_loop() -> None:
 
 
 api = FastAPI(title="Go2 canonical observability diagnostics")
+ingest_api = FastAPI(title="Go2 private camera ingest")
+
+
+@ingest_api.post("/frame")
+async def ingest_frame(request: Request) -> Response:
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip()
+    if content_type != "image/jpeg":
+        raise HTTPException(415, "camera frames must use image/jpeg")
+    body = await request.body()
+    if not 4 <= len(body) <= CAMERA_MAX_JPEG_BYTES:
+        raise HTTPException(413, f"JPEG must contain 4..{CAMERA_MAX_JPEG_BYTES} bytes")
+    if not body.startswith(b"\xff\xd8") or not body.endswith(b"\xff\xd9"):
+        raise HTTPException(422, "camera payload is not a complete JPEG")
+    session_id = request.headers.get("x-camera-session", "").strip()
+    if not session_id or len(session_id) > 128:
+        raise HTTPException(400, "X-Camera-Session is required")
+    try:
+        captured_at_ns = int(request.headers["x-captured-at-ns"])
+        frame_number = int(request.headers["x-frame-number"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise HTTPException(
+            400, "X-Captured-At-Ns and X-Frame-Number are required integers"
+        ) from error
+    now_ns = time.time_ns()
+    if frame_number < 0:
+        raise HTTPException(400, "X-Frame-Number must not be negative")
+    if captured_at_ns <= 0 or abs(now_ns - captured_at_ns) > 60 * 1_000_000_000:
+        raise HTTPException(
+            400, "camera timestamp differs from bridge clock by over 60s"
+        )
+    with _lock:
+        if (
+            _camera["session_id"] == session_id
+            and frame_number <= _camera["frame_number"]
+        ):
+            raise HTTPException(409, "camera frame number did not advance")
+    _camera_channel.log(
+        CompressedImage(
+            timestamp=_timestamp(captured_at_ns),
+            frame_id="front_camera",
+            format="jpeg",
+            data=body,
+        ),
+        log_time=captured_at_ns,
+    )
+    with _lock:
+        _camera["frames"] += 1
+        _camera["last_monotonic"] = time.monotonic()
+        _camera["last_at_ns"] = captured_at_ns
+        _camera["status"] = "streaming"
+        _camera["session_id"] = session_id
+        _camera["frame_number"] = frame_number
+    return Response(status_code=204)
+
+
+@ingest_api.post("/status")
+async def ingest_status(request: Request) -> Response:
+    try:
+        payload = await request.json()
+    except ValueError as error:
+        raise HTTPException(400, "camera status must be valid JSON") from error
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "camera status must be an object")
+    status = str(payload.get("status", "unknown"))[:64]
+    last_error = payload.get("last_error")
+    if last_error is not None:
+        last_error = str(last_error)[:1024]
+    try:
+        failures = int(payload.get("failures", _camera["failures"]))
+        restarts = int(payload.get("restarts", _camera["restarts"]))
+        last_error_at_ns = int(payload.get("last_error_at_ns", 0))
+    except (TypeError, ValueError) as error:
+        raise HTTPException(400, "camera status counters must be integers") from error
+    if min(failures, restarts, last_error_at_ns) < 0:
+        raise HTTPException(400, "camera status counters must not be negative")
+    with _lock:
+        _camera["service_seen_monotonic"] = time.monotonic()
+        if not _fresh(float(_camera["last_monotonic"]), CAMERA_MAX_AGE_S):
+            _camera["status"] = status
+        _camera["failures"] = failures
+        _camera["restarts"] = restarts
+        _camera["last_error"] = last_error
+        _camera["last_error_at_ns"] = last_error_at_ns
+        _last_error["camera"] = last_error
+    return Response(status_code=204)
 
 
 @api.get("/healthz")
@@ -617,13 +632,19 @@ def readyz() -> dict[str, Any]:
     return _health_snapshot()
 
 
+def _run_ingest() -> None:
+    uvicorn.run(
+        ingest_api, host=INGEST_BIND_HOST, port=INGEST_PORT, log_level="warning"
+    )
+
+
 def main() -> None:
     _start_unitree()
     for target, name in (
         (_publish_loop, "state-publisher"),
-        (_camera_loop, "camera"),
         (_lidar_loop, "lidar"),
         (_health_publish_loop, "health-publisher"),
+        (_run_ingest, "camera-ingest"),
     ):
         threading.Thread(target=target, name=name, daemon=True).start()
     logger.info(

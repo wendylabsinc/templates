@@ -14,7 +14,7 @@ publishes one stable channel for each concept.
 ```text
 Go2 controller 192.168.123.161
   ├─ unitree_go LowState/SportModeState ─┐
-  ├─ official VideoClient JPEG camera ───┼─ canonical adapter ─ Foxglove WS :8765
+  ├─ WebRTC video → camera watchdog ─────┼─ canonical adapter ─ Foxglove WS :8765
   ├─ MID-360 PointCloud2 ────────────────┤
   └─ UWB (optional) ─────────────────────┘
 
@@ -29,7 +29,8 @@ Canonical channels:
   /go2/health   source age, selected topics, counters, and errors
 ```
 
-The camera and LiDAR readers restart after failures without taking down state
+The camera runs in a separate supervised service and forwards validated JPEGs to
+the bridge over device localhost. Camera or LiDAR failures do not take down state
 publishing. State samples containing partial arrays or non-finite values are
 rejected rather than emitted as apparently healthy data. `/go2/state` is
 published at 20 Hz only while LowState is fresh (500 ms by default).
@@ -53,8 +54,8 @@ the Go2 on an untrusted network. Open two terminals and tunnel both ports throug
 Wendy Cloud:
 
 ```bash
-wendy cloud tunnel 8765:8765 --device <go2>.local
-wendy cloud tunnel 8766:8766 --device <go2>.local
+wendy cloud tunnel 8765:8765 --device <cloud-device-name-or-id>
+wendy cloud tunnel 8766:8766 --device <cloud-device-name-or-id>
 ```
 
 Then:
@@ -90,11 +91,16 @@ Before treating a robot as commissioned, verify all of the following:
 
 ## Camera behavior
 
-The template uses Unitree's official `VideoClient.GetImageSample()` API and
-publishes the returned JPEG bytes without a decode/re-encode step. This avoids the
-unversioned `unitree_webrtc_connect` dependency and avoids competing for the
-phone app's WebRTC session. Capture timestamps are bridge receive times because
-the VideoClient payload does not include a camera timestamp.
+The template pins `unitree-webrtc-connect==2.1.2`, decodes the Go2 WebRTC track,
+rate-limits it to 15 FPS, and forwards JPEGs with a session ID, monotonic frame
+number, and capture timestamp. The bridge rejects malformed, oversized,
+out-of-order, or clock-skewed frames. The camera reconnects after track stalls and
+reports its last error and restart count at `http://<device>:8768/healthz`.
+
+The Go2 permits one WebRTC client. Close the Unitree phone app and stop any other
+WebRTC camera/audio service before commissioning this feed. If the camera service
+cannot obtain the slot, robot state continues and `/go2/health` fails closed with
+a stale camera instead of presenting a frozen frame as healthy.
 
 ## Firmware topic variants
 
@@ -114,6 +120,6 @@ variables only after confirming the robot's graph.
 
 The implementation has unit and local protocol tests, but a specific Go2 must
 still pass the commissioning checks above before this template is treated as
-production-ready. Keep any rollout PR in draft until the ARM64 image build,
-official camera API, exact DDS topics, restart recovery, and 10-minute soak have
-all passed on the target Go2.
+production-ready. Keep any rollout PR in draft until both ARM64 images, WebRTC
+slot behavior, exact DDS topics, restart recovery, and the 10-minute soak have all
+passed on the target Go2.

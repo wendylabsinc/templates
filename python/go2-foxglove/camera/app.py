@@ -13,6 +13,7 @@ from typing import Any
 import cv2
 import httpx
 import uvicorn
+from av import logging as av_logging
 from fastapi import FastAPI, HTTPException, Response
 from unitree_webrtc_connect import UnitreeWebRTCConnection, WebRTCConnectionMethod
 
@@ -21,6 +22,8 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("go2-foxglove-camera")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+av_logging.set_level(av_logging.ERROR)
 
 GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
 BRIDGE_FRAME_URL = os.environ.get("BRIDGE_FRAME_URL", "http://127.0.0.1:8769/frame")

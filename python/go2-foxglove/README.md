@@ -49,22 +49,28 @@ participants to that exact address. Set `GO2_DDS_ADDRESS` in the generated
 Dockerfile only when route-based selection is not correct for a custom topology.
 
 The Foxglove WebSocket and diagnostics bind to the Go2 dev PC's interfaces so
-Wendy's readiness probes and Cloud tunnel can reach them. Do not place the Go2
-on an untrusted network or expose these ports directly to the internet. Open two
-terminals and tunnel both ports through Wendy Cloud:
+Foxglove on the same trusted LAN can reach them. Do not place the Go2 on an
+untrusted network or expose these ports directly to the internet. Connect
+Foxglove to the dev PC's LAN address, and query diagnostics at the same address:
 
 ```bash
-wendy cloud tunnel 8765:8765 --device <cloud-device-name-or-id>
-wendy cloud tunnel 8766:8766 --device <cloud-device-name-or-id>
+ws://<go2-dev-pc-lan-ip>:8765
+curl -fsS http://<go2-dev-pc-lan-ip>:8766/healthz | jq
 ```
 
 Then:
 
 1. Open Foxglove.
 2. Choose **Open connection → Foxglove WebSocket**.
-3. Connect to `ws://127.0.0.1:8765`.
+3. Connect to `ws://<go2-dev-pc-lan-ip>:8765`.
 4. Import `foxglove-layout.json` from the generated project.
-5. Inspect health with `curl -fsS http://127.0.0.1:8766/healthz | jq`.
+5. Inspect `/go2/health` or the HTTP health endpoint above.
+
+Wendy Cloud tunneling works for the HTTP diagnostics endpoint on the test Go2,
+but the Foxglove WebSocket handshake through the tunnel still needs a Wendy
+transport fix or additional verification. Until that gate passes, use the
+trusted-LAN connection above rather than assuming a remote WebSocket tunnel will
+work.
 
 ## Healthy result
 

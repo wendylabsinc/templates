@@ -85,6 +85,36 @@ Always-on voice AI assistant: local [faster-whisper](https://github.com/SYSTRAN/
 
 The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into the Python template directory.
 
+### hermes-agent
+
+On-device app-building agent with Claude Code, Wendy MCP setup, and an in-container BuildKit daemon. It exposes a token-gated HTTPS console for text prompts and browser-transcribed voice prompts, so a WendyOS device can inspect itself, edit projects under `/workspace`, build with `wendy run --yes`, and deploy apps through the local admin socket.
+
+| Target | Language | Framework | Default Port | Directory |
+|--------|----------|-----------|--------------|-----------|
+| WendyOS | Node | Claude Code + BuildKit + built-in HTTPS server | 3090 | `node/hermes-agent/` |
+
+```bash
+wendy init --app-id hermes-agent --target wendyos --language node --template hermes-agent --var HERMES_TOKEN="$(openssl rand -hex 24)"
+```
+
+The image installs Wendy CLI during the build via the public Wendy installer. Entitlements: `admin`, `build`, `network` (host), and persisted `/home/hermes`, `/workspace`, `/state`, and `/var/lib/buildkit`.
+
+### claude
+
+Functionally the same on-device app-building agent as `hermes-agent` — the same token-gated HTTPS console (text + browser voice prompts), Wendy CLI, Wendy MCP setup, and in-container BuildKit, with full device control through the local admin socket. The one difference: the Claude subscription token is baked in at `wendy init` (from `claude setup-token`), so the device never runs the interactive OAuth login that is unreliable in headless / attach sessions.
+
+| Target | Language | Framework | Default Port | Directory |
+|--------|----------|-----------|--------------|-----------|
+| WendyOS | Node | Claude Code + Wendy MCP + BuildKit + built-in HTTPS server | 3091 | `node/claude/` |
+
+```bash
+wendy init --app-id claude --target wendyos --language node --template claude \
+  --var CONSOLE_TOKEN="$(openssl rand -hex 24)" \
+  --var CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat..."   # from `claude setup-token`
+```
+
+The image installs the Wendy CLI during the build via the public Wendy installer. Entitlements: `admin`, `build`, `network` (host), and persisted `/home/claude`, `/workspace`, `/state`, and `/var/lib/buildkit`. Claude Code runs as the unprivileged `claude` user, authenticated by the `CLAUDE_CODE_OAUTH_TOKEN` baked into the image.
+
 ### llm
 
 Local LLM chat app with Open WebUI.

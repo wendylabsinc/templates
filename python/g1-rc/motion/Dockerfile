@@ -72,4 +72,4 @@ ENV G1_NETWORK_INTERFACE={{.NETWORK_INTERFACE}}
 
 EXPOSE 3201
 
-CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3201"]
+CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3201", "--no-access-log"]

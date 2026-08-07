@@ -14,9 +14,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+import time
+from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -30,19 +34,98 @@ logging.basicConfig(
 logger = logging.getLogger("g1-motion")
 
 
+class RecentEventsHandler(logging.Handler):
+    """Bounded, UI-safe copy of this service's recent log events."""
+
+    def __init__(self, limit: int = 80) -> None:
+        super().__init__(logging.INFO)
+        self.events: deque[dict[str, str]] = deque(maxlen=limit)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.events.append({
+                "time": datetime.fromtimestamp(
+                    record.created, timezone.utc
+                ).isoformat(timespec="seconds"),
+                "level": record.levelname.lower(),
+                "service": "motion",
+                "message": record.getMessage(),
+            })
+        except Exception:
+            self.handleError(record)
+
+    def snapshot(self) -> list[dict[str, str]]:
+        return list(self.events)
+
+
+recent_events = RecentEventsHandler()
+logging.getLogger("g1-motion").addHandler(recent_events)
+
 controller = G1Controller()
+started_at = time.monotonic()
+startup: dict[str, Any] = {
+    "status": "starting",
+    "error": None,
+    "hint": "Waiting for the Unitree SDK and DDS connection.",
+}
+
+
+def _startup_hint(exc: Exception) -> str:
+    message = str(exc).lower()
+    if "192.168.123" in message or "network_interface" in message:
+        return (
+            "PC2 cannot see the G1 robot bus. Check that the robot is fully "
+            "powered on and that NETWORK_INTERFACE names the interface with "
+            "a 192.168.123.x address."
+        )
+    if isinstance(exc, (ImportError, ModuleNotFoundError)):
+        return (
+            "The Unitree Python SDK did not load. Rebuild the motion image and "
+            "inspect the first import error in the motion service logs."
+        )
+    return (
+        "The Unitree motion connection did not start. Check the motion service "
+        "logs for the first traceback and verify the G1 is reachable on its "
+        "192.168.123.x robot network."
+    )
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    controller.connect()
-    await controller.start_fsm_monitor()
+    monitor_started = False
+    startup.update(status="connecting", error=None)
+    logger.info(
+        "startup stage=connecting network_setting=%s",
+        controller._network_interface_setting,
+    )
+    try:
+        controller.connect()
+        await controller.start_fsm_monitor()
+        monitor_started = True
+    except Exception as exc:
+        startup.update(
+            status="failed",
+            error=f"{type(exc).__name__}: {exc}",
+            hint=_startup_hint(exc),
+        )
+        logger.exception(
+            "startup stage=failed error=%s hint=%s",
+            startup["error"],
+            startup["hint"],
+        )
+    else:
+        startup.update(status="ready", error=None, hint=None)
+        logger.info(
+            "startup stage=ready network_interface=%s",
+            controller._network_interface,
+        )
 
     loop = asyncio.get_running_loop()
 
     def _stop_on_signal():
         logger.info("Signal received; stopping G1")
-        asyncio.create_task(controller.stop())
+        if controller._loco_client is not None:
+            asyncio.create_task(controller.stop())
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
@@ -53,14 +136,36 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
-        await controller.stop_fsm_monitor()
-        try:
-            await controller.stop()
-        except Exception:
-            logger.exception("Error stopping G1 during shutdown")
+        if monitor_started:
+            await controller.stop_fsm_monitor()
+        if controller._loco_client is not None:
+            try:
+                await controller.stop()
+            except Exception:
+                logger.exception("Error stopping G1 during shutdown")
 
 
 app = FastAPI(title="g1-motion", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(
+        "request_failed method=%s path=%s error=%s: %s",
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+        exc,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "hint": "Open Diagnostics in the G1 UI, then inspect the motion service logs.",
+        },
+        status_code=500,
+    )
 
 
 class VelocityBody(BaseModel):
@@ -95,21 +200,72 @@ class ShakeBody(BaseModel):
 def _require_not_estopped() -> None:
     """Gate for every motion-causing endpoint. /stop and /damp stay
     reachable while latched — they make the robot safer, not less."""
+    _require_ready()
     if controller.estop_latched():
         raise HTTPException(
             409, "E-stop latched — POST /estop/clear first"
         )
 
 
+def _require_ready() -> None:
+    if startup["status"] != "ready" or controller._loco_client is None:
+        raise HTTPException(
+            503,
+            detail={
+                "code": "motion_not_ready",
+                "message": startup["error"] or "Unitree motion is still starting.",
+                "hint": startup["hint"],
+            },
+        )
+
+
 @app.get("/health")
 async def health():
-    if controller._loco_client is None:
+    if startup["status"] != "ready" or controller._loco_client is None:
         return JSONResponse(
-            {"ok": False, "reason": "loco_client_not_ready"}, status_code=503
+            {
+                "ok": False,
+                "reason": "motion_startup_failed"
+                if startup["status"] == "failed"
+                else "loco_client_not_ready",
+                "error": startup["error"],
+                "hint": startup["hint"],
+            },
+            status_code=503,
         )
     if controller.estop_latched():
         return {"ok": True, "estop_latched": True}
     return {"ok": True}
+
+
+@app.get("/diagnostics")
+async def diagnostics() -> dict:
+    state = controller.latest_state()
+    fsm = await controller.fsm_status()
+    checks = {
+        "sdk_connected": controller._loco_client is not None,
+        "dds_interface": controller._network_interface,
+        "lowstate_received": "tick" in state,
+        "battery_received": "battery_soc" in state,
+        "fsm_fresh": bool(fsm.get("fsm_fresh", False)),
+    }
+    return {
+        "service": "motion",
+        "status": startup["status"],
+        "ok": startup["status"] == "ready" and checks["sdk_connected"],
+        "uptime_seconds": round(time.monotonic() - started_at, 1),
+        "error": startup["error"],
+        "hint": startup["hint"],
+        "checks": checks,
+        "config": {
+            "network_setting": controller._network_interface_setting,
+            "network_interface": controller._network_interface,
+            "lowstate_topic": "rt/lowstate",
+            "battery_topic": "rt/lf/bmsstate",
+        },
+        "fsm": fsm,
+        "events": recent_events.snapshot(),
+    }
 
 
 @app.get("/locomotion")
@@ -146,6 +302,7 @@ async def move(body: MoveBody) -> dict:
 
 @app.post("/stop")
 async def stop() -> dict:
+    _require_ready()
     return {"result": await controller.stop()}
 
 
@@ -208,6 +365,7 @@ async def lie() -> dict:
 async def damp() -> dict:
     """Damping mode — joints go compliant. Safest soft-stop. NOT gated
     by the e-stop latch (it makes the robot safer, not less)."""
+    _require_ready()
     return {"result": await controller.damp()}
 
 
@@ -215,11 +373,13 @@ async def damp() -> dict:
 async def estop() -> dict:
     """Latching soft e-stop: halt walking, release arms, refuse all
     motion until /estop/clear."""
+    _require_ready()
     return {"result": await controller.estop()}
 
 
 @app.post("/estop/clear")
 async def estop_clear() -> dict:
+    _require_ready()
     return {"result": await controller.clear_estop()}
 
 

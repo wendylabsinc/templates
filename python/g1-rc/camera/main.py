@@ -35,6 +35,9 @@ import os
 import queue
 import threading
 import time
+from collections import deque
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import cv2
 from fastapi import FastAPI
@@ -57,6 +60,32 @@ logging.basicConfig(
 log = logging.getLogger("g1-camera")
 
 
+class RecentEventsHandler(logging.Handler):
+    def __init__(self, limit: int = 80) -> None:
+        super().__init__(logging.INFO)
+        self.events: deque[dict[str, str]] = deque(maxlen=limit)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.events.append({
+                "time": datetime.fromtimestamp(
+                    record.created, timezone.utc
+                ).isoformat(timespec="seconds"),
+                "level": record.levelname.lower(),
+                "service": "camera",
+                "message": record.getMessage(),
+            })
+        except Exception:
+            self.handleError(record)
+
+    def snapshot(self) -> list[dict[str, str]]:
+        return list(self.events)
+
+
+recent_events = RecentEventsHandler()
+logging.getLogger("g1-camera").addHandler(recent_events)
+
+
 class CameraState:
     """Shared state between the capture thread and the FastAPI server.
 
@@ -73,6 +102,40 @@ class CameraState:
         self.fps = 0.0
         self._fps_window_t = time.monotonic()
         self._fps_window_count = 0
+        self.started_at = time.monotonic()
+        self.open_attempts = 0
+        self.reconnects = 0
+        self.consecutive_failures = 0
+        self.error_code: str | None = None
+        self.error: str | None = None
+        self.hint: str | None = None
+        self.error_at: float | None = None
+        self._last_error_log_at = 0.0
+        self._last_open_log_at = 0.0
+
+    def set_error(self, code: str, message: str, hint: str) -> None:
+        changed = code != self.error_code or message != self.error
+        self.error_code = code
+        self.error = message
+        self.hint = hint
+        self.error_at = time.monotonic()
+        now = time.monotonic()
+        if changed or now - self._last_error_log_at >= 30.0:
+            log.warning(
+                "camera_error code=%s message=%s hint=%s",
+                code,
+                message,
+                hint,
+            )
+            self._last_error_log_at = now
+
+    def clear_error(self) -> None:
+        if self.error_code is not None:
+            log.info("camera_recovered previous_error=%s", self.error_code)
+        self.error_code = None
+        self.error = None
+        self.hint = None
+        self.error_at = None
 
     def push(self, img) -> None:
         try:
@@ -105,7 +168,10 @@ def _coerce_source(raw: str):
 
 def _open_capture():
     src = _coerce_source(CAMERA_SOURCE)
-    log.info("Opening VideoCapture source=%r", src)
+    now = time.monotonic()
+    if state.open_attempts == 1 or now - state._last_open_log_at >= 30.0:
+        log.info("Opening VideoCapture source=%r attempt=%d", src, state.open_attempts)
+        state._last_open_log_at = now
     cap = cv2.VideoCapture(src)
     if CAPTURE_WIDTH > 0:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_WIDTH)
@@ -125,11 +191,25 @@ def _capture_loop() -> None:
     handle clears any latched error state in the backend.
     """
     while True:
-        cap = _open_capture()
+        state.open_attempts += 1
+        try:
+            cap = _open_capture()
+        except Exception as exc:
+            state.set_error(
+                "camera_open_exception",
+                f"{type(exc).__name__}: {exc}",
+                "Check CAMERA_SOURCE and run `wendy device hardware list` "
+                "to confirm the camera is exposed to the app.",
+            )
+            log.exception("VideoCapture raised while opening source=%r", CAMERA_SOURCE)
+            time.sleep(RECONNECT_BACKOFF_S)
+            continue
         if not cap.isOpened():
-            log.warning(
-                "VideoCapture failed to open %r; retrying in %.1fs",
-                CAMERA_SOURCE, RECONNECT_BACKOFF_S,
+            state.set_error(
+                "camera_open_failed",
+                f"OpenCV could not open CAMERA_SOURCE={CAMERA_SOURCE!r}",
+                "The G1 D435i color node is commonly /dev/video4, but it can "
+                "change. Check the device camera list and try the color node.",
             )
             time.sleep(RECONNECT_BACKOFF_S)
             continue
@@ -142,38 +222,56 @@ def _capture_loop() -> None:
         )
 
         consecutive_failures = 0
+        state.clear_error()
         while True:
             ok, frame = cap.read()
             if not ok or frame is None:
                 consecutive_failures += 1
+                state.consecutive_failures = consecutive_failures
                 if consecutive_failures >= 30:
-                    log.warning(
-                        "30 consecutive read failures; reopening capture",
+                    state.set_error(
+                        "camera_read_failed",
+                        "Camera opened but returned 30 empty frames.",
+                        "Another app may own the camera, or CAMERA_SOURCE may "
+                        "point at an IR/depth node. Stop other camera apps and "
+                        "select the D435i color node.",
                     )
+                    state.reconnects += 1
                     break
                 time.sleep(0.05)
                 continue
             consecutive_failures = 0
+            state.consecutive_failures = 0
             if not state.first_frame_logged:
                 state.first_frame_logged = True
                 log.info(
                     "First frame: %dx%d", frame.shape[1], frame.shape[0]
                 )
             state.push(frame)
+            state.clear_error()
 
         try:
             cap.release()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.debug("VideoCapture release failed: %s", exc)
         time.sleep(RECONNECT_BACKOFF_S)
 
 
-app = FastAPI(title="g1-camera", version="0.1.0")
-
-
-@app.on_event("startup")
-async def _startup() -> None:
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    log.info(
+        "startup source=%r requested=%sx%s@%s jpeg_quality=%d",
+        CAMERA_SOURCE,
+        CAPTURE_WIDTH or "auto",
+        CAPTURE_HEIGHT or "auto",
+        CAPTURE_FPS or "auto",
+        JPEG_QUALITY,
+    )
     threading.Thread(target=_capture_loop, name="g1-cap", daemon=True).start()
+    yield
+
+
+app = FastAPI(title="g1-camera", version="0.1.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -181,12 +279,59 @@ async def health() -> JSONResponse:
     healthy = state.first_frame_logged and (
         time.monotonic() - state.last_frame_t < HEALTH_STALE_S
     )
-    return JSONResponse({
-        "status": "ok" if healthy else "starting",
-        "frames": state.frame_count,
-        "fps": round(state.fps, 1),
-        "source": CAMERA_SOURCE,
-    })
+    status = "ok" if healthy else "error" if state.error else "starting"
+    return JSONResponse(
+        {
+            "ok": healthy,
+            "status": status,
+            "frames": state.frame_count,
+            "fps": round(state.fps, 1),
+            "source": CAMERA_SOURCE,
+            "error": state.error,
+            "error_code": state.error_code,
+            "hint": state.hint,
+        },
+        status_code=200 if healthy else 503,
+    )
+
+
+@app.get("/diagnostics")
+async def diagnostics() -> dict:
+    age = (
+        round(time.monotonic() - state.last_frame_t, 1)
+        if state.last_frame_t
+        else None
+    )
+    healthy = state.first_frame_logged and age is not None and age < HEALTH_STALE_S
+    return {
+        "service": "camera",
+        "status": "ready" if healthy else "failed" if state.error else "starting",
+        "ok": healthy,
+        "uptime_seconds": round(time.monotonic() - state.started_at, 1),
+        "error": state.error,
+        "error_code": state.error_code,
+        "hint": state.hint,
+        "checks": {
+            "capture_opened": state.first_frame_logged,
+            "frame_fresh": healthy,
+            "last_frame_age_seconds": age,
+        },
+        "metrics": {
+            "frames": state.frame_count,
+            "fps": round(state.fps, 1),
+            "open_attempts": state.open_attempts,
+            "reconnects": state.reconnects,
+            "consecutive_failures": state.consecutive_failures,
+        },
+        "config": {
+            "source": CAMERA_SOURCE,
+            "width": CAPTURE_WIDTH or "auto",
+            "height": CAPTURE_HEIGHT or "auto",
+            "fps": CAPTURE_FPS or "auto",
+            "jpeg_quality": JPEG_QUALITY,
+        },
+        "events": recent_events.snapshot(),
+    }
 
 
 def _mjpeg_generator():
@@ -203,6 +348,11 @@ def _mjpeg_generator():
             continue
         ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         if not ok:
+            state.set_error(
+                "jpeg_encode_failed",
+                "OpenCV could not encode the latest camera frame as JPEG.",
+                "Inspect camera service logs for the OpenCV encoder error.",
+            )
             continue
         jpg = buf.tobytes()
         yield (
@@ -242,4 +392,10 @@ async def bark() -> JSONResponse:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="info")
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=PORT,
+        log_level="info",
+        access_log=False,
+    )

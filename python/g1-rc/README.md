@@ -30,6 +30,37 @@ wendy run --device <g1-hostname>
 Then open `http://<g1-hostname>:{{.RC_PORT}}`. (The postStart hook tries to
 open it for you.)
 
+## If something is not working
+
+Open **Diagnostics** in the top status bar. The panel checks the RC proxy,
+Unitree SDK connection, DDS interface, low-state and battery topics, FSM
+readback, camera device, and frame freshness. A failed check includes the
+underlying error and a concrete next step. Browser request failures also stay
+visible in the panel instead of disappearing silently.
+
+For the complete service traceback, run:
+
+```bash
+wendy device logs {{.APP_ID}} --device <g1-hostname> --tail 200
+```
+
+To narrow that output to one container, add `--service motion`,
+`--service camera`, or `--service rc`. Start with the first error in the
+failing service; later connection errors are often just a consequence of it.
+
+Common first-run failures:
+
+| UI check | Usually means | What to check |
+|---|---|---|
+| `motion · failed` | PC2 cannot reach the G1 robot bus or the Unitree SDK did not load | The robot is fully powered on; `NETWORK_INTERFACE` has a `192.168.123.x` address; the first motion traceback |
+| `lowstate_received: false` | DDS started but no G1 state samples arrived | Robot power, the robot-bus interface, and competing DDS configuration |
+| `fsm_fresh: false` | Unitree's locomotion service is not answering | Put the G1 in its normal powered-on control mode and inspect the motion events |
+| `camera · failed` | The selected V4L2 node is missing, busy, or not the color stream | Stop other camera apps and try the D435i color node, commonly `/dev/video4` |
+
+The motion service deliberately keeps its diagnostics API alive when SDK/DDS
+startup fails. Motion endpoints still return `503` and the browser stays
+fail-closed until the connection is healthy.
+
 ## Driving
 
 Locomotion uses the G1's **native stand-up FSM** — the sequence verified on

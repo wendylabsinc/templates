@@ -873,9 +873,9 @@
           }`;
         }
         const s = await getJSON("/api/state");
-        // go2-motion returns {ok: bool, state: {...}}; battery SOC is
-        // typically state.bms.soc in percent. Be defensive — the
-        // schema can vary by firmware.
+        // G1 battery SOC comes from the motion service's dedicated
+        // rt/lf/bmsstate subscription. Keep older state shapes as
+        // fallbacks so customized projects do not break.
         const st = (s && s.state) || {};
         const soc =
           (st.bms && (st.bms.soc ?? st.bms.SOC)) ??

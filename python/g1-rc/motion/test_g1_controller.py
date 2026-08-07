@@ -1,8 +1,9 @@
 import unittest
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-from g1_controller import G1Controller, _choose_network_interface
+from g1_controller import BMS_STATE_TOPIC, G1Controller, _choose_network_interface
 
 
 class ChooseNetworkInterfaceTests(unittest.TestCase):
@@ -67,6 +68,41 @@ class VelocitySafetyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("stale", result)
         controller._call_sdk.assert_not_awaited()
+
+
+class TelemetryTests(unittest.TestCase):
+    def test_uses_g1_low_frequency_bms_topic(self):
+        self.assertEqual(BMS_STATE_TOPIC, "rt/lf/bmsstate")
+
+    def test_battery_comes_from_bms_state(self):
+        controller = G1Controller()
+
+        controller._on_bmsstate(SimpleNamespace(soc=22))
+
+        self.assertEqual(controller.latest_state()["battery_soc"], 22)
+
+    def test_lowstate_update_preserves_battery_sample(self):
+        controller = G1Controller()
+        controller._on_bmsstate(SimpleNamespace(soc=22))
+
+        controller._on_lowstate(
+            SimpleNamespace(
+                imu_state=SimpleNamespace(rpy=[0.1, 0.2, 0.3]),
+                foot_force=[],
+                tick=123,
+            )
+        )
+
+        state = controller.latest_state()
+        self.assertEqual(state["battery_soc"], 22)
+        self.assertEqual(state["tick"], 123)
+
+    def test_invalid_battery_sample_is_ignored(self):
+        controller = G1Controller()
+
+        controller._on_bmsstate(SimpleNamespace(soc=101))
+
+        self.assertNotIn("battery_soc", controller.latest_state())
 
 
 if __name__ == "__main__":

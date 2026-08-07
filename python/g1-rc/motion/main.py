@@ -36,6 +36,7 @@ controller = G1Controller()
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     controller.connect()
+    await controller.start_fsm_monitor()
 
     loop = asyncio.get_running_loop()
 
@@ -52,6 +53,7 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        await controller.stop_fsm_monitor()
         try:
             await controller.stop()
         except Exception:

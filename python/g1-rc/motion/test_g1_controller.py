@@ -1,4 +1,5 @@
 import unittest
+import time
 from unittest.mock import AsyncMock
 
 from g1_controller import G1Controller, _choose_network_interface
@@ -39,6 +40,32 @@ class VelocitySafetyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("ignored", result)
         self.assertIn("FSM unavailable", result)
+        controller._call_sdk.assert_not_awaited()
+
+    async def test_fresh_running_readback_allows_move(self):
+        controller = G1Controller()
+        controller._loco_client = object()
+        controller._latest_fsm_id = 801
+        controller._latest_fsm_at = time.monotonic()
+        controller._latest_fsm_error = None
+        controller._call_sdk = AsyncMock()
+        controller._arm_watchdog = AsyncMock()
+
+        result = await controller.set_velocity(vx=0.2)
+
+        self.assertIn("velocity vx=0.20", result)
+        controller._call_sdk.assert_awaited_once_with("Move", 0.2, 0.0, 0.0)
+
+    async def test_stale_running_readback_never_calls_move(self):
+        controller = G1Controller()
+        controller._loco_client = object()
+        controller._latest_fsm_id = 801
+        controller._latest_fsm_at = 0.0
+        controller._call_sdk = AsyncMock()
+
+        result = await controller.set_velocity(vx=0.2)
+
+        self.assertIn("stale", result)
         controller._call_sdk.assert_not_awaited()
 
 

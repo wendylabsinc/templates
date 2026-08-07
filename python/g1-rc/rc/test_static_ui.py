@@ -14,6 +14,10 @@ class VelocityLoopSafetyTests(unittest.TestCase):
         self.assertIn("let velocityInFlight = false", self.html)
         self.assertIn("if (!readyToWalk || velocityInFlight) return", self.html)
 
+    def test_status_requests_are_serialized(self):
+        self.assertIn("let statusInFlight = false", self.html)
+        self.assertIn("if (statusInFlight) return", self.html)
+
 
 if __name__ == "__main__":
     unittest.main()

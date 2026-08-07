@@ -815,8 +815,12 @@
       const batteryLabel = document.getElementById("battery-label");
       const fsmDot = document.getElementById("dot-fsm");
       const fsmLabel = document.getElementById("fsm-label");
+      let statusInFlight = false;
 
       async function pollStatus() {
+        if (statusInFlight) return;
+        statusInFlight = true;
+        try {
         const h = await getJSON("/api/health");
         if (h && h.motion && h.motion.ok) {
           motionDot.className = "dot ok";
@@ -861,6 +865,9 @@
         } else {
           fsmDot.className = "dot bad";
           fsmLabel.textContent = "fsm: —";
+        }
+        } finally {
+          statusInFlight = false;
         }
       }
       pollStatus();

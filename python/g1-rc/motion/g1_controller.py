@@ -21,6 +21,7 @@ is preserved.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import fcntl
 import ipaddress
 import logging
@@ -84,7 +85,7 @@ VELOCITY_WATCHDOG_S = 1.0
 # Same rationale as go2-motion: every LocoClient call goes through a
 # thread + wait_for so a stuck DDS write can't deadlock the asyncio
 # loop. Healthy writes return in a few ms.
-SDK_CALL_TIMEOUT_S = float(os.environ.get("MOTION_SDK_CALL_TIMEOUT_S", "0.5"))
+SDK_CALL_TIMEOUT_S = float(os.environ.get("MOTION_SDK_CALL_TIMEOUT_S", "0.75"))
 # Posture skills (StandUp / Squat / SitDown / Lie2StandUp / WaveHand /
 # ShakeHand) trigger an internal FSM transition and routinely take
 # 1-5 s. Use a longer timeout.
@@ -102,6 +103,9 @@ DAMP_FSM = int(os.environ.get("G1_LOCO_DAMP_FSM_ID", "1"))
 LOCK_STAND_FSM = int(os.environ.get("G1_LOCO_LOCK_STAND_FSM_ID", "4"))
 RUNNING_FSM = int(os.environ.get("G1_LOCO_RUNNING_FSM_ID", "801"))
 FSM_WAIT_S = float(os.environ.get("G1_LOCO_FSM_WAIT_S", "12.0"))
+FSM_RPC_TIMEOUT_S = float(os.environ.get("G1_LOCO_FSM_RPC_TIMEOUT_S", "0.5"))
+FSM_POLL_INTERVAL_S = float(os.environ.get("G1_LOCO_FSM_POLL_INTERVAL_S", "0.25"))
+FSM_MAX_AGE_S = float(os.environ.get("G1_LOCO_FSM_MAX_AGE_S", "2.0"))
 
 
 def _clamp(value: float, limit: float) -> float:
@@ -152,7 +156,12 @@ class G1Controller:
         self._estop = threading.Event()
         self._lowstate_sub = None
         self._move_lock = asyncio.Lock()
+        self._rpc_lock = asyncio.Lock()
         self._watchdog: Optional[asyncio.Task] = None
+        self._fsm_monitor_task: Optional[asyncio.Task] = None
+        self._latest_fsm_id: Optional[int] = None
+        self._latest_fsm_at = 0.0
+        self._latest_fsm_error: Optional[str] = "FSM readback has not started"
         self._state_lock = threading.Lock()
         self._latest_state: dict[str, Any] = {}
         # Arm controller is lazily imported in connect() because it
@@ -178,7 +187,10 @@ class G1Controller:
         ChannelFactoryInitialize(0, self._network_interface)
 
         client = LocoClient()
-        client.SetTimeout(3.0)
+        # Failed Unitree RPCs return code 3104 only after this timeout.
+        # Keep FSM monitoring responsive; long-running posture transitions
+        # are implemented as short SetFsmId calls plus explicit polling.
+        client.SetTimeout(FSM_RPC_TIMEOUT_S)
         client.Init()
         self._loco_client = client
         logger.info("LocoClient ready")
@@ -244,6 +256,41 @@ class G1Controller:
         with self._state_lock:
             return dict(self._latest_state)
 
+    def _fresh_fsm(self) -> tuple[Optional[int], float, Optional[str]]:
+        age = time.monotonic() - self._latest_fsm_at
+        if self._latest_fsm_id is None or age > FSM_MAX_AGE_S:
+            return None, age, self._latest_fsm_error or "FSM readback is stale"
+        return self._latest_fsm_id, age, self._latest_fsm_error
+
+    async def _fsm_monitor(self) -> None:
+        while True:
+            if self._move_lock.locked():
+                await asyncio.sleep(FSM_POLL_INTERVAL_S)
+                continue
+            try:
+                async with self._rpc_lock:
+                    fsm = await asyncio.to_thread(self._get_fsm_sync)
+                self._latest_fsm_id = fsm
+                self._latest_fsm_at = time.monotonic()
+                self._latest_fsm_error = None
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._latest_fsm_error = str(exc)
+            await asyncio.sleep(FSM_POLL_INTERVAL_S)
+
+    async def start_fsm_monitor(self) -> None:
+        if self._fsm_monitor_task is None or self._fsm_monitor_task.done():
+            self._fsm_monitor_task = asyncio.create_task(self._fsm_monitor())
+
+    async def stop_fsm_monitor(self) -> None:
+        if self._fsm_monitor_task is None:
+            return
+        self._fsm_monitor_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._fsm_monitor_task
+        self._fsm_monitor_task = None
+
     def _require_client(self):
         if self._loco_client is None:
             raise RuntimeError("G1Controller.connect() was not called")
@@ -258,10 +305,11 @@ class G1Controller:
         client = self._require_client()
         method = getattr(client, method_name)
         try:
-            await asyncio.wait_for(
-                asyncio.to_thread(method, *args),
-                timeout=timeout,
-            )
+            async with self._rpc_lock:
+                await asyncio.wait_for(
+                    asyncio.to_thread(method, *args),
+                    timeout=timeout,
+                )
         except asyncio.TimeoutError:
             logger.warning(
                 "LocoClient.%s%s timed out after %.2fs (SDK stuck — "
@@ -314,14 +362,15 @@ class G1Controller:
         vx = _clamp(vx, MAX_VX)
         vy = _clamp(vy, MAX_VY)
         vyaw = _clamp(vyaw, MAX_VYAW)
-        # Walking only actuates in RUNNING — surface that instead of
-        # silently acking commands the firmware will ignore. The extra
-        # GetFsmId per tick is proven at 10 Hz on hardware (g1-upper-
-        # control's pilot does exactly this).
-        try:
-            fsm = await asyncio.to_thread(self._get_fsm_sync)
-        except Exception as exc:
-            return f"ignored: FSM unavailable ({exc})"
+        # Walking only actuates while the background monitor has a recent
+        # RUNNING readback. Never put an FSM RPC in this 10 Hz path: a
+        # Unitree 3104 timeout can take seconds and otherwise stacks calls.
+        fsm, age, fsm_error = self._fresh_fsm()
+        if fsm is None:
+            return (
+                f"ignored: FSM unavailable or stale (age={age:.1f}s; "
+                f"{fsm_error or 'no readback'})"
+            )
         if fsm != RUNNING_FSM:
             return (f"ignored: walking needs RUNNING({RUNNING_FSM}), "
                     f"current FSM is {fsm} — press ready-to-walk first")
@@ -425,6 +474,10 @@ class G1Controller:
                 client.SetFsmId(LOCK_STAND_FSM)
                 fsm = self._wait_fsm_sync(LOCK_STAND_FSM)
             ok = fsm == LOCK_STAND_FSM
+            if ok:
+                self._latest_fsm_id = fsm
+                self._latest_fsm_at = time.monotonic()
+                self._latest_fsm_error = None
             return {"ok": ok, "fsm_id": fsm, "standing": ok}
         except Exception as exc:
             try:
@@ -450,6 +503,10 @@ class G1Controller:
                 client.SetFsmId(RUNNING_FSM)  # one retry from stable LOCK STAND
                 fsm = self._wait_fsm_sync(RUNNING_FSM)
             ok = fsm == RUNNING_FSM
+            if ok:
+                self._latest_fsm_id = fsm
+                self._latest_fsm_at = time.monotonic()
+                self._latest_fsm_error = None
             return {"ok": ok, "fsm_id": fsm, "ready_to_walk": ok}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -458,30 +515,33 @@ class G1Controller:
         """Stand via the native FSM: DAMP → LOCK STAND."""
         self._cancel_watchdog()
         async with self._move_lock:
-            return await asyncio.to_thread(self._stand_fsm_sync, force)
+            async with self._rpc_lock:
+                return await asyncio.to_thread(self._stand_fsm_sync, force)
 
     async def enter_running(self) -> dict[str, Any]:
         """LOCK STAND → RUNNING: the walk-ready policy. Velocity
         commands only actuate in this state."""
         self._cancel_watchdog()
         async with self._move_lock:
-            return await asyncio.to_thread(self._enter_running_sync)
+            async with self._rpc_lock:
+                return await asyncio.to_thread(self._enter_running_sync)
 
     async def fsm_status(self) -> dict[str, Any]:
         if self._loco_client is None:
             return {"connected": False, "estop_latched": self._estop.is_set()}
-        try:
-            fsm = await asyncio.to_thread(self._get_fsm_sync)
-            return {
-                "connected": True,
-                "fsm_id": fsm,
-                "standing": fsm in (LOCK_STAND_FSM, RUNNING_FSM),
-                "ready_to_walk": fsm == RUNNING_FSM,
-                "estop_latched": self._estop.is_set(),
-            }
-        except Exception as exc:
-            return {"connected": True, "error": str(exc),
-                    "estop_latched": self._estop.is_set()}
+        fsm, age, error = self._fresh_fsm()
+        status = {
+            "connected": True,
+            "fsm_id": fsm,
+            "fsm_age_seconds": round(age, 2),
+            "fsm_fresh": fsm is not None,
+            "standing": fsm in (LOCK_STAND_FSM, RUNNING_FSM),
+            "ready_to_walk": fsm == RUNNING_FSM,
+            "estop_latched": self._estop.is_set(),
+        }
+        if fsm is None and error:
+            status["error"] = error
+        return status
 
     # -- e-stop (latching) -------------------------------------------------------
 
@@ -566,7 +626,8 @@ class G1Controller:
         responsible for confirming crane support."""
         self._cancel_watchdog()
         async with self._move_lock:
-            return await asyncio.to_thread(self._damp_sync)
+            async with self._rpc_lock:
+                return await asyncio.to_thread(self._damp_sync)
 
     # -- hand gestures (LocoClient arms; NOT Dex3 fingers) ----------------------
 

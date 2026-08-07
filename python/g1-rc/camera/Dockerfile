@@ -30,7 +30,7 @@ ENV JPEG_QUALITY=80
 # /dev/video* nodes (depth, IR1, IR2, colour, motion, …). On the
 # G1's D435i the colour stream is typically `/dev/video4`. If `4`
 # doesn't decode, try the other indices listed by
-# `wendy cloud device camera --device <host> list`.
+# `wendy device camera list --device <host>`.
 #
 #   - `4` (typical)                   → likely RealSense colour node
 #   - `0` / `1` / `2` / `3` / `5`     → other RealSense streams (depth/IR/…)

@@ -84,5 +84,5 @@ unsure.
 | Variable | Default | Meaning |
 |---|---|---|
 | `RC_PORT` | 3500 | Teleop UI port |
-| `NETWORK_INTERFACE` | `eth0` | NIC with the robot's `192.168.123.0/24` address (DDS binds here) |
+| `NETWORK_INTERFACE` | `auto` | Auto-detects the NIC with the robot's `192.168.123.0/24` address. Set the interface name only if detection fails. |
 | `CAMERA_SOURCE` | `4` | V4L2 index, `/dev/videoN`, `rtsp://`/`http://` URL, or GStreamer pipeline ending in `appsink` |

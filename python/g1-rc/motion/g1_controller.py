@@ -21,13 +21,58 @@ is preserved.
 from __future__ import annotations
 
 import asyncio
+import fcntl
+import ipaddress
 import logging
 import os
+import socket
+import struct
 import threading
 import time
 from typing import Any, Optional
 
 logger = logging.getLogger("g1-motion")
+
+
+ROBOT_NETWORK = ipaddress.ip_network("192.168.123.0/24")
+SIOCGIFADDR = 0x8915
+
+
+def _interface_ipv4_addresses() -> dict[str, str]:
+    """Return the host-network interfaces that currently have IPv4 addresses."""
+    addresses: dict[str, str] = {}
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        for _, name in socket.if_nameindex():
+            try:
+                request = struct.pack("256s", name.encode("utf-8")[:15])
+                response = fcntl.ioctl(sock.fileno(), SIOCGIFADDR, request)
+            except OSError:
+                continue
+            addresses[name] = socket.inet_ntoa(response[20:24])
+    return addresses
+
+
+def _choose_network_interface(
+    configured: Optional[str], addresses: dict[str, str]
+) -> str:
+    """Resolve ``auto`` to the NIC attached to the G1's robot bus."""
+    configured = (configured or "auto").strip()
+    if configured.lower() != "auto":
+        return configured
+
+    for name, raw_address in addresses.items():
+        try:
+            if ipaddress.ip_address(raw_address) in ROBOT_NETWORK:
+                return name
+        except ValueError:
+            continue
+
+    visible = ", ".join(f"{name}={addr}" for name, addr in addresses.items())
+    raise RuntimeError(
+        "NETWORK_INTERFACE=auto could not find an interface on "
+        f"{ROBOT_NETWORK}. Visible IPv4 interfaces: {visible or 'none'}. "
+        "Set NETWORK_INTERFACE to the G1 robot-bus interface explicitly."
+    )
 
 
 MAX_VX = 0.6      # m/s
@@ -98,9 +143,10 @@ def _import_loco_client():
 
 class G1Controller:
     def __init__(self, network_interface: Optional[str] = None) -> None:
-        self._network_interface = network_interface or os.environ.get(
-            "G1_NETWORK_INTERFACE", "eth0"
+        self._network_interface_setting = network_interface or os.environ.get(
+            "G1_NETWORK_INTERFACE", "auto"
         )
+        self._network_interface: Optional[str] = None
         self._loco_client = None
         self._switcher = None
         self._estop = threading.Event()
@@ -124,6 +170,10 @@ class G1Controller:
         # and Cyclone silently drops every sample.
         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
 
+        self._network_interface = _choose_network_interface(
+            self._network_interface_setting,
+            _interface_ipv4_addresses(),
+        )
         logger.info("Initializing DDS on interface %s", self._network_interface)
         ChannelFactoryInitialize(0, self._network_interface)
 

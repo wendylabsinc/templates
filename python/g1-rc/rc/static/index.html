@@ -824,6 +824,7 @@
         const st = (s && s.state) || {};
         const soc =
           (st.bms && (st.bms.soc ?? st.bms.SOC)) ??
+          st.battery_soc ??
           st.battery ??
           st.soc ??
           null;

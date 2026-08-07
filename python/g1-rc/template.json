@@ -19,9 +19,9 @@
         },
         {
             "name": "NETWORK_INTERFACE",
-            "description": "NIC on the deploy host that has the 192.168.123.0/24 address. On the G1's onboard computer this is normally 'eth0'.",
+            "description": "NIC on the deploy host that has the G1 robot-bus address (192.168.123.x). Leave this as 'auto' unless detection fails.",
             "type": "string",
-            "default": "eth0",
+            "default": "auto",
             "prompt": "CycloneDDS / SDK network interface"
         },
         {

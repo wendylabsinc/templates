@@ -13,9 +13,9 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="g1-RC" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="theme-color" content="#080b0a" />
     <meta name="format-detection" content="telephone=no" />
-    <title>g1-RC</title>
+    <title>Wendy · G1 Control</title>
     <style>
       :root {
         --bg: #0b0d10;
@@ -372,76 +372,118 @@
         .btn { padding: 9px 11px; font-size: 12px; }
       }
     </style>
+    <link rel="stylesheet" href="/static/wendy.css" />
   </head>
   <body>
     <div id="app">
-      <img id="camera" alt="" />
-      <div id="camera-fallback">
-        camera offline — check CAMERA_UPSTREAM_URL on the rc service
-      </div>
+      <header class="topbar">
+        <div class="brand">
+          <img src="/static/wendy-logo.svg" alt="Wendy" />
+          <div class="brand-copy">
+            <div class="eyebrow">Robot control</div>
+            <div class="brand-title">Unitree G1</div>
+          </div>
+        </div>
 
-      <div class="status">
-        <span class="pill"
-          ><span class="dot" id="dot-motion"></span
-          ><span id="motion-label">motion: …</span></span
-        >
-        <span class="pill"
-          ><span class="dot" id="dot-cam"></span
-          ><span id="cam-label">cam: …</span></span
-        >
-        <span class="pill"
-          ><span id="battery-label">battery: —</span></span
-        >
-        <span class="pill"
-          ><span class="dot" id="dot-fsm"></span
-          ><span id="fsm-label">fsm: …</span></span
-        >
-      </div>
+        <div class="status" aria-label="Robot status">
+          <span class="pill"
+            ><span class="dot" id="dot-motion"></span
+            ><span id="motion-label">motion: …</span></span
+          >
+          <span class="pill"
+            ><span class="dot" id="dot-cam"></span
+            ><span id="cam-label">cam: …</span></span
+          >
+          <span class="pill"
+            ><span id="battery-label">battery: —</span></span
+          >
+          <span class="pill"
+            ><span class="dot" id="dot-fsm"></span
+            ><span id="fsm-label">fsm: …</span></span
+          >
+        </div>
+      </header>
 
-      <div class="actions">
-        <button class="btn" id="btn-stand">🧍 stand</button>
-        <button class="btn" data-action="running">🚶 ready-to-walk</button>
-        <button class="btn" data-action="squat">squat</button>
-        <button class="btn" data-action="sit">sit</button>
-        <button class="btn" data-action="lie">recover</button>
-        <button class="btn" data-action="hello">wave</button>
-        <button class="btn" data-action="shake">shake</button>
-        <button class="btn" id="btn-damp">💤 damp</button>
-        <button class="btn danger" id="btn-estop">🛑 E-STOP</button>
-        <button class="btn" id="btn-estop-clear">clear e-stop</button>
-        <button class="btn" data-action="arm/raise_left">raise L</button>
-        <button class="btn" data-action="arm/raise_right">raise R</button>
-        <button class="btn" data-action="arm/hands_up">hands up</button>
-        <button class="btn" data-action="arm/point_forward">point</button>
-        <button class="btn" data-action="arm/salute">salute</button>
-        <button class="btn" data-action="arm/home">arms home</button>
-      </div>
+      <main class="workspace">
+        <aside class="actions action-panel" aria-label="Robot actions">
+          <section class="action-group safety">
+            <div class="section-label">Safety &amp; locomotion</div>
+            <button class="btn primary" id="btn-stand">Stand</button>
+            <button class="btn primary" data-action="running">Ready to walk</button>
+            <button class="btn danger" id="btn-estop">E-stop</button>
+            <button class="btn quiet-danger" id="btn-estop-clear">Clear E-stop</button>
+            <button class="btn quiet-danger full" id="btn-damp">Damp joints</button>
+          </section>
 
-      <div id="joy" aria-label="movement">
-        <div class="label">move</div>
-        <div class="stick"></div>
-      </div>
+          <section class="action-group">
+            <div class="section-label">Posture</div>
+            <button class="btn" data-action="squat">Squat</button>
+            <button class="btn" data-action="sit">Sit</button>
+            <button class="btn full" data-action="lie">Recover</button>
+          </section>
 
-      <div id="yaw" aria-label="turn">
-        <div class="label">turn</div>
-        <div class="knob"></div>
-      </div>
+          <section class="action-group">
+            <div class="section-label">Gestures</div>
+            <button class="btn" data-action="hello">Wave</button>
+            <button class="btn" data-action="shake">Shake</button>
+          </section>
 
-      <div id="speed-wrap">
-        <span class="slider-label">Speed</span>
-        <input id="speed" type="range" min="20" max="100" value="60" />
-        <span id="speed-val" class="slider-val">60%</span>
-      </div>
+          <section class="action-group">
+            <div class="section-label">Arms</div>
+            <button class="btn" data-action="arm/raise_left">Raise left</button>
+            <button class="btn" data-action="arm/raise_right">Raise right</button>
+            <button class="btn" data-action="arm/hands_up">Hands up</button>
+            <button class="btn" data-action="arm/point_forward">Point</button>
+            <button class="btn" data-action="arm/salute">Salute</button>
+            <button class="btn" data-action="arm/home">Arms home</button>
+          </section>
+        </aside>
 
-      <div id="feel-wrap">
-        <span class="slider-label">Response</span>
-        <input id="feel" type="range" min="0" max="100" value="35" />
-        <span id="feel-val" class="slider-val">35%</span>
-      </div>
+        <section class="camera-stage" aria-label="Live G1 camera">
+          <img id="camera" alt="" />
+          <div id="camera-fallback">
+            camera offline — check CAMERA_UPSTREAM_URL on the rc service
+          </div>
+          <div class="camera-tag">Live · front camera</div>
+        </section>
+      </main>
 
-      <button id="stop" class="btn danger" aria-label="stop">STOP</button>
+      <section class="drive-deck" aria-label="Drive controls">
+        <div class="deck-card move-card">
+          <span class="control-label">Move</span>
+          <div id="joy" aria-label="movement">
+            <div class="label">move</div>
+            <div class="stick"></div>
+          </div>
+        </div>
 
-      <div class="hint">W/S move · A/D strafe · Q/E turn · shift run · space stop</div>
+        <div class="deck-card tuning-card">
+          <div class="tuning">
+            <div id="speed-wrap">
+              <span class="slider-label">Speed</span>
+              <input id="speed" type="range" min="20" max="100" value="60" />
+              <span id="speed-val" class="slider-val">60%</span>
+            </div>
+
+            <div id="feel-wrap">
+              <span class="slider-label">Response</span>
+              <input id="feel" type="range" min="0" max="100" value="35" />
+              <span id="feel-val" class="slider-val">35%</span>
+            </div>
+          </div>
+
+          <button id="stop" class="btn danger" aria-label="stop">Stop</button>
+          <div class="hint">W/S move · A/D strafe · Q/E turn · shift run · space stop</div>
+        </div>
+
+        <div class="deck-card turn-card">
+          <span class="control-label">Turn</span>
+          <div id="yaw" aria-label="turn">
+            <div class="label">turn</div>
+            <div class="knob"></div>
+          </div>
+        </div>
+      </section>
     </div>
 
     <script>
@@ -488,11 +530,13 @@
         cam.src = `/api/camera?t=${Date.now()}`;
       }
       cam.addEventListener("load", () => {
+        cam.style.display = "block";
         camFallback.classList.remove("visible");
         camDot.className = "dot ok";
         camLabel.textContent = "cam: live";
       });
       cam.addEventListener("error", () => {
+        cam.style.display = "none";
         camFallback.classList.add("visible");
         camDot.className = "dot bad";
         camLabel.textContent = "cam: down";

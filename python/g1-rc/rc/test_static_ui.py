@@ -18,8 +18,19 @@ class VelocityLoopSafetyTests(unittest.TestCase):
         self.assertIn("let statusInFlight = false", self.html)
         self.assertIn("if (statusInFlight) return", self.html)
 
-    def test_controls_use_one_wrapping_toolbar(self):
-        self.assertEqual(self.html.count('class="actions"'), 1)
+    def test_controls_use_one_action_panel(self):
+        self.assertEqual(self.html.count('class="actions action-panel"'), 1)
+
+    def test_drive_controls_use_a_separate_deck(self):
+        self.assertIn('class="drive-deck"', self.html)
+        self.assertIn('class="workspace"', self.html)
+        self.assertIn('/static/wendy.css', self.html)
+
+    def test_page_uses_wendy_brand(self):
+        self.assertIn('/static/wendy-logo.svg', self.html)
+        css = (Path(__file__).parent / "static" / "wendy.css").read_text()
+        self.assertIn("--brand: #9fe2bf", css)
+        self.assertIn("#stop {\n  position: static", css)
 
 
 if __name__ == "__main__":

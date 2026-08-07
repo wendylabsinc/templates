@@ -34,7 +34,7 @@ CAMERA_UPSTREAM_URL = os.environ.get(
     "CAMERA_UPSTREAM_URL", "http://127.0.0.1:8000/stream/color"
 ).strip()
 PORT = int(os.environ.get("PORT", "3500"))
-MOTION_TIMEOUT_S = float(os.environ.get("G1_MOTION_TIMEOUT", "2.0"))
+MOTION_TIMEOUT_S = float(os.environ.get("G1_MOTION_TIMEOUT", "5.0"))
 
 STATIC_DIR = Path(__file__).parent / "static"
 

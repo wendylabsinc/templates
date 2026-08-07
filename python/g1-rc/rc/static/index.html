@@ -520,7 +520,12 @@
       // "hard". STOP bypasses by zeroing both.
       const target = { vx: 0, vy: 0, vyaw: 0 };
       const current = { vx: 0, vy: 0, vyaw: 0 };
-      let lastSentZero = false;
+      // A passive page must not call Move(), even with all-zero input.
+      // The first command is sent only after the user provides input
+      // and the status endpoint confirms RUNNING (801).
+      let lastSentZero = true;
+      let velocityInFlight = false;
+      let readyToWalk = false;
       let runBoost = false; // shift-to-run
 
       const speedEl = document.getElementById("speed");
@@ -556,6 +561,9 @@
       }
 
       async function tick() {
+        // Fail closed on missing/stale FSM status, and never let the
+        // 10 Hz timer stack requests while the SDK is still answering.
+        if (!readyToWalk || velocityInFlight) return;
         const a = feelAlpha();
         current.vx = lerp(current.vx, target.vx, a);
         current.vy = lerp(current.vy, target.vy, a);
@@ -573,14 +581,16 @@
           vy: clamp(current.vy, MAX.vy),
           vyaw: clamp(current.vyaw, MAX.vyaw),
         };
+        lastSentZero = isZero;
+        velocityInFlight = true;
         const ok = await postJSON("/api/velocity", body);
+        velocityInFlight = false;
         if (!ok) {
           // Don't spam — just flag the indicator. The status poll
           // below will refresh on its own cadence.
           motionDot.className = "dot bad";
           motionLabel.textContent = "motion: send-fail";
         }
-        lastSentZero = isZero;
       }
 
       setInterval(tick, TICK_MS);
@@ -833,6 +843,14 @@
         // FSM: green = walk-ready (velocity actuates), amber = standing
         // or in transition, red = e-stop latched or unreachable.
         const l = await getJSON("/api/locomotion");
+        readyToWalk = Boolean(
+          l && l.connected && l.ready_to_walk && !l.estop_latched
+        );
+        if (!readyToWalk) {
+          target.vx = target.vy = target.vyaw = 0;
+          current.vx = current.vy = current.vyaw = 0;
+          lastSentZero = true;
+        }
         if (l && l.estop_latched) {
           fsmDot.className = "dot bad";
           fsmLabel.textContent = "E-STOP latched";

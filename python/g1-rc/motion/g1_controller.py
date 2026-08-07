@@ -320,9 +320,9 @@ class G1Controller:
         # control's pilot does exactly this).
         try:
             fsm = await asyncio.to_thread(self._get_fsm_sync)
-        except Exception:
-            fsm = None
-        if fsm is not None and fsm != RUNNING_FSM:
+        except Exception as exc:
+            return f"ignored: FSM unavailable ({exc})"
+        if fsm != RUNNING_FSM:
             return (f"ignored: walking needs RUNNING({RUNNING_FSM}), "
                     f"current FSM is {fsm} — press ready-to-walk first")
         result = "ok"

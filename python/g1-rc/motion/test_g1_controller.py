@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import AsyncMock
 
-from g1_controller import _choose_network_interface
+from g1_controller import G1Controller, _choose_network_interface
 
 
 class ChooseNetworkInterfaceTests(unittest.TestCase):
@@ -23,6 +24,22 @@ class ChooseNetworkInterfaceTests(unittest.TestCase):
             "NETWORK_INTERFACE.*192\\.168\\.123\\.0/24",
         ):
             _choose_network_interface("auto", {"eth0": "172.17.0.2"})
+
+
+class VelocitySafetyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_fsm_lookup_failure_never_calls_move(self):
+        controller = G1Controller()
+        controller._loco_client = object()
+        controller._get_fsm_sync = lambda: (_ for _ in ()).throw(
+            RuntimeError("FSM unavailable")
+        )
+        controller._call_sdk = AsyncMock()
+
+        result = await controller.set_velocity(vx=0.2)
+
+        self.assertIn("ignored", result)
+        self.assertIn("FSM unavailable", result)
+        controller._call_sdk.assert_not_awaited()
 
 
 if __name__ == "__main__":

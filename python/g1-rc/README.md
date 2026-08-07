@@ -48,6 +48,8 @@ With the robot suspended or well clear of obstacles:
 2. `🚶 ready-to-walk` → enters the RUNNING policy; the fsm pill turns green
 3. Drive with the joystick / WASD (Q/E turn, shift to run, space = STOP).
    Velocity commands are ignored (with an explicit message) outside RUNNING.
+   Opening the page does not send a movement command; input stays disabled until
+   the FSM pill reports `801 (walk-ready)`.
 
 `💤 damp` is the soft-stop: joints go compliant — the robot collapses if
 unsupported, so the UI always asks first. Use it whenever you're done or

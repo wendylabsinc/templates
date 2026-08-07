@@ -1,19 +1,33 @@
 {
     "appId": "{{.APP_ID}}",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "services": {
         "bridge": {
             "context": "./bridge",
             "entitlements": [
                 { "type": "network", "mode": "host" }
-            ]
+            ],
+            "readiness": {
+                "tcpSocket": { "port": 8766 },
+                "initialDelaySeconds": 8,
+                "timeoutSeconds": 20,
+                "periodSeconds": 2,
+                "failureThreshold": 10
+            }
         },
         "camera": {
             "context": "./camera",
             "dependsOn": ["bridge"],
             "entitlements": [
                 { "type": "network", "mode": "host" }
-            ]
+            ],
+            "readiness": {
+                "tcpSocket": { "port": 8768 },
+                "initialDelaySeconds": 3,
+                "timeoutSeconds": 20,
+                "periodSeconds": 2,
+                "failureThreshold": 10
+            }
         }
     }
 }

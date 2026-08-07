@@ -71,7 +71,7 @@
         },
         {
             "name": "go2-foxglove",
-            "description": "Stream a Unitree Go2 into Foxglove: LiDAR point cloud, pose+TF, body state and UWB over one WebSocket, plus the front camera (WebRTC). Ships a ready-made Foxglove layout.",
+            "description": "Stream canonical Unitree Go2 state, pose, LiDAR, UWB, and a watchdog-protected WebRTC camera into one Foxglove connection without raw-DDS schema conflicts.",
             "languages": ["python"]
         },
         {

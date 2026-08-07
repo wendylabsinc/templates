@@ -166,6 +166,8 @@ class G1Controller:
         self._latest_fsm_id: Optional[int] = None
         self._latest_fsm_at = 0.0
         self._latest_fsm_error: Optional[str] = "FSM readback has not started"
+        self._last_fsm_error_logged: Optional[str] = None
+        self._last_fsm_error_log_at = 0.0
         self._state_lock = threading.Lock()
         self._latest_state: dict[str, Any] = {}
         # Arm controller is lazily imported in connect() because it
@@ -295,6 +297,18 @@ class G1Controller:
                 raise
             except Exception as exc:
                 self._latest_fsm_error = str(exc)
+                now = time.monotonic()
+                if (
+                    self._latest_fsm_error != self._last_fsm_error_logged
+                    or now - self._last_fsm_error_log_at >= 15.0
+                ):
+                    logger.warning(
+                        "fsm_readback_failed error=%s hint=%s",
+                        self._latest_fsm_error,
+                        "Check the G1 locomotion service and normal control mode.",
+                    )
+                    self._last_fsm_error_logged = self._latest_fsm_error
+                    self._last_fsm_error_log_at = now
             await asyncio.sleep(FSM_POLL_INTERVAL_S)
 
     async def start_fsm_monitor(self) -> None:
@@ -482,6 +496,10 @@ class G1Controller:
                         "note": "already running"}
             if fsm not in (DAMP_FSM, LOCK_STAND_FSM):
                 if not force:
+                    logger.warning(
+                        "stand_refused fsm_id=%s reason=force_required",
+                        fsm,
+                    )
                     return {"ok": False, "fsm_id": fsm,
                             "error": f"unexpected FSM {fsm}; DAMP from here can "
                                      "collapse the robot if it is not "
@@ -498,6 +516,7 @@ class G1Controller:
                 self._latest_fsm_error = None
             return {"ok": ok, "fsm_id": fsm, "standing": ok}
         except Exception as exc:
+            logger.exception("stand_failed error=%s", exc)
             try:
                 client.StopMove()
             except Exception:
@@ -513,6 +532,10 @@ class G1Controller:
                 return {"ok": True, "fsm_id": fsm, "ready_to_walk": True,
                         "note": "already running"}
             if fsm != LOCK_STAND_FSM:
+                logger.warning(
+                    "running_refused fsm_id=%s reason=not_lock_stand",
+                    fsm,
+                )
                 return {"ok": False, "fsm_id": fsm,
                         "error": "not in LOCK STAND; POST /stand first"}
             client.SetFsmId(RUNNING_FSM)
@@ -527,6 +550,7 @@ class G1Controller:
                 self._latest_fsm_error = None
             return {"ok": ok, "fsm_id": fsm, "ready_to_walk": ok}
         except Exception as exc:
+            logger.exception("running_failed error=%s", exc)
             return {"ok": False, "error": str(exc)}
 
     async def stand_up(self, force: bool = False) -> dict[str, Any]:

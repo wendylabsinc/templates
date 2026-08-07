@@ -401,6 +401,11 @@
             ><span class="dot" id="dot-fsm"></span
             ><span id="fsm-label">fsm: …</span></span
           >
+          <button class="pill diagnostics-toggle" id="diagnostics-toggle" type="button"
+            aria-controls="diagnostics-panel" aria-expanded="false"
+            ><span class="dot" id="dot-diagnostics"></span
+            ><span>diagnostics</span></button
+          >
         </div>
       </header>
 
@@ -442,9 +447,31 @@
         <section class="camera-stage" aria-label="Live G1 camera">
           <img id="camera" alt="" />
           <div id="camera-fallback">
-            camera offline — check CAMERA_UPSTREAM_URL on the rc service
+            camera offline — open Diagnostics for the failed check and next step
           </div>
           <div class="camera-tag">Live · front camera</div>
+          <div class="problem-banner" id="problem-banner" hidden>
+            <span id="problem-message"></span>
+            <button type="button" id="problem-details">Details</button>
+          </div>
+          <aside id="diagnostics-panel" class="diagnostics-panel" hidden
+            aria-label="G1 diagnostics" aria-hidden="true">
+            <div class="diagnostics-header">
+              <div>
+                <div class="eyebrow">First-run diagnostics</div>
+                <div class="diagnostics-title">What the G1 app can see</div>
+              </div>
+              <button type="button" class="diagnostics-close" id="diagnostics-close"
+                aria-label="Close diagnostics">Close</button>
+            </div>
+            <div id="diagnostics-summary" class="diagnostics-summary"></div>
+            <div class="diagnostics-command">
+              <div class="section-label">Full container logs</div>
+              <code id="diagnostics-command">Loading…</code>
+            </div>
+            <div class="section-label">Recent service events</div>
+            <pre id="diagnostics-events" class="diagnostics-events">Loading…</pre>
+          </aside>
         </section>
       </main>
 
@@ -494,6 +521,39 @@
       // but we clamp client-side too so the slider's 100% behaves
       // intuitively (you can read your "command" before it's clipped).
       const MAX = { vx: 0.6, vy: 0.4, vyaw: 1.0 };
+      const problemBanner = document.getElementById("problem-banner");
+      const problemMessage = document.getElementById("problem-message");
+      const clientProblems = [];
+      let lastProblemKey = "";
+      let lastProblemAt = 0;
+
+      function describeError(payload, fallback) {
+        if (!payload) return fallback;
+        const value = payload.detail ?? payload.error ?? payload.message ?? payload;
+        if (typeof value === "string") return value;
+        if (value && typeof value === "object") {
+          return value.message || value.error || value.code || JSON.stringify(value);
+        }
+        return String(value);
+      }
+
+      function reportProblem(source, message) {
+        const text = `${source}: ${message || "unknown error"}`;
+        const now = Date.now();
+        if (text === lastProblemKey && now - lastProblemAt < 5000) return;
+        lastProblemKey = text;
+        lastProblemAt = now;
+        console.error(`[g1-rc] ${text}`);
+        clientProblems.unshift({
+          time: new Date().toISOString(),
+          level: "error",
+          service: "browser",
+          message: text,
+        });
+        clientProblems.splice(20);
+        problemMessage.textContent = text;
+        problemBanner.hidden = false;
+      }
 
       async function postJSON(path, body) {
         try {
@@ -502,8 +562,19 @@
             headers: body ? { "content-type": "application/json" } : {},
             body: body ? JSON.stringify(body) : undefined,
           });
-          return r.ok;
-        } catch {
+          let data = null;
+          try { data = await r.json(); } catch { /* empty/non-JSON response */ }
+          if (!r.ok) {
+            reportProblem(path, describeError(data, `HTTP ${r.status}`));
+            return false;
+          }
+          if (data && data.result && data.result.ok === false) {
+            reportProblem(path, describeError(data.result, "command failed"));
+            return false;
+          }
+          return true;
+        } catch (error) {
+          reportProblem(path, error.message || String(error));
           return false;
         }
       }
@@ -511,9 +582,15 @@
       async function getJSON(path) {
         try {
           const r = await fetch(path);
-          if (!r.ok) return null;
+          if (!r.ok) {
+            let data = null;
+            try { data = await r.json(); } catch { /* empty/non-JSON response */ }
+            reportProblem(path, describeError(data, `HTTP ${r.status}`));
+            return null;
+          }
           return await r.json();
-        } catch {
+        } catch (error) {
+          reportProblem(path, error.message || String(error));
           return null;
         }
       }
@@ -806,8 +883,14 @@
           });
           let data = null;
           try { data = await r.json(); } catch { /* no body */ }
+          if (!r.ok) {
+            reportProblem(path, describeError(data, `HTTP ${r.status}`));
+          }
           return { ok: r.ok, data };
-        } catch { return { ok: false, data: null }; }
+        } catch (error) {
+          reportProblem(path, error.message || String(error));
+          return { ok: false, data: null };
+        }
       }
       document.getElementById("btn-stand").addEventListener("click", async () => {
         const r = await postFull("/api/stand", { force: false });
@@ -819,6 +902,8 @@
           )) {
             await postFull("/api/stand", { force: true });
           }
+        } else if (res && res.ok === false) {
+          reportProblem("/api/stand", describeError(res, "stand failed"));
         }
       });
       document.getElementById("btn-damp").addEventListener("click", () => {
@@ -850,6 +935,102 @@
         postJSON("/api/stop");
       });
 
+      // === First-run diagnostics ========================================
+      const diagnosticsPanel = document.getElementById("diagnostics-panel");
+      const diagnosticsToggle = document.getElementById("diagnostics-toggle");
+      const diagnosticsClose = document.getElementById("diagnostics-close");
+      const diagnosticsSummary = document.getElementById("diagnostics-summary");
+      const diagnosticsEvents = document.getElementById("diagnostics-events");
+      const diagnosticsCommand = document.getElementById("diagnostics-command");
+      const diagnosticsDot = document.getElementById("dot-diagnostics");
+
+      function diagnosticText(value) {
+        if (value == null) return "";
+        if (typeof value === "string") return value;
+        return JSON.stringify(value);
+      }
+
+      function appendDiagnosticService(service) {
+        const card = document.createElement("section");
+        const pending = service.status === "starting" || service.status === "connecting";
+        card.className = `diagnostic-service ${service.ok ? "" : pending ? "warn" : "bad"}`;
+
+        const title = document.createElement("div");
+        title.className = "diagnostic-service-title";
+        const name = document.createElement("span");
+        name.textContent = service.service || "unknown";
+        const state = document.createElement("span");
+        state.textContent = service.status || (service.ok ? "ready" : "failed");
+        title.append(name, state);
+        card.appendChild(title);
+
+        if (service.error) {
+          const error = document.createElement("div");
+          error.className = "diagnostic-detail error";
+          error.textContent = diagnosticText(service.error);
+          card.appendChild(error);
+        }
+        if (service.hint) {
+          const hint = document.createElement("div");
+          hint.className = "diagnostic-hint";
+          hint.textContent = service.hint;
+          card.appendChild(hint);
+        }
+        if (service.checks) {
+          const checks = document.createElement("div");
+          checks.className = "diagnostic-checks";
+          checks.textContent = Object.entries(service.checks)
+            .map(([key, value]) => `${value === true ? "✓" : value === false ? "✗" : "·"} ${key}: ${diagnosticText(value)}`)
+            .join("\n");
+          card.appendChild(checks);
+        }
+        diagnosticsSummary.appendChild(card);
+      }
+
+      function renderDiagnostics(data) {
+        diagnosticsSummary.replaceChildren();
+        const services = (data && data.services) || [];
+        services.forEach(appendDiagnosticService);
+        if (!services.length) {
+          const empty = document.createElement("div");
+          empty.className = "diagnostic-service bad";
+          empty.textContent = "Diagnostics endpoint returned no service data.";
+          diagnosticsSummary.appendChild(empty);
+        }
+
+        diagnosticsCommand.textContent = (data && data.log_command
+          ? data.log_command.replace("<g1-hostname>", location.hostname)
+          : "wendy device logs <app-id> --device <g1-hostname> --tail 200");
+        const events = clientProblems.concat(
+          services.flatMap((service) => service.events || [])
+        );
+        events.sort((a, b) => String(a.time).localeCompare(String(b.time)));
+        diagnosticsEvents.textContent = events.slice(-80).map((event) =>
+          `${event.time || ""} ${(event.level || "info").toUpperCase().padEnd(7)} ` +
+          `[${event.service || "service"}] ${event.message || ""}`
+        ).join("\n") || "No diagnostic events yet.";
+      }
+
+      async function refreshDiagnostics() {
+        const data = await getJSON("/api/diagnostics");
+        if (data) renderDiagnostics(data);
+      }
+
+      function setDiagnosticsOpen(open) {
+        diagnosticsPanel.hidden = !open;
+        diagnosticsPanel.setAttribute("aria-hidden", String(!open));
+        diagnosticsToggle.setAttribute("aria-expanded", String(open));
+        if (open) refreshDiagnostics();
+      }
+
+      diagnosticsToggle.addEventListener("click", () => {
+        setDiagnosticsOpen(diagnosticsPanel.hidden);
+      });
+      diagnosticsClose.addEventListener("click", () => setDiagnosticsOpen(false));
+      document.getElementById("problem-details").addEventListener("click", () => {
+        setDiagnosticsOpen(true);
+      });
+
       // === Status polling =================================================
       const motionDot = document.getElementById("dot-motion");
       const motionLabel = document.getElementById("motion-label");
@@ -866,11 +1047,32 @@
         if (h && h.motion && h.motion.ok) {
           motionDot.className = "dot ok";
           motionLabel.textContent = "motion: ok";
+          motionLabel.removeAttribute("title");
         } else {
           motionDot.className = "dot bad";
-          motionLabel.textContent = `motion: ${
-            (h && h.motion && h.motion.reason) || "down"
-          }`;
+          const motionReason = describeError(
+            h && h.motion && h.motion.reason, "down"
+          );
+          motionLabel.textContent = "motion: down";
+          motionLabel.title = motionReason;
+        }
+        if (h && h.camera && h.camera.ok) {
+          camDot.className = "dot ok";
+          camLabel.textContent = "cam: live";
+          camLabel.removeAttribute("title");
+        } else {
+          camDot.className = "dot bad";
+          const cameraReason = describeError(
+            h && h.camera && h.camera.reason, "down"
+          );
+          camLabel.textContent = "cam: down";
+          camLabel.title = cameraReason;
+        }
+        diagnosticsDot.className = "dot " + (h && h.ok ? "ok" : "bad");
+        if (h && !h.ok && h.motion && !h.motion.ok) {
+          reportProblem("motion", describeError(h.motion.reason, "not ready"));
+        } else if (h && !h.ok && h.camera && !h.camera.ok) {
+          reportProblem("camera", describeError(h.camera.reason, "not ready"));
         }
         const s = await getJSON("/api/state");
         // G1 battery SOC comes from the motion service's dedicated
@@ -907,6 +1109,7 @@
           fsmDot.className = "dot bad";
           fsmLabel.textContent = "fsm: —";
         }
+        if (!diagnosticsPanel.hidden) refreshDiagnostics();
         } finally {
           statusInFlight = false;
         }

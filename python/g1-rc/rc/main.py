@@ -11,13 +11,16 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -27,20 +30,83 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
 logger = logging.getLogger("g1-rc")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 MOTION_URL = os.environ.get("G1_MOTION_URL", "http://127.0.0.1:3201").rstrip("/")
 CAMERA_UPSTREAM_URL = os.environ.get(
     "CAMERA_UPSTREAM_URL", "http://127.0.0.1:8000/stream/color"
 ).strip()
+CAMERA_HEALTH_URL = os.environ.get(
+    "CAMERA_HEALTH_URL", "http://127.0.0.1:8000/health"
+).strip()
+CAMERA_DIAGNOSTICS_URL = os.environ.get(
+    "CAMERA_DIAGNOSTICS_URL", "http://127.0.0.1:8000/diagnostics"
+).strip()
 PORT = int(os.environ.get("PORT", "3500"))
 MOTION_TIMEOUT_S = float(os.environ.get("G1_MOTION_TIMEOUT", "5.0"))
+LOG_COMMAND = (
+    "wendy device logs {{.APP_ID}} --device <g1-hostname> --tail 200"
+)
 
 STATIC_DIR = Path(__file__).parent / "web"
 
 
 _motion_client: httpx.AsyncClient | None = None
 _camera_client: httpx.AsyncClient | None = None
+
+
+class RecentEventsHandler(logging.Handler):
+    def __init__(self, limit: int = 80) -> None:
+        super().__init__(logging.INFO)
+        self.events: deque[dict[str, str]] = deque(maxlen=limit)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.events.append({
+                "time": datetime.fromtimestamp(
+                    record.created, timezone.utc
+                ).isoformat(timespec="seconds"),
+                "level": record.levelname.lower(),
+                "service": "rc",
+                "message": record.getMessage(),
+            })
+        except Exception:
+            self.handleError(record)
+
+    def snapshot(self) -> list[dict[str, str]]:
+        return list(self.events)
+
+
+recent_events = RecentEventsHandler()
+logging.getLogger("g1-rc").addHandler(recent_events)
+started_at = time.monotonic()
+_last_upstream_log: dict[str, tuple[str, float]] = {}
+
+
+def _log_upstream_failure(service: str, operation: str, detail: str) -> None:
+    """Log immediately on change, then at most once every 15 seconds."""
+    key = f"{service}:{operation}"
+    previous, logged_at = _last_upstream_log.get(key, ("", 0.0))
+    now = time.monotonic()
+    if detail != previous or now - logged_at >= 15.0:
+        logger.warning(
+            "upstream_failed service=%s operation=%s detail=%s",
+            service,
+            operation,
+            detail,
+        )
+        _last_upstream_log[key] = (detail, now)
+
+
+async def _response_detail(response: httpx.Response) -> Any:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text
+    if isinstance(payload, dict) and "detail" in payload:
+        return payload["detail"]
+    return payload
 
 
 @asynccontextmanager
@@ -68,6 +134,26 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(title="g1-RC", lifespan=lifespan)
 
 
+@app.exception_handler(Exception)
+async def unhandled_exception(request: Request, exc: Exception) -> JSONResponse:
+    logger.error(
+        "request_failed method=%s path=%s error=%s: %s",
+        request.method,
+        request.url.path,
+        type(exc).__name__,
+        exc,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "hint": "Open Diagnostics and inspect the recent RC service events.",
+        },
+        status_code=500,
+    )
+
+
 class VelocityBody(BaseModel):
     vx: float = Field(0.0)
     vy: float = Field(0.0)
@@ -86,9 +172,20 @@ async def _motion_post(path: str, json: dict | None = None) -> dict:
     try:
         r = await _motion_client.post(f"{MOTION_URL}{path}", json=json)
     except httpx.HTTPError as exc:
-        raise HTTPException(502, f"g1-motion unreachable: {exc}") from exc
+        detail = f"g1-motion unreachable: {type(exc).__name__}: {exc}"
+        _log_upstream_failure("motion", f"POST {path}", detail)
+        raise HTTPException(
+            502,
+            detail={
+                "code": "motion_unreachable",
+                "message": detail,
+                "hint": "Open Diagnostics and inspect the motion startup error.",
+            },
+        ) from exc
     if r.status_code >= 400:
-        raise HTTPException(r.status_code, r.text)
+        detail = await _response_detail(r)
+        _log_upstream_failure("motion", f"POST {path}", str(detail))
+        raise HTTPException(r.status_code, detail=detail)
     try:
         return r.json()
     except ValueError:
@@ -100,13 +197,47 @@ async def _motion_get(path: str) -> dict:
     try:
         r = await _motion_client.get(f"{MOTION_URL}{path}")
     except httpx.HTTPError as exc:
-        raise HTTPException(502, f"g1-motion unreachable: {exc}") from exc
+        detail = f"g1-motion unreachable: {type(exc).__name__}: {exc}"
+        _log_upstream_failure("motion", f"GET {path}", detail)
+        raise HTTPException(
+            502,
+            detail={
+                "code": "motion_unreachable",
+                "message": detail,
+                "hint": "Open Diagnostics and inspect the motion startup error.",
+            },
+        ) from exc
     if r.status_code >= 400:
-        raise HTTPException(r.status_code, r.text)
+        detail = await _response_detail(r)
+        _log_upstream_failure("motion", f"GET {path}", str(detail))
+        raise HTTPException(r.status_code, detail=detail)
     try:
         return r.json()
     except ValueError:
         return {"raw": r.text}
+
+
+async def _camera_get(url: str, operation: str) -> dict:
+    assert _camera_client is not None
+    try:
+        response = await _camera_client.get(url, timeout=5.0)
+    except httpx.HTTPError as exc:
+        detail = f"g1-camera unreachable: {type(exc).__name__}: {exc}"
+        _log_upstream_failure("camera", operation, detail)
+        return {
+            "ok": False,
+            "status": "unreachable",
+            "error": detail,
+            "hint": "Check CAMERA_SOURCE and inspect the camera service logs.",
+        }
+    payload = await _response_detail(response)
+    if not isinstance(payload, dict):
+        payload = {"ok": False, "error": str(payload)}
+    if response.status_code >= 400 or not payload.get("ok", False):
+        _log_upstream_failure(
+            "camera", operation, str(payload.get("error") or payload)
+        )
+    return payload
 
 
 @app.get("/api/health")
@@ -120,10 +251,55 @@ async def health() -> dict:
             motion_reason = m.get("reason") or "not_ready"
     except HTTPException as exc:
         motion_reason = exc.detail
+    camera = await _camera_get(CAMERA_HEALTH_URL, "GET /health")
+    camera_ok = bool(camera.get("ok", False))
     return {
-        "ok": True,
+        "ok": motion_ok and camera_ok,
         "motion": {"ok": motion_ok, "reason": motion_reason, "url": MOTION_URL},
-        "camera": {"url": CAMERA_UPSTREAM_URL or None},
+        "camera": {
+            "ok": camera_ok,
+            "status": camera.get("status"),
+            "reason": camera.get("error") or camera.get("error_code"),
+            "hint": camera.get("hint"),
+            "url": CAMERA_UPSTREAM_URL or None,
+        },
+    }
+
+
+@app.get("/api/diagnostics")
+async def diagnostics() -> dict:
+    try:
+        motion = await _motion_get("/diagnostics")
+    except HTTPException as exc:
+        motion = {
+            "service": "motion",
+            "status": "unreachable",
+            "ok": False,
+            "error": exc.detail,
+            "hint": "Inspect the motion container logs for its startup traceback.",
+            "events": [],
+        }
+    camera = await _camera_get(CAMERA_DIAGNOSTICS_URL, "GET /diagnostics")
+    camera.setdefault("service", "camera")
+    return {
+        "ok": bool(motion.get("ok")) and bool(camera.get("ok")),
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "log_command": LOG_COMMAND,
+        "services": [
+            {
+                "service": "rc",
+                "status": "ready",
+                "ok": True,
+                "uptime_seconds": round(time.monotonic() - started_at, 1),
+                "checks": {
+                    "motion_url": MOTION_URL,
+                    "camera_health_url": CAMERA_HEALTH_URL,
+                },
+                "events": recent_events.snapshot(),
+            },
+            motion,
+            camera,
+        ],
     }
 
 
@@ -275,12 +451,23 @@ async def camera() -> StreamingResponse:
             stream=True,
         )
     except httpx.HTTPError as exc:
-        raise HTTPException(502, f"camera upstream unreachable: {exc}") from exc
+        detail = f"camera upstream unreachable: {type(exc).__name__}: {exc}"
+        _log_upstream_failure("camera", "GET /stream/color", detail)
+        raise HTTPException(
+            502,
+            detail={
+                "code": "camera_unreachable",
+                "message": detail,
+                "hint": "Open Diagnostics and check CAMERA_SOURCE.",
+            },
+        ) from exc
 
     if upstream.status_code >= 400:
         body = await upstream.aread()
         await upstream.aclose()
-        raise HTTPException(upstream.status_code, body.decode("utf-8", "replace"))
+        detail = body.decode("utf-8", "replace")
+        _log_upstream_failure("camera", "GET /stream/color", detail)
+        raise HTTPException(upstream.status_code, detail=detail)
 
     media_type = upstream.headers.get(
         "content-type", "multipart/x-mixed-replace; boundary=frame"

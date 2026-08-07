@@ -1,0 +1,37 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "motion": {
+            "context": "./motion",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "camera": {
+            "context": "./camera",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "camera" },
+                { "type": "usb" }
+            ]
+        },
+        "rc": {
+            "context": "./rc",
+            "dependsOn": ["motion", "camera"],
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        }
+    },
+    "readiness": {
+        "tcpSocket": { "port": {{.RC_PORT}} },
+        "timeoutSeconds": 60
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.RC_PORT}}"
+        }
+    }
+}

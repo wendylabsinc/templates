@@ -296,8 +296,8 @@ async def camera() -> StreamingResponse:
     return StreamingResponse(relay(), media_type=media_type)
 
 
-if (STATIC_DIR / "static").is_dir():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR / "static"), name="static")
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/", include_in_schema=False)

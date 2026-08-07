@@ -32,6 +32,11 @@ class VelocityLoopSafetyTests(unittest.TestCase):
         self.assertIn("--brand: #9fe2bf", css)
         self.assertIn("#stop {\n  position: static", css)
 
+    def test_static_assets_are_mounted_from_the_real_directory(self):
+        server = (Path(__file__).parent / "main.py").read_text()
+        self.assertIn("StaticFiles(directory=STATIC_DIR)", server)
+        self.assertNotIn('STATIC_DIR / "static"', server)
+
 
 if __name__ == "__main__":
     unittest.main()

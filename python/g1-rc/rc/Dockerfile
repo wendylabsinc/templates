@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt
 
 COPY main.py ./
-COPY static ./static
+COPY web ./web
 
 # Where g1-motion lives. Default assumes sibling container with host
 # networking. Override at runtime if you point g1-RC at a remote dog.

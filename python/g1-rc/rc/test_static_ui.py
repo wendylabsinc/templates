@@ -5,7 +5,7 @@ import unittest
 class VelocityLoopSafetyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.html = (Path(__file__).parent / "static" / "index.html").read_text()
+        cls.html = (Path(__file__).parent / "web" / "index.html").read_text()
 
     def test_page_load_does_not_send_zero_velocity(self):
         self.assertIn("let lastSentZero = true", self.html)
@@ -28,7 +28,7 @@ class VelocityLoopSafetyTests(unittest.TestCase):
 
     def test_page_uses_wendy_brand(self):
         self.assertIn('/static/wendy-logo.svg', self.html)
-        css = (Path(__file__).parent / "static" / "wendy.css").read_text()
+        css = (Path(__file__).parent / "web" / "wendy.css").read_text()
         self.assertIn("--brand: #9fe2bf", css)
         self.assertIn("#stop {\n  position: static", css)
 

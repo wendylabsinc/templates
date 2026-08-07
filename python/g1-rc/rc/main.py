@@ -36,7 +36,7 @@ CAMERA_UPSTREAM_URL = os.environ.get(
 PORT = int(os.environ.get("PORT", "3500"))
 MOTION_TIMEOUT_S = float(os.environ.get("G1_MOTION_TIMEOUT", "5.0"))
 
-STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR = Path(__file__).parent / "web"
 
 
 _motion_client: httpx.AsyncClient | None = None

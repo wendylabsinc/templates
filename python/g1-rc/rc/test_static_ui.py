@@ -37,6 +37,14 @@ class VelocityLoopSafetyTests(unittest.TestCase):
         self.assertIn("StaticFiles(directory=STATIC_DIR)", server)
         self.assertNotIn('STATIC_DIR / "static"', server)
 
+    def test_container_copies_web_assets_explicitly(self):
+        dockerfile = (Path(__file__).parent / "Dockerfile").read_text()
+        self.assertIn(
+            "COPY web/index.html web/wendy.css web/wendy-logo.svg ./web/",
+            dockerfile,
+        )
+        self.assertNotIn("COPY web ./web", dockerfile)
+
 
 if __name__ == "__main__":
     unittest.main()

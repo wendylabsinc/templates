@@ -18,6 +18,9 @@ class VelocityLoopSafetyTests(unittest.TestCase):
         self.assertIn("let statusInFlight = false", self.html)
         self.assertIn("if (statusInFlight) return", self.html)
 
+    def test_controls_use_one_wrapping_toolbar(self):
+        self.assertEqual(self.html.count('class="actions"'), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

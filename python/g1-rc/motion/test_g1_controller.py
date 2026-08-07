@@ -60,7 +60,7 @@ class VelocitySafetyTests(unittest.IsolatedAsyncioTestCase):
         controller = G1Controller()
         controller._loco_client = object()
         controller._latest_fsm_id = 801
-        controller._latest_fsm_at = 0.0
+        controller._latest_fsm_at = time.monotonic() - 10.0
         controller._call_sdk = AsyncMock()
 
         result = await controller.set_velocity(vx=0.2)

@@ -40,9 +40,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --index-url https://pypi.org/simple/ \
     fastapi \
     'uvicorn[standard]' \
-    ultralytics && \
+    ultralytics \
+    lap && \
     ln -sf /opt/venv/bin/uvicorn /usr/local/bin/uvicorn && \
     ln -sf /opt/venv/bin/python3 /usr/local/bin/python3-venv
+# ^ lap: ByteTrack dependency; ultralytics pip-installs it on first
+# model.track() call, which fails in an offline container — bake it here.
 
 # ── JetPack 7 / WendyOS 0.17 GPU fix (WendyOS#1370; mirrors WendyOS PR #1379) ──
 # This dustynv base targets JetPack 6 (CUDA 12.x + cuDNN 9). On a JetPack-7 Orin

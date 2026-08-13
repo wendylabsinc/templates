@@ -90,6 +90,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
+# Install CPU-only torch first so ultralytics' transitive torch dependency is
+# already satisfied: on aarch64 the default PyPI wheel is CUDA-enabled and adds
+# ~9 GB of dead weight to a stage that has no GPU (9.68 GB → 0.68 GB measured).
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --index-url https://download.pytorch.org/whl/cpu \
+    torch torchvision
+
 COPY requirements.txt /tmp/requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r /tmp/requirements.txt

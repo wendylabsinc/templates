@@ -31,7 +31,7 @@ Register the camera and validate credentials before deploying:
 ```sh
 wendy device camera list                 # shows discovered cameras (--refresh to re-scan)
 wendy device camera login <id>           # store credentials for a camera
-wendy device camera test <id>            # validate the stored credentials (NEW)
+wendy device camera test <id>            # validate the stored credentials
 wendy init --app-id my-cam --template ip-camera-feed --language python
 cd my-cam
 wendy run --device <device-hostname>
@@ -58,7 +58,14 @@ Then open `http://<device-hostname>:{{.PORT}}` and watch the feed.
   camera and auto-detection doesn't pick the one you want, set the
   `CAMERA_DEVICE` template variable to the exact node (e.g. `/dev/video203`,
   matching the ID from `wendy device camera list`) at `wendy init` time, or
-  leave it blank (the default) for auto-detection.
+  leave it blank (the default) for auto-detection. This value is baked into
+  the image as a Dockerfile `ENV` when the template is rendered, not read
+  from the running container — to point a deployed app at a different
+  camera, re-run `wendy init` with the new value and redeploy; editing the
+  running container's environment has no effect. An invalid override (a
+  node that isn't actually capture-capable, or doesn't exist) will still
+  appear in the camera list, but the stream will never come up — the app
+  retries forever rather than surfacing an error.
 - No RTSP, no ML — just the MJPEG viewer. For object detection on a
   registered camera's feed, adapt `python/camera-feed-yolo`'s model-serving
   code onto this template's discovery.

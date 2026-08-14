@@ -46,6 +46,10 @@ Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage
 
 Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
 
+### ip-camera-feed
+
+Live view of a platform-registered IP camera via GStreamer MJPEG over WebSocket. Unlike `camera-feed` (a direct USB webcam), this consumes a camera through the platform's registration pipeline (`wendy device camera list` / `login` / `test`) — the `camera` entitlement maps the platform-managed `/dev/video2xx` loopback node into the container, no RTSP dialing in the template itself. The node carries the camera's sub-stream (<=1024px wide), not full-res. Entitlements: network (host), camera.
+
 ### realsense-camera
 
 Live Intel RealSense D415 multi-stream viewer: color, left IR, right IR, and colorized depth as MJPEG streams.

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
 Webcam streaming server.
-GStreamer MJPEG-over-WebSocket — camera outputs MJPEG natively on most USB
-webcams so no encoding is needed. Frames are sent as-is to connected clients.
+GStreamer MJPEG-over-WebSocket. Most USB webcams output MJPEG natively, but
+frames are decoded and re-encoded to a standard JPEG bitstream by default
+(jpegdec ! jpegenc quality=85): Safari is stricter than Chrome about
+webcam-native MJPEG, so a clean re-encode is tried first. Raw-only cameras
+fall back to videoconvert ! jpegenc quality=70; passing native MJPEG through
+untouched is the last-resort fallback (ladder rungs 4-5), not the normal path.
 """
 import asyncio
 import collections
@@ -296,11 +300,11 @@ class MJPEGCamera:
         src = build_source(device_id)
         appsink = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
         pipelines = [
-            f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! {appsink}",
-            f"{src} ! image/jpeg,width=640,height=480 ! jpegdec ! jpegenc quality=85 ! {appsink}",
-            f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
-            f"{src} ! image/jpeg ! {appsink}",
-            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
+            f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! {appsink}",  # Safari is stricter than Chrome about webcam-native MJPEG — re-encode first
+            f"{src} ! image/jpeg,width=640,height=480 ! jpegdec ! jpegenc quality=85 ! {appsink}",  # Safari is stricter than Chrome about webcam-native MJPEG — re-encode first
+            f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",  # Camera outputs raw → encode to JPEG
+            f"{src} ! image/jpeg ! {appsink}",  # Last resort: pass camera-native MJPEG through unchanged.
+            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",  # Last resort: pass camera-native MJPEG through unchanged.
         ]
 
         for p_str in pipelines:

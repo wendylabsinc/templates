@@ -5,8 +5,11 @@ GStreamer MJPEG-over-WebSocket, reading from the platform-managed
 /dev/video2xx v4l2loopback node for a registered IP camera — the bare
 `camera` entitlement maps that node into the container (see README.md).
 The node carries the camera's sub-stream (<=1024px wide, auto-selected by
-the platform), which is already MJPEG on most sources so frames are sent
-as-is to connected clients; jpegenc is only a fallback for raw sources.
+the platform), usually already MJPEG — but the pipeline ladder still tries
+jpegdec ! jpegenc quality=85 re-encode rungs first (Safari is stricter than
+Chrome about non-standard MJPEG bitstreams; same ladder as camera-feed),
+then jpegenc quality=70 for raw sources; sending frames as-is is the
+last-resort fallback.
 """
 import asyncio
 import collections
@@ -282,11 +285,11 @@ class MJPEGCamera:
         src = build_source(device_id)
         appsink = "appsink name=sink emit-signals=true max-buffers=2 drop=true sync=false"
         pipelines = [
-            f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! {appsink}",
-            f"{src} ! image/jpeg,width=640,height=480 ! jpegdec ! jpegenc quality=85 ! {appsink}",
-            f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",
-            f"{src} ! image/jpeg ! {appsink}",
-            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",
+            f"{src} ! image/jpeg ! jpegdec ! jpegenc quality=85 ! {appsink}",  # Safari is stricter than Chrome about webcam-native MJPEG — re-encode first
+            f"{src} ! image/jpeg,width=640,height=480 ! jpegdec ! jpegenc quality=85 ! {appsink}",  # Safari is stricter than Chrome about webcam-native MJPEG — re-encode first
+            f"{src} ! videoconvert ! jpegenc quality=70 ! {appsink}",  # Camera outputs raw → encode to JPEG
+            f"{src} ! image/jpeg ! {appsink}",  # Last resort: pass camera-native MJPEG through unchanged.
+            f"{src} ! image/jpeg,width=640,height=480 ! {appsink}",  # Last resort: pass camera-native MJPEG through unchanged.
         ]
 
         for p_str in pipelines:

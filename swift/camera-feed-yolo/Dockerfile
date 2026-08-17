@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG SWIFT_VERSION_BUILD={{.SWIFT_VERSION}}
 RUN curl -fsSL "https://download.swift.org/swift-${SWIFT_VERSION_BUILD}-release/ubuntu2204-aarch64/swift-${SWIFT_VERSION_BUILD}-RELEASE/swift-${SWIFT_VERSION_BUILD}-RELEASE-ubuntu22.04-aarch64.tar.gz" \
       -o /tmp/swift.tgz \
- && tar -xzf /tmp/swift.tgz -C /usr/local --strip-components=1 \
+ && tar -xzf /tmp/swift.tgz -C / --strip-components=1 \
  && rm /tmp/swift.tgz
 
 # Surface libonnxruntime.so + headers under /usr/local + write a .pc file so

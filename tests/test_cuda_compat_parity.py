@@ -16,8 +16,7 @@ and describes the failure in torch-specific terms, while the other five
 copies use generic wording — a pre-existing, harmless divergence that isn't
 this test's concern.
 
-No CI runs this yet (tracked as a follow-up); run it manually with:
-    python3 -m pytest tests/
+CI runs this on every PR (`.github/workflows/test.yml`); run locally with `python3 -m pytest tests/`.
 """
 
 import pathlib

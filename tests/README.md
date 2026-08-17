@@ -1,3 +1,3 @@
 # tests
 
-No CI wires this up yet (follow-up); run manually with `python3 -m pytest tests/`.
+CI runs this on every PR (`.github/workflows/test.yml`); run locally with `python3 -m pytest tests/`.

@@ -362,31 +362,7 @@ struct CameraInfo: Codable, Sendable {
 }
 
 func listCameras() -> [CameraInfo] {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/v4l2-ctl")
-    process.arguments = ["--list-devices"]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
-    do {
-        try process.run()
-        process.waitUntilExit()
-    } catch {
-        return []
-    }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    guard let output = String(data: data, encoding: .utf8) else { return [] }
-    var cameras: [CameraInfo] = []
-    var currentName: String?
-    for line in output.components(separatedBy: "\n") {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if !line.hasPrefix("\t") && !line.hasPrefix(" ") && trimmed.hasSuffix(":") {
-            currentName = String(trimmed.dropLast())
-        } else if trimmed.hasPrefix("/dev/video") {
-            cameras.append(CameraInfo(id: trimmed, name: currentName ?? trimmed))
-        }
-    }
-    return cameras
+    V4LCameraDiscovery().listCameras().map { CameraInfo(id: $0.device, name: $0.name) }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -629,10 +629,10 @@ struct CameraFeedYoloApp {
         let app = Application(
             router: router,
             server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
-            configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
+            configuration: .init(address: .hostname("0.0.0.0", port: 6006))
         )
 
-        print("Camera feed (YOLO) running on http://0.0.0.0:{{.PORT}}")
+        print("Camera feed (YOLO) running on http://0.0.0.0:6006")
 
         try await withThrowingDiscardingTaskGroup { group in
             group.addTask {

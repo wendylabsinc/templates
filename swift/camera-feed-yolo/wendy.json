@@ -1,5 +1,5 @@
 {
-    "appId": "{{.APP_ID}}",
+    "appId": "camera-feed-yolo",
     "version": "0.1.0",
     "platform": "linux",
     "entitlements": [
@@ -15,12 +15,12 @@
         }
     ],
     "readiness": {
-        "tcpSocket": { "port": {{.PORT}} },
+        "tcpSocket": { "port": 6006 },
         "timeoutSeconds": 180
     },
     "hooks": {
         "postStart": {
-            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.PORT}}"
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:6006"
         }
     }
 }

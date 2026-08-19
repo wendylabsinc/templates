@@ -3,7 +3,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "{{.APP_ID}}",
+    name: "camera-feed-yolo",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.21.1"),
@@ -20,7 +20,7 @@ let package = Package(
             pkgConfig: "libturbojpeg"
         ),
         .executableTarget(
-            name: "{{.APP_ID}}",
+            name: "camera-feed-yolo",
             dependencies: [
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),

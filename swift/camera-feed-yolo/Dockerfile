@@ -2,7 +2,7 @@
 #
 # Multi-stage build keyed on WENDY_PLATFORM.
 #   nvidia-jetson -> dustynv/onnxruntime + Swift toolchain (CUDA EP)
-#   generic       -> swift:{{.SWIFT_VERSION}}-bookworm + Microsoft prebuilt CPU onnxruntime
+#   generic       -> swift:6.3-bookworm + Microsoft prebuilt CPU onnxruntime
 
 ARG WENDY_PLATFORM=generic
 
@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Swift toolchain (aarch64). Mirrors the official swift.org Linux release.
-ARG SWIFT_VERSION_BUILD={{.SWIFT_VERSION}}
+ARG SWIFT_VERSION_BUILD=6.3
 RUN curl -fsSL "https://download.swift.org/swift-${SWIFT_VERSION_BUILD}-release/ubuntu2204-aarch64/swift-${SWIFT_VERSION_BUILD}-RELEASE/swift-${SWIFT_VERSION_BUILD}-RELEASE-ubuntu22.04-aarch64.tar.gz" \
       -o /tmp/swift.tgz \
  && tar -xzf /tmp/swift.tgz -C / --strip-components=1 \
@@ -77,7 +77,7 @@ RUN mkdir -p /opt/cuda12/lib \
 ENV LD_LIBRARY_PATH=/opt/cuda12/lib
 
 # ── Stage B-generic: Swift base + CPU onnxruntime ───────────────────────────
-FROM swift:{{.SWIFT_VERSION}}-bookworm AS base-generic
+FROM swift:6.3-bookworm AS base-generic
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates pkg-config \
@@ -118,14 +118,14 @@ ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
 WORKDIR /app
 COPY Package.swift ./
 COPY Sources Sources
-RUN --mount=type=cache,id=swiftpm-{{.APP_ID}},target=/app/.build \
+RUN --mount=type=cache,id=swiftpm-camera-feed-yolo,target=/app/.build \
     swift build -c release \
- && cp ".build/release/{{.APP_ID}}" /usr/local/bin/{{.APP_ID}}
+ && cp ".build/release/camera-feed-yolo" /usr/local/bin/camera-feed-yolo
 
 COPY --from=model-export /export/yolov8n.onnx ./yolov8n.onnx
 COPY index.html ./
 COPY assets/ ./assets/
 
-EXPOSE {{.PORT}}
+EXPOSE 6006
 
-CMD ["{{.APP_ID}}"]
+CMD ["camera-feed-yolo"]

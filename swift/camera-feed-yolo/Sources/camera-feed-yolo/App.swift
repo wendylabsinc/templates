@@ -1,6 +1,7 @@
 internal import Foundation
 import Hummingbird
 import HummingbirdWebSocket
+import Logging
 import COnnxRuntime
 import CTurboJPEG
 
@@ -38,6 +39,8 @@ private func isRpi() -> Bool {
     }
     return false
 }
+
+private let logger = Logger(label: "CameraFeedYoloApp")
 
 // ───────────────────────────────────────────────────────────────────────────
 // Box / Meta
@@ -141,12 +144,12 @@ final class YoloEngine: @unchecked Sendable {
             if api.pointee.CreateCUDAProviderOptions(&cudaOpts) == nil, let cuda = cudaOpts {
                 _ = api.pointee.SessionOptionsAppendExecutionProvider_CUDA_V2(optsPtr, cuda)
                 api.pointee.ReleaseCUDAProviderOptions(cuda)
-                print("[yolo] CUDA execution provider requested")
+                logger.info("[yolo] CUDA execution provider requested")
             } else {
-                print("[yolo] CUDA EP unavailable — using CPU")
+                logger.info("[yolo] CUDA EP unavailable — using CPU")
             }
         } else {
-            print("[yolo] using CPU execution provider")
+            logger.info("[yolo] using CPU execution provider")
         }
 
         var sessionPtr: OpaquePointer?
@@ -462,11 +465,11 @@ actor MJPEGCamera {
                 } catch is CancellationError {
                     return
                 } catch {
-                    print("[gst] pipeline error: \(error)")
+                    logger.info("[gst] pipeline error: \(error)")
                 }
                 if Task.isCancelled { return }
                 guard await self.hasSubscribers() else { return }
-                print("[gst] retrying pipeline in \(delayMs)ms")
+                logger.info("[gst] retrying pipeline in \(delayMs)ms")
                 do {
                     try await Task.sleep(for: .milliseconds(delayMs))
                 } catch {
@@ -559,7 +562,7 @@ struct CameraFeedYoloApp {
         let usePassthrough = !useGpu || rpi
         let minIntervalMs: UInt64 = useGpu ? UInt64(1000 / 15) : UInt64(1000 / 3)
 
-        print("[startup] platform=\(ProcessInfo.processInfo.environment["WENDY_PLATFORM"] ?? "unknown"), has_gpu=\(useGpu), is_rpi=\(rpi), capture=\(usePassthrough ? "passthrough" : "decode-encode")")
+        logger.info("[startup] platform=\(ProcessInfo.processInfo.environment["WENDY_PLATFORM"] ?? "unknown"), has_gpu=\(useGpu), is_rpi=\(rpi), capture=\(usePassthrough ? "passthrough" : "decode-encode")")
 
         let camera = MJPEGCamera(device: "/dev/video0", usePassthrough: usePassthrough)
         let confidence = ConfidenceState()
@@ -567,9 +570,9 @@ struct CameraFeedYoloApp {
         let engine: YoloEngine
         do {
             engine = try YoloEngine(modelPath: "yolov8n.onnx", useGpu: useGpu)
-            print("[yolo] model loaded")
+            logger.info("[yolo] model loaded")
         } catch {
-            print("[yolo] failed to load model: \(error)")
+            logger.info("[yolo] failed to load model: \(error)")
             exit(1)
         }
 
@@ -597,7 +600,7 @@ struct CameraFeedYoloApp {
                     try await outbound.write(.text(metaJson))
                     try await outbound.write(.binary(ByteBuffer(bytes: frame)))
                 } catch {
-                    print("[ws] write failed: \(error)")
+                    logger.info("[ws] write failed: \(error)")
                 }
             }
 
@@ -612,15 +615,15 @@ struct CameraFeedYoloApp {
                             }
                             if let c = cmd.confidence {
                                 await confidence.set(c)
-                                print("[yolo] confidence -> \(c)")
+                                logger.info("[yolo] confidence -> \(c)")
                             }
                         } catch {
-                            print("[ws] malformed client message: \(error)")
+                            logger.info("[ws] malformed client message: \(error)")
                         }
                     }
                 }
             } catch {
-                print("[ws] inbound loop error: \(error)")
+                logger.info("[ws] inbound loop error: \(error)")
             }
 
             await camera.unsubscribe(id: id)
@@ -632,7 +635,7 @@ struct CameraFeedYoloApp {
             configuration: .init(address: .hostname("0.0.0.0", port: 6006))
         )
 
-        print("Camera feed (YOLO) running on http://0.0.0.0:6006")
+        logger.info("Camera feed (YOLO) running on http://0.0.0.0:6006")
 
         try await withThrowingDiscardingTaskGroup { group in
             group.addTask {

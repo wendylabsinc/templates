@@ -588,7 +588,7 @@ struct CameraFeedYoloApp {
         let router = Router()
         router.get("/cameras") { _, _ in listCameras() }
         router.get("/", use: spaHandler(staticDir: "."))
-        router.get("{path+}", use: spaHandler(staticDir: "."))
+        router.get("assets/**", use: spaHandler(staticDir: "."))
 
         // ── WebSocket /stream ──
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)

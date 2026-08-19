@@ -20,6 +20,19 @@
       ></canvas>
     </div>
 
+    <div
+      id="loading-overlay"
+      class="fixed inset-0 z-5 flex items-center justify-center bg-black transition-opacity duration-500"
+    >
+      <div class="text-center">
+        <div class="relative w-16 h-16 mx-auto mb-4">
+          <div class="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
+          <div class="absolute inset-0 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+        <p class="text-gray-400 font-medium tracking-wide">LOADING YOLO MODEL</p>
+      </div>
+    </div>
+
     <!-- UI Overlay -->
     <div class="relative z-10 p-6 flex flex-col justify-between h-full pointer-events-none">
       <div class="flex justify-between items-start">
@@ -64,19 +77,6 @@
           <div class="font-bold text-white mb-1">Detected</div>
           <div id="classes-list"></div>
         </div>
-      </div>
-    </div>
-
-    <div
-      id="loading-overlay"
-      class="fixed inset-0 z-20 flex items-center justify-center bg-black transition-opacity duration-500"
-    >
-      <div class="text-center">
-        <div class="relative w-16 h-16 mx-auto mb-4">
-          <div class="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
-          <div class="absolute inset-0 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-        </div>
-        <p class="text-gray-400 font-medium tracking-wide">LOADING YOLO MODEL</p>
       </div>
     </div>
 

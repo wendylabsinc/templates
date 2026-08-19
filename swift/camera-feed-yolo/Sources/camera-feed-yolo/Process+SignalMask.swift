@@ -1,5 +1,10 @@
 import Dispatch
 import Foundation
+#if canImport(Glibc)
+import Glibc
+#elseif canImport(Darwin)
+import Darwin
+#endif
 
 // ───────────────────────────────────────────────────────────────────────────
 // Process.runWithEmptySignalMask()

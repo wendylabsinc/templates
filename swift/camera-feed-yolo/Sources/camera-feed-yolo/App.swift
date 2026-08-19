@@ -1,4 +1,4 @@
-internal import Foundation
+import Foundation
 import Hummingbird
 import HummingbirdWebSocket
 import Logging
@@ -511,7 +511,6 @@ actor MJPEGCamera {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        try process.run()
 
         let handle = pipe.fileHandleForReading
         let (stream, continuation) = AsyncStream<Data>.makeStream()
@@ -521,17 +520,20 @@ actor MJPEGCamera {
         }
         defer { handle.readabilityHandler = nil }
 
+        try process.runWithEmptySignalMask()
+
         var parser = JPEGFrameParser()
-        await withTaskCancellationHandler {
-            for await chunk in stream {
-                let frames = parser.append(chunk)
-                for frame in frames { await self.broadcast(frame) }
+
+        for await chunk in stream {
+            if Task.isCancelled { break }
+            let frames = parser.append(chunk)
+            for frame in frames {
+                await self.broadcast(frame)
             }
-            process.terminate()
-        } onCancel: {
-            process.terminate()
-            continuation.finish()
         }
+
+        process.terminate()
+        process.waitUntilExit()
     }
 }
 

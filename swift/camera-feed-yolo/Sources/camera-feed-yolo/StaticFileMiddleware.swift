@@ -1,4 +1,4 @@
-internal import Foundation
+import Foundation
 import Hummingbird
 import NIOCore
 

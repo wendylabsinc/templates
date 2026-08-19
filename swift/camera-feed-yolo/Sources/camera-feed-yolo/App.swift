@@ -465,11 +465,11 @@ actor MJPEGCamera {
                 } catch is CancellationError {
                     return
                 } catch {
-                    logger.info("[gst] pipeline error: \(error)")
+                    logger.error("[gst] pipeline error: \(error)")
                 }
                 if Task.isCancelled { return }
                 guard await self.hasSubscribers() else { return }
-                logger.info("[gst] retrying pipeline in \(delayMs)ms")
+                logger.warning("[gst] retrying pipeline in \(delayMs)ms")
                 do {
                     try await Task.sleep(for: .milliseconds(delayMs))
                 } catch {
@@ -574,7 +574,7 @@ struct CameraFeedYoloApp {
             engine = try YoloEngine(modelPath: "yolov8n.onnx", useGpu: useGpu)
             logger.info("[yolo] model loaded")
         } catch {
-            logger.info("[yolo] failed to load model: \(error)")
+            logger.critical("[yolo] failed to load model: \(error)")
             exit(1)
         }
 

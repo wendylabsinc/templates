@@ -631,12 +631,12 @@ struct CameraFeedYoloService: Service {
         let app = Application(
             router: router,
             server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
-            configuration: .init(address: .hostname("0.0.0.0", port: 6006))
+            configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
         )
 
         logger.info(
             "Camera feed server starting",
-            metadata: ["server.address": "0.0.0.0", "server.port": "6006"]
+            metadata: ["server.address": "0.0.0.0", "server.port": "{{.PORT}}"]
         )
 
         try await withThrowingDiscardingTaskGroup { group in

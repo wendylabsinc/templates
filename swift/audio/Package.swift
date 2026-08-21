@@ -12,6 +12,7 @@ let package = Package(
         .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
         .package(url: "https://github.com/wendylabsinc/gstreamer-swift.git", branch: "main"),
         .package(url: "https://github.com/apple/swift-container-plugin.git", from: "1.0.0"),
+        .package(url: "https://github.com/swift-otel/swift-otel.git", from: "1.0.0", traits: ["OTLPHTTP", "OTLPGRPC"]),
     ],
     targets: [
         .executableTarget(
@@ -20,6 +21,7 @@ let package = Package(
                 .product(name: "Hummingbird", package: "hummingbird", condition: nil),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
                 .product(name: "GStreamer", package: "gstreamer-swift"),
+                .product(name: "OTel", package: "swift-otel"),
             ]
         ),
     ]

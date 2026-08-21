@@ -37,7 +37,13 @@ actor AudioCapture {
             } catch is CancellationError {
                 // normal shutdown
             } catch {
-                logger.error("pipeline error: \(error)")
+                logger.error(
+                    "Audio pipeline failed",
+                    metadata: [
+                        "audio.device": "\(device ?? "default")",
+                        "error": "\(error)",
+                    ]
+                )
             }
         }
     }

@@ -3,6 +3,7 @@ import Hummingbird
 import HummingbirdWebSocket
 import Logging
 import NIOCore
+import OTel
 import ServiceLifecycle
 
 private struct SwitchCameraMessage: Decodable {
@@ -16,13 +17,28 @@ private struct SwitchMicrophoneMessage: Decodable {
 @main
 struct App {
     static func main() async throws {
+        let observability = try OTel.bootstrap()
         let logger = Logger(label: "{{.APP_ID}}")
+        try await ServiceGroup(
+            services: [observability, FullstackService(logger: logger)],
+            gracefulShutdownSignals: [.sigterm, .sigint],
+            logger: logger
+        ).run()
+    }
+}
 
+private struct FullstackService: Service {
+    let logger: Logger
+
+    func run() async throws {
         let carStore: CarStore
         do {
             carStore = try CarStore(path: "/data/cars.db")
         } catch {
-            logger.critical("Failed to initialize database: \(error)")
+            logger.critical(
+                "Failed to initialize database",
+                metadata: ["db.path": "/data/cars.db", "error": "\(error)"]
+            )
             throw error
         }
 
@@ -150,14 +166,11 @@ struct App {
         )
 
         let hostDisplay = ProcessInfo.processInfo.environment["WENDY_HOSTNAME"] ?? "0.0.0.0"
-        logger.info("Starting server on http://\(hostDisplay):{{.PORT}}")
-
-        let serviceGroup = ServiceGroup(
-            services: [app],
-            gracefulShutdownSignals: [.sigterm, .sigint],
-            logger: logger
+        logger.info(
+            "Fullstack server starting",
+            metadata: ["server.address": "\(hostDisplay)", "server.port": "{{.PORT}}"]
         )
-        try await serviceGroup.run()
+        try await app.runService()
     }
 }
 

@@ -3,6 +3,9 @@ import Hummingbird
 import HummingbirdWebSocket
 import COnnxRuntime
 import CTurboJPEG
+import Logging
+import OTel
+import ServiceLifecycle
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -108,6 +111,7 @@ private func checkStatus(_ status: OpaquePointer?, _ api: UnsafePointer<OrtApi>)
 // release them. Single consumer (the Task.detached in main); @unchecked
 // Sendable is the social contract that lets the engine move into that task.
 final class YoloEngine: @unchecked Sendable {
+    private let logger: Logger
     private let api: UnsafePointer<OrtApi>
     private var env: OpaquePointer?
     private var session: OpaquePointer?
@@ -119,7 +123,8 @@ final class YoloEngine: @unchecked Sendable {
     private var outputNameStr: String = "output0"
     private let decoder: tjhandle?
 
-    init(modelPath: String, useGpu: Bool) throws {
+    init(modelPath: String, useGpu: Bool, logger: Logger) throws {
+        self.logger = logger
         self.api = ortApi()
         self.decoder = tjInitDecompress()
 
@@ -141,12 +146,12 @@ final class YoloEngine: @unchecked Sendable {
             if api.pointee.CreateCUDAProviderOptions(&cudaOpts) == nil, let cuda = cudaOpts {
                 _ = api.pointee.SessionOptionsAppendExecutionProvider_CUDA_V2(optsPtr, cuda)
                 api.pointee.ReleaseCUDAProviderOptions(cuda)
-                print("[yolo] CUDA execution provider requested")
+                logger.info("CUDA execution provider requested")
             } else {
-                print("[yolo] CUDA EP unavailable — using CPU")
+                logger.warning("CUDA execution provider unavailable; using CPU")
             }
         } else {
-            print("[yolo] using CPU execution provider")
+            logger.info("Using CPU execution provider")
         }
 
         var sessionPtr: OpaquePointer?
@@ -391,6 +396,7 @@ func listCameras() -> [CameraInfo] {
 // ───────────────────────────────────────────────────────────────────────────
 
 actor MJPEGCamera {
+    private let logger: Logger
     private var subscribers: [ObjectIdentifier: @Sendable (Data, String) async -> Void] = [:]
     private var pipelineTask: Task<Void, any Error>?
     private var currentDevice: String
@@ -399,7 +405,8 @@ actor MJPEGCamera {
     private var latestMetaJson: String = "{\"detections\":0,\"inference_ms\":0,\"classes\":{},\"boxes\":[],\"frame_w\":0,\"frame_h\":0}"
     private var inferenceCallback: (@Sendable (Data) async -> Void)?
 
-    init(device: String = "/dev/video0", usePassthrough: Bool) {
+    init(device: String = "/dev/video0", usePassthrough: Bool, logger: Logger) {
+        self.logger = logger
         self.currentDevice = device
         self.usePassthrough = usePassthrough
     }
@@ -462,11 +469,21 @@ actor MJPEGCamera {
                 } catch is CancellationError {
                     return
                 } catch {
-                    print("[gst] pipeline error: \(error)")
+                    logger.error(
+                        "GStreamer pipeline error",
+                        metadata: [
+                            "camera.device": "\(device)",
+                            "capture.mode": "\(passthrough ? "passthrough" : "decode-encode")",
+                            "error": "\(error)",
+                        ]
+                    )
                 }
                 if Task.isCancelled { return }
                 guard await self.hasSubscribers() else { return }
-                print("[gst] retrying pipeline in \(delayMs)ms")
+                logger.info(
+                    "Retrying GStreamer pipeline",
+                    metadata: ["retry.delay_ms": "\(delayMs)"]
+                )
                 do {
                     try await Task.sleep(for: .milliseconds(delayMs))
                 } catch {
@@ -554,23 +571,51 @@ private struct ClientCommand: Decodable {
 @main
 struct CameraFeedYoloApp {
     static func main() async throws {
+        let observability = try OTel.bootstrap()
+        let logger = Logger(label: "{{.APP_ID}}")
+        try await ServiceGroup(
+            services: [observability, CameraFeedYoloService(logger: logger)],
+            gracefulShutdownSignals: [.sigterm, .sigint],
+            logger: logger
+        ).run()
+    }
+}
+
+struct CameraFeedYoloService: Service {
+    let logger: Logger
+
+    func run() async throws {
         let useGpu = envTruthy("WENDY_HAS_GPU")
         let rpi = isRpi()
         let usePassthrough = !useGpu || rpi
         let minIntervalMs: UInt64 = useGpu ? UInt64(1000 / 15) : UInt64(1000 / 3)
 
-        print("[startup] platform=\(ProcessInfo.processInfo.environment["WENDY_PLATFORM"] ?? "unknown"), has_gpu=\(useGpu), is_rpi=\(rpi), capture=\(usePassthrough ? "passthrough" : "decode-encode")")
+        logger.info(
+            "Camera feed starting",
+            metadata: [
+                "wendy.platform": "\(ProcessInfo.processInfo.environment["WENDY_PLATFORM"] ?? "unknown")",
+                "gpu.enabled": "\(useGpu)",
+                "device.raspberry_pi": "\(rpi)",
+                "capture.mode": "\(usePassthrough ? "passthrough" : "decode-encode")",
+            ]
+        )
 
-        let camera = MJPEGCamera(device: "/dev/video0", usePassthrough: usePassthrough)
+        let camera = MJPEGCamera(device: "/dev/video0", usePassthrough: usePassthrough, logger: logger)
         let confidence = ConfidenceState()
 
         let engine: YoloEngine
         do {
-            engine = try YoloEngine(modelPath: "yolov8n.onnx", useGpu: useGpu)
-            print("[yolo] model loaded")
+            engine = try YoloEngine(modelPath: "yolov8n.onnx", useGpu: useGpu, logger: logger)
+            logger.info(
+                "YOLO model loaded",
+                metadata: ["model.path": "yolov8n.onnx", "gpu.enabled": "\(useGpu)"]
+            )
         } catch {
-            print("[yolo] failed to load model: \(error)")
-            exit(1)
+            logger.critical(
+                "Failed to load YOLO model",
+                metadata: ["model.path": "yolov8n.onnx", "error": "\(error)"]
+            )
+            throw error
         }
 
         let pendingFrames = AsyncStream.makeStream(of: Data.self, bufferingPolicy: .bufferingNewest(1))
@@ -597,7 +642,7 @@ struct CameraFeedYoloApp {
                     try await outbound.write(.text(metaJson))
                     try await outbound.write(.binary(ByteBuffer(bytes: frame)))
                 } catch {
-                    print("[ws] write failed: \(error)")
+                    logger.error("WebSocket write failed", metadata: ["error": "\(error)"])
                 }
             }
 
@@ -612,15 +657,21 @@ struct CameraFeedYoloApp {
                             }
                             if let c = cmd.confidence {
                                 await confidence.set(c)
-                                print("[yolo] confidence -> \(c)")
+                                logger.info(
+                                    "YOLO confidence changed",
+                                    metadata: ["model.confidence_threshold": "\(c)"]
+                                )
                             }
                         } catch {
-                            print("[ws] malformed client message: \(error)")
+                            logger.warning(
+                                "Malformed WebSocket client message",
+                                metadata: ["error": "\(error)"]
+                            )
                         }
                     }
                 }
             } catch {
-                print("[ws] inbound loop error: \(error)")
+                logger.error("WebSocket inbound loop error", metadata: ["error": "\(error)"])
             }
 
             await camera.unsubscribe(id: id)
@@ -632,7 +683,10 @@ struct CameraFeedYoloApp {
             configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
         )
 
-        print("Camera feed (YOLO) running on http://0.0.0.0:{{.PORT}}")
+        logger.info(
+            "Camera feed server starting",
+            metadata: ["server.address": "0.0.0.0", "server.port": "{{.PORT}}"]
+        )
 
         try await withThrowingDiscardingTaskGroup { group in
             group.addTask {

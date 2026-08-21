@@ -546,35 +546,17 @@ actor MJPEGCamera {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-
-        let pendingDataSize = Atomic<Int>(0)
         let handle = pipe.fileHandleForReading
-        let (stream, continuation) = AsyncStream<Data>.makeStream()
-        handle.readabilityHandler = { fh in
-            let data = fh.availableData
-            if data.isEmpty {
-                continuation.finish()
-            } else {
-                continuation.yield(data)
-                pendingDataSize.add(data.count, ordering: .relaxed)
-            }
-        }
-        defer { handle.readabilityHandler = nil }
 
         try process.runWithEmptySignalMask()
 
         var parser = JPEGFrameParser()
 
-        for await chunk in stream {
-            if Task.isCancelled { break }
-            let (_, pendingSize) = pendingDataSize.add(-chunk.count, ordering: .relaxed)
+        let reader = FileHandleAsyncReader(fileHandle: handle, maxPendingBytes: 1_000_000)
+        while let chunk = await reader.read() {
             let frames = parser.append(chunk)
             for frame in frames {
                 await self.broadcast(frame)
-            }
-            if pendingSize > 1_000_000 {
-                self.logger.warning("video data buffer exceeds 1MB")
-                pendingDataSize.store(0, ordering: .relaxed)
             }
         }
 

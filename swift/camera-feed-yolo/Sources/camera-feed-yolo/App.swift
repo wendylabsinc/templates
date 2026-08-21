@@ -400,23 +400,16 @@ struct JPEGFrameParser: Sendable {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Camera info & enumeration
-// ───────────────────────────────────────────────────────────────────────────
-
-struct CameraInfo: Codable, Sendable {
-    let id: String
-    let name: String
-}
-
-func listCameras() -> [CameraInfo] {
-    V4LCameraDiscovery().listCameras().map { CameraInfo(id: $0.device, name: $0.name) }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
 // MJPEGCamera actor — owns the gst-launch-1.0 process + tracks subscribers.
 // ───────────────────────────────────────────────────────────────────────────
 
 actor MJPEGCamera {
+    struct CameraInfo: Codable, Sendable {
+        let id: String
+        let name: String
+        let selected: Bool
+    }
+
     private let logger: Logger
     private var subscribers: [ObjectIdentifier: @Sendable (Data, String) async -> Void] = [:]
     private var pipelineTask: Task<Void, any Error>?
@@ -456,6 +449,10 @@ actor MJPEGCamera {
         guard device != currentDevice else { return }
         currentDevice = device
         if !subscribers.isEmpty { stopPipeline(); startPipeline() }
+    }
+
+    func listCameras() -> [CameraInfo] {
+        V4LCameraDiscovery().listCameras().map { CameraInfo(id: $0.device, name: $0.name, selected: $0.device == currentDevice) }
     }
 
     private func broadcast(_ frame: Data) async {
@@ -528,7 +525,14 @@ actor MJPEGCamera {
         // Passthrough on RPi/CPU avoids a 30fps decode/re-encode brown-out under
         // GStreamer + inference load. Jetson keeps the decode/encode for quality
         // since it has hardware JPEG codecs.
-        if passthrough {
+        if device == "test" {
+            process.arguments = [
+                "videotestsrc", "!",
+                "video/x-raw,width=1280,height=720,framerate=30/1", "!",
+                "jpegenc", "!",
+                "fdsink", "fd=1",
+            ]
+        } else if passthrough {
             process.arguments = [
                 "v4l2src", "device=\(device)", "!",
                 "image/jpeg", "!",
@@ -642,7 +646,7 @@ struct CameraFeedYoloService: Service {
 
         // ── HTTP routes ──
         let router = Router()
-        router.get("/cameras") { _, _ in listCameras() }
+        router.get("/cameras") { _, _ in await camera.listCameras() }
         router.get("/", use: spaHandler(staticDir: "."))
         router.get("assets/**", use: spaHandler(staticDir: "."))
 

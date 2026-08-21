@@ -33,6 +33,15 @@
       </div>
     </div>
 
+    <div
+      id="no-camera-overlay"
+      class="opacity-0 pointer-events-none fixed inset-0 z-8 flex items-center justify-center bg-black transition-opacity duration-500"
+    >
+      <div class="text-center">
+        <p class="text-gray-400 font-medium tracking-wide">NO CAMERA DETECTED</p>
+      </div>
+    </div>
+
     <!-- UI Overlay -->
     <div class="relative z-10 p-6 flex flex-col justify-between h-full pointer-events-none">
       <div class="flex justify-between items-start">
@@ -84,7 +93,8 @@
       const imgEl = document.getElementById("video-stream");
       const canvasEl = document.getElementById("overlay");
       const ctx = canvasEl.getContext("2d");
-      const overlay = document.getElementById("loading-overlay");
+      const loadingOverlay = document.getElementById("loading-overlay");
+      const noCameraOverlay = document.getElementById("no-camera-overlay");
       const statusDot = document.getElementById("status-dot");
       const statusText = document.getElementById("status-text");
       const fpsDisplay = document.getElementById("fps");
@@ -230,10 +240,18 @@
         try {
           const cameras = await (await fetch("/cameras")).json();
           camSelect.innerHTML = "";
-          if (!cameras.length) { camSelect.innerHTML = '<option>No cameras</option>'; return; }
+          if (!cameras.length) {
+            camSelect.innerHTML = '<option>No cameras</option>';
+            noCameraOverlay.classList.remove("opacity-0", "pointer-events-none");
+            return;
+          } else {
+            noCameraOverlay.classList.add("opacity-0", "pointer-events-none");
+          }
           cameras.forEach((c, i) => {
             const o = document.createElement("option");
-            o.value = c.id; o.textContent = c.name || `Camera ${i}`;
+            o.value = c.id;
+            o.textContent = c.name || `Camera ${i}`;
+            o.selected = c.selected;
             camSelect.appendChild(o);
           });
         } catch { camSelect.innerHTML = '<option>Failed to load</option>'; }
@@ -256,8 +274,11 @@
           if (e.data instanceof ArrayBuffer) {
             imgEl.src = arrayBufferToDataUrl(e.data);
             frameCount++;
-            overlay.classList.add("opacity-0", "pointer-events-none");
+            loadingOverlay.classList.add("opacity-0", "pointer-events-none");
             setStatus("Live", "green");
+            if (!noCameraOverlay.classList.contains("opacity-0")) {
+              loadCameras();
+            }
             reconnectDelay = 2000;
           } else {
             try {
@@ -268,7 +289,7 @@
         };
         ws.onclose = () => {
           setStatus("Disconnected", "red");
-          overlay.classList.remove("opacity-0", "pointer-events-none");
+          loadingOverlay.classList.remove("opacity-0", "pointer-events-none");
           setTimeout(connect, reconnectDelay);
           reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
         };

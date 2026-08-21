@@ -9,6 +9,7 @@ let package = Package(
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.21.1"),
         .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-container-plugin", from: "1.0.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.101.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0"),
         .package(url: "https://github.com/swift-otel/swift-otel.git", from: "1.0.0", traits: ["OTLPHTTP", "OTLPGRPC"]),
     ],
@@ -30,7 +31,22 @@ let package = Package(
                 .product(name: "OTel", package: "swift-otel"),
                 "COnnxRuntime",
                 "CTurboJPEG",
+                "WendyLiteAVSource",
             ]
-        )
+        ),
+        .target(
+            name: "WendyLiteAVSource",
+            dependencies: [
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
+            ],
+            // Reference material for whoever reads the source, not something to
+            // ship in a bundle, so excluded rather than declared a resource.
+            exclude: ["Doc"]
+        ),
+        .executableTarget(
+            name: "cam-mac",
+            dependencies: ["WendyLiteAVSource"]
+        ),
     ]
 )

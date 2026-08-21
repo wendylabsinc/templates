@@ -7,6 +7,7 @@ import Logging
 import OTel
 import ServiceLifecycle
 import Synchronization
+import WendyLiteAVSource
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -328,6 +329,21 @@ final class YoloEngine: @unchecked Sendable {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Camera info & enumeration
+// ───────────────────────────────────────────────────────────────────────────
+
+enum CameraAddress: Sendable, Equatable {
+    case v4l2(device: String)
+    case wendyLite(host: String, port: Int)
+}
+
+struct Camera: Sendable {
+    let id: String
+    let name: String
+    let address: CameraAddress
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // MJPEGCamera actor — owns the gst-launch-1.0 process + tracks subscribers.
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -341,15 +357,16 @@ actor MJPEGCamera {
     private let logger: Logger
     private var subscribers: [ObjectIdentifier: @Sendable (Data, String) async -> Void] = [:]
     private var pipelineTask: Task<Void, any Error>?
-    private var currentDevice: String
+    private var currentCameraAddress: CameraAddress = .v4l2(device: "/dev/video0")
     private let usePassthrough: Bool
     private var latestJpeg: Data?
     private var latestMetaJson: String = "{\"detections\":0,\"inference_ms\":0,\"classes\":{},\"boxes\":[],\"frame_w\":0,\"frame_h\":0}"
     private var inferenceCallback: (@Sendable (Data) async -> Void)?
+    private let useWendyLite = false
 
-    init(device: String = "/dev/video0", usePassthrough: Bool, logger: Logger) {
+    init(address: CameraAddress = .v4l2(device: "/dev/video0"), usePassthrough: Bool, logger: Logger) {
         self.logger = logger
-        self.currentDevice = device
+        self.currentCameraAddress = address
         self.usePassthrough = usePassthrough
     }
 
@@ -373,14 +390,24 @@ actor MJPEGCamera {
         if subscribers.isEmpty { stopPipeline() }
     }
 
-    func switchCamera(to device: String) {
-        guard device != currentDevice else { return }
-        currentDevice = device
+    func switchCamera(to address: CameraAddress) {
+        logger.info("[mjpeg-cam] switch camera to \(address)")
+        guard address != currentCameraAddress else { return }
+        currentCameraAddress = address
         if !subscribers.isEmpty { stopPipeline(); startPipeline() }
     }
 
-    func listCameras() -> [CameraInfo] {
-        V4LCameraDiscovery().listCameras().map { CameraInfo(id: $0.device, name: $0.name, selected: $0.device == currentDevice) }
+    func listCameras() -> [Camera] {
+        V4LCameraDiscovery().listCameras().map {
+            Camera(id: $0.device, name: $0.name, address: .v4l2(device: $0.device))
+        } +
+        AVSourceDiscovery.shared.listCameras().map { info in
+            Camera(id: info.id, name: info.name, address: .wendyLite(host: info.host, port: info.port))
+        }
+    }
+
+    func listCameraInfos() -> [CameraInfo] {
+        listCameras().map { CameraInfo(id: $0.id, name: $0.name, selected: $0.address == currentCameraAddress) }
     }
 
     private func broadcast(_ frame: Data) async {
@@ -404,39 +431,73 @@ actor MJPEGCamera {
     }
 
     private func startPipeline() {
-        let device = currentDevice
-        let passthrough = usePassthrough
-        pipelineTask = Task {
-            var delayMs: UInt64 = 1000
-            while !Task.isCancelled {
-                guard await self.hasSubscribers() else { return }
-                do {
-                    try await self.runGStreamerPipeline(device: device, passthrough: passthrough)
-                } catch is CancellationError {
-                    return
-                } catch {
-                    logger.error(
-                        "GStreamer pipeline error",
-                        metadata: [
-                            "camera.device": "\(device)",
-                            "capture.mode": "\(passthrough ? "passthrough" : "decode-encode")",
-                            "error": "\(error)",
-                        ]
-                    )
+        logger.info("[mjpeg-cam] start pipeline")
+        switch currentCameraAddress {
+            case .wendyLite(let host, let port):
+                // AVSource is its own actor, so wiring it up has to hop off this
+                // one — hence the Task rather than a straight-line call.
+                pipelineTask = Task {
+                    while !Task.isCancelled {
+                        let source = AVSource(host: host, port: port)
+                        // Weak here and not on the Task: the source retains this
+                        // handler, so a strong capture would cycle back through
+                        // wendyLiteCam.
+                        let sub = await source.subscribeToVideoFrames { [weak self] frame in
+                            await self?.broadcast(frame.jpeg)
+                        }
+                        do {
+                            logger.info("[avsource] starting...")
+                            try await source.start()
+                        } catch {
+                            logger.info("[avsource] connect failed: \(error)")
+                            await source.unsubscribe(sub)
+                            try await Task.sleep(for: .milliseconds(5000))
+                            continue;
+                        }
+
+                        while await source.isConnected && !Task.isCancelled {
+                            do { try await Task.sleep(for: .milliseconds(1000)) } catch { break }
+                        }
+
+                        await source.stop()
+                        await source.unsubscribe(sub)
+                    }
+                    logger.info("[avsource] stopped")
                 }
-                if Task.isCancelled { return }
-                guard await self.hasSubscribers() else { return }
-                logger.info(
-                    "Retrying GStreamer pipeline",
-                    metadata: ["retry.delay_ms": "\(delayMs)"]
-                )
-                do {
-                    try await Task.sleep(for: .milliseconds(delayMs))
-                } catch {
-                    return
+            case .v4l2(let device):
+                let passthrough = usePassthrough
+                pipelineTask = Task {
+                    var delayMs: UInt64 = 1000
+                    while !Task.isCancelled {
+                        guard self.hasSubscribers() else { return }
+                        do {
+                            try await self.runGStreamerPipeline(device: device, passthrough: passthrough)
+                        } catch is CancellationError {
+                            return
+                        } catch {
+                            logger.error(
+                                "GStreamer pipeline error",
+                                metadata: [
+                                    "camera.device": "\(device)",
+                                    "capture.mode": "\(passthrough ? "passthrough" : "decode-encode")",
+                                    "error": "\(error)",
+                                ]
+                            )
+                        }
+                        if Task.isCancelled { return }
+                        guard self.hasSubscribers() else { return }
+                        logger.info(
+                            "Retrying GStreamer pipeline",
+                            metadata: ["retry.delay_ms": "\(delayMs)"]
+                        )
+                        do {
+                            try await Task.sleep(for: .milliseconds(delayMs))
+                        } catch {
+                            return
+                        }
+                        delayMs = min(UInt64(Double(delayMs) * 1.5), 5000)
+                    }
                 }
-                delayMs = min(UInt64(Double(delayMs) * 1.5), 5000)
-            }
         }
     }
 
@@ -519,10 +580,10 @@ private struct ClientCommand: Decodable {
 @main
 struct CameraFeedYoloApp {
     static func main() async throws {
-        let observability = try OTel.bootstrap()
+        // let observability = try OTel.bootstrap()
         let logger = Logger(label: "camera-feed-yolo")
         try await ServiceGroup(
-            services: [observability, CameraFeedYoloService(logger: logger)],
+            services: [CameraFeedYoloService(logger: logger)],
             gracefulShutdownSignals: [.sigterm, .sigint],
             logger: logger
         ).run()
@@ -548,7 +609,7 @@ struct CameraFeedYoloService: Service {
             ]
         )
 
-        let camera = MJPEGCamera(device: "/dev/video0", usePassthrough: usePassthrough, logger: logger)
+        let camera = MJPEGCamera(address: .v4l2(device: "/dev/video0"), usePassthrough: usePassthrough, logger: logger)
         let confidence = ConfidenceState()
 
         let engine: YoloEngine
@@ -574,7 +635,7 @@ struct CameraFeedYoloService: Service {
 
         // ── HTTP routes ──
         let router = Router()
-        router.get("/cameras") { _, _ in await camera.listCameras() }
+        router.get("/cameras") { _, _ in await camera.listCameraInfos() }
         router.get("/", use: spaHandler(staticDir: "."))
         router.get("assets/**", use: spaHandler(staticDir: "."))
 
@@ -603,8 +664,11 @@ struct CameraFeedYoloService: Service {
                         guard let data = text.data(using: .utf8) else { continue }
                         do {
                             let cmd = try JSONDecoder().decode(ClientCommand.self, from: data)
-                            if let dev = cmd.switch_camera {
-                                await camera.switchCamera(to: dev)
+                            if let id = cmd.switch_camera {
+                                let list = await camera.listCameras()
+                                if let cam = list.first(where: { $0.id == id }) {
+                                    await camera.switchCamera(to: cam.address)
+                                }
                             }
                             if let c = cmd.confidence {
                                 await confidence.set(c)

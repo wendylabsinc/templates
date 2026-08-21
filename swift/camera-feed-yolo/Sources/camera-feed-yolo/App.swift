@@ -6,6 +6,7 @@ import CTurboJPEG
 import Logging
 import OTel
 import ServiceLifecycle
+import Synchronization
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -326,31 +327,75 @@ final class YoloEngine: @unchecked Sendable {
     }
 }
 
+/// Collect data chunks from a stream and emit complete JPEG frames.
 struct JPEGFrameParser: Sendable {
-    private var buffer = Data()
+    private static let maxBuffered = 10_000_000
+
+    private var buffer = Data(capacity: maxBuffered)
+    // Index of the SOI marker, once found.
+    private var soi: Int?
+    // First index not yet examined as the *first* byte of a marker pair.
+    private var scanned = 0
+
     mutating func append(_ data: Data) -> [Data] {
         // Cap before append so a malformed source can't grow the buffer past
         // the limit before the next reset.
-        if buffer.count + data.count > 10_000_000 { buffer.removeAll() }
+        if buffer.count + data.count > Self.maxBuffered { reset() }
         buffer.append(data)
+
         var frames: [Data] = []
-        while let range = findFrame() {
-            frames.append(Data(buffer[range]))
-            buffer.removeSubrange(buffer.startIndex...range.upperBound)
+        while true {
+            if soi == nil {
+                guard let start = marker(0xD8, from: scanned) else {
+                    // Nothing up to the final byte can open a frame, so drop it
+                    // all; keep the last byte in case it is a leading 0xFF.
+                    drop(through: buffer.endIndex - 2)
+                    scanned = buffer.startIndex
+                    break
+                }
+                soi = start
+                scanned = start + 2  // EOI can't overlap SOI
+            }
+            guard let end = marker(0xD9, from: scanned) else {
+                // A pair can't open at the last byte, so resume there: that is
+                // one byte before whatever arrives next.
+                scanned = max(scanned, buffer.endIndex - 1)
+                break
+            }
+            frames.append(Data(buffer[soi!...(end + 1)]))
+            drop(through: end + 1)
+            soi = nil
+            scanned = buffer.startIndex
         }
         return frames
     }
-    private func findFrame() -> ClosedRange<Int>? {
-        guard buffer.count >= 4 else { return nil }
-        var soi: Int?
-        for i in buffer.startIndex..<(buffer.endIndex - 1) {
-            if buffer[i] == 0xFF && buffer[i + 1] == 0xD8 { soi = i; break }
-        }
-        guard let start = soi else { return nil }
-        for i in (start + 2)..<(buffer.endIndex - 1) {
-            if buffer[i] == 0xFF && buffer[i + 1] == 0xD9 { return start...(i + 1) }
+
+    /// First index >= `from` holding the pair `0xFF, second`.
+    private func marker(_ second: UInt8, from: Int) -> Int? {
+        let origin = buffer.startIndex
+        let from = max(from, origin)
+        guard buffer.endIndex - from >= 2 else { return nil }
+        let bytes = buffer.span
+        let limit = bytes.count - 1  // last index that can open a pair
+        var i = from - origin
+        while i < limit {
+            if bytes[i] == 0xFF && bytes[i + 1] == second { return i + origin }
+            i += 1
         }
         return nil
+    }
+
+    private mutating func drop(through index: Int) {
+        guard index >= buffer.startIndex else { return }
+        buffer.removeSubrange(buffer.startIndex...index)
+    }
+
+    // Clears the scan state too: a stale `soi` past the end of an emptied
+    // buffer would trap on the next emit.
+    private mutating func reset() {
+        buffer.removeAll(keepingCapacity: true)
+        soi = nil
+        scanned = 0
     }
 }
 
@@ -502,11 +547,17 @@ actor MJPEGCamera {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
 
+        let pendingDataSize = Atomic<Int>(0)
         let handle = pipe.fileHandleForReading
         let (stream, continuation) = AsyncStream<Data>.makeStream()
         handle.readabilityHandler = { fh in
             let data = fh.availableData
-            if data.isEmpty { continuation.finish() } else { continuation.yield(data) }
+            if data.isEmpty {
+                continuation.finish()
+            } else {
+                continuation.yield(data)
+                pendingDataSize.add(data.count, ordering: .relaxed)
+            }
         }
         defer { handle.readabilityHandler = nil }
 
@@ -516,9 +567,14 @@ actor MJPEGCamera {
 
         for await chunk in stream {
             if Task.isCancelled { break }
+            let (_, pendingSize) = pendingDataSize.add(-chunk.count, ordering: .relaxed)
             let frames = parser.append(chunk)
             for frame in frames {
                 await self.broadcast(frame)
+            }
+            if pendingSize > 1_000_000 {
+                self.logger.warning("video data buffer exceeds 1MB")
+                pendingDataSize.store(0, ordering: .relaxed)
             }
         }
 
@@ -614,13 +670,16 @@ struct CameraFeedYoloService: Service {
             final class ConnectionID: Sendable {}
             let connID = ConnectionID()
             let id = ObjectIdentifier(connID)
+            let sendSlot = SendSlot()
 
             await camera.subscribe(id: id) { frame, metaJson in
-                do {
-                    try await outbound.write(.text(metaJson))
-                    try await outbound.write(.binary(ByteBuffer(bytes: frame)))
-                } catch {
-                    logger.error("WebSocket write failed", metadata: ["error": "\(error)"])
+                await sendSlot.trySend {
+                    do {
+                        try await outbound.write(.text(metaJson))
+                        try await outbound.write(.binary(ByteBuffer(bytes: frame)))
+                    } catch {
+                        logger.error("WebSocket write failed", metadata: ["error": "\(error)"])
+                    }
                 }
             }
 
@@ -699,4 +758,21 @@ struct CameraFeedYoloService: Service {
             }
         }
     }
+}
+
+actor SendSlot {
+    private var inFlight = false
+
+    // Starts `body` detached so the broadcast loop isn't blocked, unless a
+    // previous send is still running — in that case the frame is dropped.
+    func trySend(_ body: @escaping @Sendable () async -> Void) {
+        guard !inFlight else { return }
+        inFlight = true
+        Task {
+            await body()
+            await self.finish()
+        }
+    }
+
+    private func finish() { inFlight = false }
 }

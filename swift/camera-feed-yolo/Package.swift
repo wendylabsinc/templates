@@ -10,6 +10,7 @@ let package = Package(
         .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
         .package(url: "https://github.com/apple/swift-container-plugin", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-log.git", from: "1.14.0"),
+        .package(url: "https://github.com/swift-otel/swift-otel.git", from: "1.0.0", traits: ["OTLPHTTP", "OTLPGRPC"]),
     ],
     targets: [
         .systemLibrary(
@@ -26,6 +27,7 @@ let package = Package(
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
                 .product(name: "Logging", package: "swift-log"),
+                .product(name: "OTel", package: "swift-otel"),
                 "COnnxRuntime",
                 "CTurboJPEG",
             ]

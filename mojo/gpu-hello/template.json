@@ -1,0 +1,21 @@
+{
+    "name": "gpu-hello",
+    "description": "Pure-Mojo GPU diagnostics: vector-add + matmul kernels on the device GPU (Jetson sm_87/sm_110), report served over HTTP",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port for the diagnostics report",
+            "type": "integer",
+            "default": 9020,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

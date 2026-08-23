@@ -196,6 +196,11 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   practical — it just isn't documented or guaranteed stable across releases.
 - **Status: workaround** (undocumented). Ask Modular to document/stabilize the runtime-lib
   contract or add a `--static` / bundle mode.
+- **GPU case verified on-device (2026-08-23, Orin Nano):** an AOT `--target-accelerator sm_87`
+  binary adds exactly one more lib (`libAsyncRTMojoBindings.so`, 1.2 MB) and **executes GPU
+  kernels from a `debian:bookworm-slim` final stage** (~110 MB image, no Python, no SDK) with
+  the copied libs on `LD_LIBRARY_PATH` — the host driver's `libcuda` is injected by the
+  container runtime. This is the packaging pattern `mojo/gpu-hello` ships.
 - **Upstream:** https://github.com/modular/modular/issues/898.
 
 ## MMF-010: No ESP32 / Xtensa / bare-metal Mojo target <a name="mmf-010"></a>
@@ -397,6 +402,14 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     (MMF-018).
   - Telemetry: `max serve` POSTs to `telemetry.modular.com/v1/metrics`; DNS failure in the
     container produces full tracebacks in the serve log (MMF-008 evidence; non-fatal).
+
+- **2026-08-23 · same Orin Nano · `mojo/gpu-hello` template (first Mojo port shipped):**
+  deployed via `wendy run` — AOT sm_87 build selected from injected `WENDY_PLATFORM`/
+  `WENDY_DEVICE_TYPE` build args, slim no-SDK final image. On-device report:
+  `vector_add n=1048576 errors=0 first_launch_us=62166 steady_us=239` ·
+  `matmul n=512 errors=0 time_s=0.00184 gflops=145.7` (naive kernel, fp32) · status OK,
+  served by the pure-Mojo HTTP layer. Steady-state kernel launch+sync of ~240 µs and
+  ~146 GFLOPs naive matmul are healthy sm_87 numbers.
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

@@ -3,98 +3,197 @@
         {
             "name": "blink-led",
             "description": "Blink the built-in LED on an ESP32 using GPIO",
-            "targets": ["wendy-lite"],
-            "languages": ["swift"]
+            "targets": [
+                "wendy-lite"
+            ],
+            "languages": [
+                "swift"
+            ]
         },
         {
             "name": "hello-world",
             "description": "Say 'Hello, World'",
-            "targets": ["wendy-lite"],
-            "languages": ["swift"]
+            "targets": [
+                "wendy-lite"
+            ],
+            "languages": [
+                "swift"
+            ]
         },
         {
             "name": "simple-api",
-            "description": "Minimal HTTP API with JSON endpoints"
+            "description": "Minimal HTTP API with JSON endpoints",
+            "languages": [
+                "python",
+                "swift",
+                "rust",
+                "node",
+                "cpp"
+            ]
         },
         {
             "name": "fullstack",
-            "description": "Fullstack app: API backend + React/shadcn frontend"
+            "description": "Fullstack app: API backend + React/shadcn frontend",
+            "languages": [
+                "python",
+                "swift",
+                "rust",
+                "node",
+                "cpp"
+            ]
         },
         {
             "name": "camera-feed",
-            "description": "Live camera feed: GStreamer MJPEG over WebSocket"
+            "description": "Live camera feed: GStreamer MJPEG over WebSocket",
+            "languages": [
+                "python",
+                "swift",
+                "rust",
+                "node",
+                "cpp"
+            ]
         },
         {
             "name": "audio",
-            "description": "Live audio waveform visualization with mic capture"
+            "description": "Live audio waveform visualization with mic capture",
+            "languages": [
+                "python",
+                "swift",
+                "rust",
+                "node",
+                "cpp"
+            ]
         },
         {
             "name": "voice-ai-pipecat",
             "description": "Voice AI assistant: Pipecat + Gemini 2.5 Flash + local faster-whisper STT + Piper TTS",
-            "languages": ["python"]
+            "languages": [
+                "python"
+            ]
         },
         {
             "name": "llm",
             "description": "Local LLM chat app: Ollama + Open WebUI on WendyOS",
-            "targets": ["wendyos"],
-            "languages": ["python"]
+            "targets": [
+                "wendyos"
+            ],
+            "languages": [
+                "python"
+            ]
         },
         {
             "name": "mac-llm",
             "description": "Native macOS MLX LLM chat app with Open WebUI",
-            "targets": ["darwin"],
-            "languages": ["swift"]
+            "targets": [
+                "darwin"
+            ],
+            "languages": [
+                "swift"
+            ]
         },
         {
             "name": "camera-feed-yolo",
-            "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
+            "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)",
+            "languages": [
+                "python",
+                "swift",
+                "rust",
+                "node",
+                "cpp"
+            ]
         },
         {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
-            "languages": ["python", "cpp"]
+            "languages": [
+                "python",
+                "cpp"
+            ]
         },
         {
             "name": "go2-rc",
             "description": "Remote-control the Unitree Go2 EDU from a browser: a 3-service app group (motion API + camera stream + teleop web UI)",
-            "languages": ["python"]
+            "languages": [
+                "python"
+            ]
         },
         {
             "name": "g1-rc",
             "description": "Remote-control the Unitree G1 humanoid from a browser: a 3-service app group (motion API + camera stream + teleop web UI) with posture, gesture, and arm-preset controls",
-            "languages": ["python"]
+            "languages": [
+                "python"
+            ]
         },
         {
             "name": "go2-initial-test",
             "description": "Pre-hackathon hardware self-test for the Unitree Go2: one tiny app per hardware interface (camera, LiDAR, mic, speaker, IMU, foot contact, battery, motion, GPU, Bluetooth, cloud) plus a dashboard UI showing a live pass/fail go/no-go board",
-            "languages": ["python"]
+            "languages": [
+                "python"
+            ]
         },
         {
             "name": "go2-foxglove",
             "description": "Stream a Unitree Go2 into Foxglove: LiDAR point cloud, pose+TF, body state and UWB over one WebSocket, plus the front camera (WebRTC). Ships a ready-made Foxglove layout.",
-            "languages": ["python"]
+            "languages": [
+                "python"
+            ]
         },
         {
             "name": "rc-car",
             "description": "Remote-control a Yahboom ROSMASTER R2 (Ackerman) robot car from a browser: a 3-service app group (Rosmaster motion + UVC camera + teleop web UI)",
-            "languages": ["python"]
+            "languages": [
+                "python"
+            ]
         },
         {
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
-            "languages": ["python"]
+            "languages": [
+                "python"
+            ]
         },
         {
             "name": "ros2-talker-listener",
             "description": "ROS 2 talker/listener demo in Swift (swift-ros2 over CycloneDDS): std_msgs/String publisher + subscriber as a two-service app group",
-            "languages": ["swift"]
+            "languages": [
+                "swift"
+            ]
+        },
+        {
+            "name": "gpu-hello",
+            "description": "Pure-Mojo GPU diagnostics: verified vector-add + matmul kernels on the device GPU (Jetson sm_87/sm_110), report served over HTTP",
+            "targets": [
+                "wendyos"
+            ],
+            "languages": [
+                "mojo"
+            ]
         }
     ],
     "languages": [
-        { "key": "python", "name": "Python" },
-        { "key": "swift", "name": "Swift" },
-        { "key": "rust", "name": "Rust" },
-        { "key": "node", "name": "Node (TypeScript)" },
-        { "key": "cpp", "name": "C++" }
+        {
+            "key": "python",
+            "name": "Python"
+        },
+        {
+            "key": "swift",
+            "name": "Swift"
+        },
+        {
+            "key": "rust",
+            "name": "Rust"
+        },
+        {
+            "key": "node",
+            "name": "Node (TypeScript)"
+        },
+        {
+            "key": "cpp",
+            "name": "C++"
+        },
+        {
+            "key": "mojo",
+            "name": "Mojo"
+        }
     ]
 }

@@ -128,9 +128,17 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   system RAM and hard-freeze the machine (DGX Spark report: screen corruption, reboot required;
   `--max-batch-size 1 --max-length 10000` did not save it in that instance). On a robot, an OOM
   that locks the host is a safety failure, not a perf bug.
-- **Workaround:** always pass explicit `--max-batch-size`, `--max-length`,
-  `--device-memory-utilization` on unified-memory devices. Our Pattern C templates hard-require
-  these flags.
+- **Jetson evidence (2026-08-23, Orin Nano 8GB, JP7.2, MAX 26.5.0):** even with explicit
+  conservative-looking flags (`--max-batch-size 1 --max-length 2048
+  --device-memory-utilization 0.5`), serving a **135M-parameter** model got the model worker
+  **SIGKILLed (OOM)** during "Pre-capturing overlap device graphs" warmup; the VMM=0 retry was
+  killed ~1 minute later during its own startup. On unified memory,
+  `--device-memory-utilization 0.5` reserves ~3.9 GB of "device" memory that is the same
+  physical RAM the host, compile working set, and Python runtime are using — the fraction is
+  double-counted. Isolation runs at 0.2 pending.
+- **Workaround:** always pass explicit `--max-batch-size`, `--max-length`, and a *much smaller
+  than intuitive* `--device-memory-utilization` on unified-memory devices. Our Pattern C
+  templates hard-require these flags.
 - **Upstream:** discussed in Modular forum (DGX Spark thread, 2026-03). Ask: can the tuner detect
   unified memory (`CU_DEVICE_ATTRIBUTE_INTEGRATED`) and default conservatively?
 
@@ -154,7 +162,10 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Detail:** the Modular Community License (last modified 2026-08-18 — device caps removed,
   which is genuinely great for edge) retains: (1) telemetry — "telemetry, usage, and other data
   which captures Your interactions with and use of MAX", with no documented opt-out; problematic
-  for air-gapped/regulated robot deployments; (2) redistribution requires "material additional
+  for air-gapped/regulated robot deployments. **Observed on-device (2026-08-23, Orin Nano):
+  `max serve` POSTs to `https://telemetry.modular.com/v1/metrics` and, when DNS resolution
+  fails in the container, dumps full `requests.exceptions.ConnectionError` tracebacks into the
+  serving log** (non-fatal, but noisy — and confirms the phone-home is active during serving); (2) redistribution requires "material additional
   functionality, beyond the included portions of MAX" — unclear how a device *template* that
   wraps `max serve` measures against this; (3) attribution and "Powered by Modular" branding
   requirements for commercial AI service providers.

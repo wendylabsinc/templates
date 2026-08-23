@@ -78,7 +78,8 @@
                 "wendyos"
             ],
             "languages": [
-                "python"
+                "python",
+                "mojo"
             ]
         },
         {

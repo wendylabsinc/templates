@@ -32,6 +32,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-013](#mmf-013) | Apple-GPU (Metal) serving coverage is a moving subset | minor | missing-feature | open — spike planned |
 | [MMF-014](#mmf-014) | Calling Mojo from Python is beta (≤6 `PythonObject` args) | minor | missing-feature | open |
 | [MMF-015](#mmf-015) | No WebRTC / DDS / ROS 2 ecosystem reachable from Mojo | major | missing-feature | open |
+| [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified |
 
 ---
 
@@ -165,8 +166,14 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Detail:** `mojo build` produces a dynamically linked binary with Mojo runtime `.so`
   dependencies (and historically hardcoded paths), despite older docs implying static output.
   There is no documented "copy these N libs" contract for a slim final container stage.
-- **Measurement:** Spike 1 will record the actual required `.so` set and the image-size delta
-  between binary+libs and keeping the full wheel installed.
+- **Measured 2026-08-23 (Mojo 1.0.0, linux/arm64):** a hello-world binary is 42 KB and links
+  exactly three Mojo runtime libs from the wheel's `lib/` — `libKGENCompilerRTShared.so`
+  (1.2 MB), `libAsyncRTRuntimeGlobals.so` (669 KB), `libMSupportGlobals.so` (49 KB) — plus
+  `libstdc++`/`libgcc_s`. Copying those three libs (~1.9 MB total) next to the binary and setting
+  `LD_LIBRARY_PATH` runs correctly in a bare `debian:bookworm-slim`. So a slim final stage IS
+  practical — it just isn't documented or guaranteed stable across releases.
+- **Status: workaround** (undocumented). Ask Modular to document/stabilize the runtime-lib
+  contract or add a `--static` / bundle mode.
 - **Upstream:** https://github.com/modular/modular/issues/898.
 
 ## MMF-010: No ESP32 / Xtensa / bare-metal Mojo target <a name="mmf-010"></a>
@@ -181,10 +188,16 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 ## MMF-011: No stdlib networking / HTTP / WebSocket <a name="mmf-011"></a>
 
 - **Template(s):** every browser-facing port (14 of 17) · **Severity:** major
-- **Detail:** Mojo 1.0's stdlib has no sockets/HTTP/WebSocket module suitable for serving; the
-  community `lightbug_http`'s Mojo-1.0 health is unverified. We are hand-rolling
-  `common/mojo/wendynet` (POSIX sockets via libc `external_call`, HTTP/1.1, RFC 6455) — every
-  papercut found will be appended here as sub-findings.
+- **Detail:** Mojo 1.0's stdlib has no sockets/HTTP/WebSocket module suitable for serving.
+  **Probed 2026-08-23 (Mojo 1.0.0):** no `std.net` (nor any socket module); no `std.json`;
+  `std.hashlib` exposes only the generic `Hasher`/`default_hasher` (hash-table hashing) — no
+  SHA-1/SHA-256/MD5, so the RFC 6455 `Sec-WebSocket-Accept` digest must be hand-implemented
+  (`std.base64.b64encode` does exist). `std.ffi` provides `external_call` + `OwnedDLHandle`
+  (note: pre-1.0 `DLHandle` was renamed), so libc socket FFI is workable.
+- **Ecosystem:** `lightbug_http` — the community HTTP framework — was **archived 2026-05-12**;
+  its successors are `thatstoasty/floki` (HTTP *client* only) and `bgreni/EmberJson` (JSON).
+  There is currently no maintained Mojo HTTP *server*, WebSocket, or JSON stdlib story.
+  We are hand-rolling `common/mojo/wendynet`; papercuts will be appended here.
 - **Upstream:** not yet filed.
 
 ## MMF-012: MAX Graph API is Python-only <a name="mmf-012"></a>
@@ -224,6 +237,40 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   equivalent effectively cannot be ported.
 - **Upstream:** not yet filed (ecosystem gap; useful roadmap signal for Modular's robotics story).
 
+## MMF-016: CPU encoding resolution broken for bf16-safetensors models on aarch64 <a name="mmf-016"></a>
+
+- **Template(s):** `mojo/llm` CPU path (RPi 5, Jetson CPU fallback) · **Devices:** linux/arm64
+  (verified in Docker on Apple Silicon; CPU-only config-validation code paths, device-agnostic)
+- **Category:** bug · **Severity:** major — **verified 2026-08-23 on MAX 26.5.0**
+- **Detail:** serving a standard bf16-safetensors LLM repo on an aarch64 CPU fails in every
+  encoding configuration. Repro (`HuggingFaceTB/SmolLM2-135M-Instruct`, Llama arch, bf16
+  safetensors only):
+  1. `max serve --model ... --devices=cpu` (no encoding) → defaults to `q4_k`, then
+     `ValueError: compatible weights cannot be found for 'q4_k'` (repo has no GGUF).
+  2. `--quantization-encoding bfloat16` → `ValueError: The encoding 'bfloat16' is not
+     compatible with the selected device type 'cpu'` — although MAX 26.3 release notes added
+     bf16 for ARM CPU in MAX graphs; the pipeline validator still refuses it.
+  3. `--quantization-encoding float32` → `ValueError: Cannot cast from 'float32' to 'bfloat16'
+     on device ... 'bfloat16' is not supported on this device` — the resolver attempts a
+     float32→bfloat16 cast (backwards) instead of bf16→f32.
+  4. GGUF-only repos as `--model` fail separately: `FileNotFoundError: No config.json ... found`
+     (GGUF metadata is not used for config).
+  5. The GGUF `--weight-path` escape route rejects real-world community GGUFs: both
+     `SmolLM2-135M-Instruct-Q4_K_M.gguf` and `...-Q4_0.gguf` (bartowski) crash the model worker
+     with `KeyError: <GGMLQuantizationType.Q8_0: 8>` — llama.cpp-convention files store
+     `output.weight`/`token_embd.weight` as Q8_0, and in
+     `max/graph/weights/load_gguf.py` `_FROM_QUANTIZED_GGML_DTYPES` has Q8_0 (plus Q5_0, Q8_1,
+     Q2_K, Q3_K, IQ*) commented out — only Q4_0, Q4_K, Q5_K, Q6_K are wired. A load-time
+     validation would at least fail cleanly instead of a worker crash mid-startup.
+  6. `--weight-path other-repo/file.gguf` is not parsed as cross-repo — the basename is searched
+     inside the `--model` repo only; a separate manual download is required.
+- **Expected:** `--devices=cpu` with a plain bf16-safetensors repo serves via an automatic
+  bf16→f32 upcast, or at minimum `--quantization-encoding float32` works; common GGUF files load.
+- **Actual:** no working encoding for safetensors-only repos on aarch64 CPU, and typical
+  community GGUFs crash on Q8_0 tensors. Modular's own `modularai/SmolLM-135M-Instruct-FP32`
+  repo (an FP32 fork of a bf16 model) appears to exist precisely to work around this.
+- **Upstream:** not yet filed.
+
 ---
 
 ## Appendix A: per-template port status
@@ -252,4 +299,20 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 
 Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX version · what ran · result.
 
-*(empty — Spike 0 pending)*
+- **2026-08-23 · Docker linux/arm64 VM (Apple Silicon host, 16 vCPU / 8 GiB) · MAX 26.5.0 / Mojo 1.0.0:**
+  - `mojo build` hello-world: 42 KB binary, 1 s build, runs in bare `debian:bookworm-slim` with
+    3 copied runtime libs (~1.9 MB) → MMF-009 workaround verified.
+  - stdlib probes: no `std.net`/`std.json`/SHA-*; `std.base64`, `std.ffi.external_call`,
+    `OwnedDLHandle`, `std.subprocess`, Python interop (`std.python`) all work → MMF-011.
+  - `max serve --devices=cpu`: six failure modes across encodings/GGUF sources → MMF-016.
+  - `max serve --model modularai/SmolLM-135M-Instruct-FP32 --devices=cpu --max-batch-size 1
+    --max-length 2048`: **works end-to-end** — `/v1/chat/completions` returned 128 tokens in
+    1.98 s (~65 tok/s incl. prefill). CPU serving is real once weights are curated.
+  - `max.driver` on CPU: `accelerator_count()=0`, `CPU()` device enumerates; API surface
+    includes `scan_available_devices`, `accelerator_architecture_name` (basis for `gpu-hello`).
+  - Caveat: arm64 VM ≠ Jetson/RPi silicon; GPU paths, #6961, and JetPack ptxas checks still
+    require the physical devices (pending — Orin Nano/Thor not currently network-reachable).
+
+Mojo 1.0 porting notes (language changes hit during the spike, for template authors): `fn`
+removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()
+raises:`); `DLHandle` → `OwnedDLHandle`.

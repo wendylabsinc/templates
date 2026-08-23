@@ -20,7 +20,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-001](#mmf-001) | No object-detection / classical-CV architectures in MAX | blocker | missing-feature | open |
 | [MMF-002](#mmf-002) | ONNX + TorchScript ingestion removed with no edge migration path | blocker | missing-feature | open |
 | [MMF-003](#mmf-003) | No speech modality; Whisper pipeline in-tree but unpublished | blocker | missing-feature | open |
-| [MMF-004](#mmf-004) | iGPU VMM allocator crash (upstream #6961) expected on Jetson | major | bug | open — Spike 0 will confirm |
+| [MMF-004](#mmf-004) | iGPU VMM graph-capture failure (upstream #6961) **confirmed on Jetson Orin** | major | bug | workaround — verified |
 | [MMF-005](#mmf-005) | Driver ≥580 / CUDA 13 floor vs JetPack 6 (sm_87 ptxas escape hatch unconfirmed) | major | packaging | open — Spike 0 will confirm |
 | [MMF-006](#mmf-006) | Serving auto-tuner unsafe on unified-memory devices (hard-freeze class) | major | bug | workaround |
 | [MMF-007](#mmf-007) | "ARM64 Neoverse N1 or newer" requirement contradicts Jetson Orin (Cortex-A78AE) listing | docs | docs | open |
@@ -34,6 +34,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-015](#mmf-015) | No WebRTC / DDS / ROS 2 ecosystem reachable from Mojo | major | missing-feature | open |
 | [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified |
 | [MMF-017](#mmf-017) | `max serve` JIT-compiles Mojo at runtime → undocumented C-toolchain requirement, opaque failure | minor | docs | open — verified |
+| [MMF-018](#mmf-018) | Cold-start graph compile is minutes on edge CPUs; no precompiled-cache distribution | minor | missing-feature | open — verified |
 
 ---
 
@@ -99,10 +100,19 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   property, not an sm_121 property, so Jetson Orin/Thor are expected to reproduce.
 - **Workarounds (upstream-verified on GB10):** `MODULAR_DEVICE_CONTEXT_MEMORY_MANAGER_VMM=0`
   or `max serve --no-device-graph-capture`. Our Jetson Dockerfile stages bake the env var in.
-- **Repro on Jetson:** pending Spike 0 (`max serve` any model on Orin/Thor without the env var).
+- **CONFIRMED on Jetson Orin Nano, 2026-08-23** (MAX 26.5.0, JP7.2 / L4T r39.2, driver 595.78,
+  CUDA 13.2, 8 GB): serving `HuggingFaceTB/SmolLM2-135M-Instruct` with
+  `--devices=gpu --max-batch-size 1 --max-length 512 --device-memory-utilization 0.2` and
+  graph capture + VMM enabled crashes at the same call site as #6961:
+  `RuntimeError: Failed to capture graph: preBackForCapture vmmCreate failed: CUDA call
+  failed: CUDA_ERROR_OUT_OF_MEMORY` — note **OUT_OF_MEMORY on sm_87 vs INVALID_DEVICE on
+  GB10/sm_121**, at a memory fraction (~1.5 GB) that trivially fits a 135M model, so this is
+  the VMM-on-iGPU path failing, not genuine memory exhaustion. With
+  `MODULAR_DEVICE_CONTEXT_MEMORY_MANAGER_VMM=0` + `--no-device-graph-capture`, the same
+  command **serves successfully end-to-end on the Orin GPU**.
 - **Upstream:** https://github.com/modular/modular/issues/6961 (filed 2026-08-22 for DGX Spark).
-  Suggest the fix gate on `CU_DEVICE_ATTRIBUTE_INTEGRATED` generally, and that an iGPU config
-  enter CI.
+  Our Orin repro extends it to sm_87 with a different CUDA error code. Suggest the fix gate on
+  `CU_DEVICE_ATTRIBUTE_INTEGRATED` generally, and that an iGPU config enter CI.
 
 ## MMF-005: Driver ≥580 / CUDA 13 floor vs JetPack 6 <a name="mmf-005"></a>
 
@@ -298,6 +308,19 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Workaround:** install `gcc` + `libc6-dev` in the serving image (adds ~250 MB to slim images).
 - **Upstream:** not yet filed.
 
+## MMF-018: Cold-start graph compile is minutes on edge CPUs <a name="mmf-018"></a>
+
+- **Template(s):** `mojo/llm`, all MAX serving · **Devices:** verified on Jetson Orin Nano
+- **Category:** missing-feature/perf · **Severity:** minor (major for UX) — **verified 2026-08-23**
+- **Detail:** first-run pipeline init for a **135M-parameter** model on the Orin Nano's 6-core
+  Cortex-A78AE took **398 s** (graph compile 387.8 s); with a warm on-disk cache the same init
+  is **18.8 s** (21× faster). The cache defaults to an ephemeral container path — in containers,
+  persisting `XDG_CACHE_HOME` to a volume is essential and undocumented. There is no mechanism
+  to ship a precompiled cache with an image (compile-once-distribute-many), which multi-minute
+  edge cold starts would seem to warrant.
+- **Workaround:** persist `XDG_CACHE_HOME` (our templates mount it on the persist volume).
+- **Upstream:** not yet filed.
+
 ---
 
 ## Appendix A: per-template port status
@@ -359,8 +382,21 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
   - `max.driver` enumerates the iGPU: `accelerator_count()=1`, arch `sm_87`, api cuda.
   - `nvidia-smi` works in-container on JP7.2 (driver 595.78, CUDA 13.2); MAX's bundled ptxas
     path applies (driver ≥580), so MMF-005's JP6 escape-hatch question remains untested here.
-  - `max serve` first failed at CLI import: MMF-017 (runtime Mojo JIT needs gcc). GPU serving
-    + #6961 test pending rerun with a C toolchain in the image.
+  - `max serve` first failed at CLI import: MMF-017 (runtime Mojo JIT needs gcc).
+  - With gcc: default-ish config (`--max-batch-size 1 --max-length 2048
+    --device-memory-utilization 0.5`) → model worker **SIGKILLed (OOM)** during graph-capture
+    warmup; VMM=0 alone also killed (MMF-006 — unified-memory double-counting).
+  - **END-TO-END GPU SERVING WORKS** with `MODULAR_DEVICE_CONTEXT_MEMORY_MANAGER_VMM=0` +
+    `--no-device-graph-capture` + `--device-memory-utilization 0.2 --max-length 512`:
+    `/v1/chat/completions` returned 37 tokens in ~4 s (**~9.2 tok/s incl. prefill**,
+    SmolLM2-135M bf16). To our knowledge the first documented `max serve` success on a Jetson.
+  - Isolation: re-enabling graph capture + VMM with the same conservative memory settings
+    reproduces the #6961 call-site failure as `CUDA_ERROR_OUT_OF_MEMORY` (MMF-004 confirmed;
+    error code differs from GB10's `CUDA_ERROR_INVALID_DEVICE`).
+  - Compile cache: cold pipeline init 398 s → warm 18.8 s with `XDG_CACHE_HOME` persisted
+    (MMF-018).
+  - Telemetry: `max serve` POSTs to `telemetry.modular.com/v1/metrics`; DNS failure in the
+    container produces full tracebacks in the serve log (MMF-008 evidence; non-fatal).
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

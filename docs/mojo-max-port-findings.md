@@ -313,6 +313,16 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
   - Caveat: arm64 VM ≠ Jetson/RPi silicon; GPU paths, #6961, and JetPack ptxas checks still
     require the physical devices (pending — Orin Nano/Thor not currently network-reachable).
 
-Mojo 1.0 porting notes (language changes hit during the spike, for template authors): `fn`
+- **2026-08-23 · same environment · Spike 1 (wendynet seed):** pure-Mojo HTTP + RFC 6455
+  WebSocket echo server (`common/mojo/wendynet/ws_echo.mojo`, ~280 lines: libc socket FFI,
+  hand-rolled SHA-1, frame codec) compiles and passes a 6-case raw-socket test suite
+  (handshake digest verified independently, 2560-byte extended-length echo, ping/pong, close).
+  Confirms MMF-011's workaround is viable, at the cost of implementing SHA-1 and HTTP by hand.
+
+Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()
-raises:`); `DLHandle` → `OwnedDLHandle`.
+raises:`); `DLHandle` → `OwnedDLHandle`; `UnsafePointer` → `Pointer`, heap buffers via
+`List` (`unsafe_uninit_length=`), pointer `+` → `unsafe_offset()`; `List` is not implicitly
+copyable (`return out^`); `len(String)` removed (`byte_length()` / `codepoints()` /
+`graphemes()`), plain string slicing replaced by keyword forms (`s[byte=...]`); SIMD shift
+RHS must match the operand type exactly (`x >> UInt32(k)`).

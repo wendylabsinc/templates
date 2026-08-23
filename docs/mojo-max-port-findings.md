@@ -33,6 +33,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-014](#mmf-014) | Calling Mojo from Python is beta (≤6 `PythonObject` args) | minor | missing-feature | open |
 | [MMF-015](#mmf-015) | No WebRTC / DDS / ROS 2 ecosystem reachable from Mojo | major | missing-feature | open |
 | [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified |
+| [MMF-017](#mmf-017) | `max serve` JIT-compiles Mojo at runtime → undocumented C-toolchain requirement, opaque failure | minor | docs | open — verified |
 
 ---
 
@@ -271,6 +272,21 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   repo (an FP32 fork of a bf16 model) appears to exist precisely to work around this.
 - **Upstream:** not yet filed.
 
+## MMF-017: `max serve` JIT-compiles Mojo at runtime → C toolchain required, opaque failure <a name="mmf-017"></a>
+
+- **Template(s):** any `max serve` deployment · **Devices:** verified on Jetson Orin Nano (JP7.2)
+- **Category:** docs/packaging · **Severity:** minor — **verified 2026-08-23 on MAX 26.5.0**
+- **Detail:** on first CLI invocation, `max serve` imports `max._kv_cache_ops`, which the Mojo
+  Python import hook (`mojo/importer.py` → `_compile_mojo_to_so`) compiles to a `.so` at
+  runtime. In a slim container without gcc this fails — and the underlying compiler error
+  ("unable to find suitable c compiler for linking") is swallowed, surfacing only as
+  `ImportError: Import of Mojo module failed due to compilation error.` The docs list a C
+  compiler as a *development* requirement; it is effectively a *serving runtime* requirement.
+- **Expected:** either ship `_kv_cache_ops` pre-compiled in the wheel, or chain the real
+  compile error into the ImportError.
+- **Workaround:** install `gcc` + `libc6-dev` in the serving image (adds ~250 MB to slim images).
+- **Upstream:** not yet filed.
+
 ---
 
 ## Appendix A: per-template port status
@@ -318,6 +334,22 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
   hand-rolled SHA-1, frame codec) compiles and passes a 6-case raw-socket test suite
   (handshake digest verified independently, 2560-byte extended-length echo, ping/pong, close).
   Confirms MMF-011's workaround is viable, at the cost of implementing SHA-1 and HTTP by hand.
+
+- **2026-08-23 · Jetson Orin Nano 8GB · WendyOS 0.18.2 · JetPack 7.2 / L4T r39.2 · driver
+  595.78 / CUDA 13.2 · MAX 26.5.0 / Mojo 1.0.0 (pip, python:3.12-slim arm64 container, `gpu`
+  entitlement):**
+  - **Mojo GPU kernel WORKS on sm_87**: 1M-element vector-add via `DeviceContext` +
+    `TileTensor`, zero verification errors; device reported as "Orin (nvgpu)", api cuda.
+    First-launch kernel+sync 889 ms (context/module init; subsequent launches not yet measured).
+  - **Cross-compilation works**: binary built on an arm64 macOS Docker host with
+    `mojo build --target-accelerator sm_87`, executed unmodified on the device. Note
+    `has_accelerator()` is compile-time — without the flag, a GPU-less build host silently
+    compiles the no-GPU branch.
+  - `max.driver` enumerates the iGPU: `accelerator_count()=1`, arch `sm_87`, api cuda.
+  - `nvidia-smi` works in-container on JP7.2 (driver 595.78, CUDA 13.2); MAX's bundled ptxas
+    path applies (driver ≥580), so MMF-005's JP6 escape-hatch question remains untested here.
+  - `max serve` first failed at CLI import: MMF-017 (runtime Mojo JIT needs gcc). GPU serving
+    + #6961 test pending rerun with a C toolchain in the image.
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

@@ -1,0 +1,37 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "max-serve": {
+            "context": "./max-serve",
+            "entitlements": [
+                { "type": "gpu" },
+                {
+                    "type": "persist",
+                    "name": "{{.APP_ID}}-models",
+                    "path": "/models"
+                }
+            ]
+        },
+        "open-webui": {
+            "context": "./open-webui",
+            "entitlements": [
+                {
+                    "type": "persist",
+                    "name": "{{.APP_ID}}-data",
+                    "path": "/data"
+                }
+            ]
+        }
+    },
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 300
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

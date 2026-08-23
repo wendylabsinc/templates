@@ -350,6 +350,30 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mac-llm` | pending spike | → MMF-013 |
 | `blink-led`, `hello-world` | **blocked** | → MMF-010 |
 
+## Appendix W: WendyOS platform issues hit during porting (NOT for Modular)
+
+Found while deploying `mojo/llm` as a two-service group on WendyOS 0.18.2 (agent on a fresh
+Orin Nano; CLI 2026.08.18):
+
+1. **Group-service containers have no outbound network/DNS**, with `network: host`
+   declared per-service (the g1-rc pattern) *or* at app level. Diagnostic from inside the
+   container: rewriting `/etc/resolv.conf` to `1.1.1.1`/`8.8.8.8` still fails — no egress at
+   all, not a resolver issue. Single-service apps with the same entitlement have working
+   egress. Never noticed before because no shipped group template does runtime DNS (robots
+   talk to LAN IPs; installs happen at build time). Update (same session): after a full
+   remove + fresh deploy with an app-level `network` entitlement, HF metadata fetch
+   succeeded — so app-level + fresh-create appears to grant egress where per-service and
+   in-place redeploys do not. Needs a proper matrix test.
+2. **Group-service containers appear memory-capped at ~256 MiB**: MAX's memory estimator
+   reported "Model size exceeds available memory (256.60 MiB > 76.25 MiB)" (76.25 = 0.3 ×
+   254 MiB) while the host had 4.2 GB free; the identical container as a single-service app
+   sees gigabytes. No memory/resources knob exists in wendy.json or `wendy run`. Likely also
+   why Open WebUI never finished booting in the group.
+3. Entitlement changes on an existing app group are not applied by `wendy run` redeploy —
+   a full `apps remove` + fresh deploy is required.
+4. `wendy device logs` streaming connections drop after ~2 minutes of quiet (WiFi device);
+   `wendy device shell` unsupported by the 0.18.2 agent with CLI 2026.08.18.
+
 ## Appendix B: device validation log
 
 Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX version · what ran · result.
@@ -402,6 +426,13 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     (MMF-018).
   - Telemetry: `max serve` POSTs to `telemetry.modular.com/v1/metrics`; DNS failure in the
     container produces full tracebacks in the serve log (MMF-008 evidence; non-fatal).
+
+- **2026-08-23 · same Orin Nano · `mojo/llm` max-serve layer (single-service deploy):**
+  full `wendy run` deployment of the template's max-serve container: model download + cold
+  compile on a fresh volume, then `/v1/chat/completions` at **~10 tok/s** (SmolLM2-135M bf16,
+  GPU, incl. network + prefill). GPU auto-detected via `max.driver.accelerator_count()`
+  (`WENDY_HAS_GPU` is a build arg, not a runtime env, in service containers). The two-service
+  group form is blocked by the WendyOS issues in Appendix W, not by MAX.
 
 - **2026-08-23 · same Orin Nano · `mojo/gpu-hello` template (first Mojo port shipped):**
   deployed via `wendy run` — AOT sm_87 build selected from injected `WENDY_PLATFORM`/

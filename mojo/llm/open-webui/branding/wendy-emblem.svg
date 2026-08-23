@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_2" data-name="Layer 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 246.82 181.81">
+  <!--
+    Fixed fill on purpose. Dark-mode inversion is handled by the in-app
+    custom.css (filter: invert(1) on html.dark/oled-dark), which follows
+    Open WebUI's own theme toggle. Do NOT re-add a
+    @media (prefers-color-scheme: dark) fill swap here: that resolves against
+    the OS theme, not the app theme, so it double-inverts (or cancels) against
+    the CSS filter and the logo disappears when the OS is in dark mode.
+  -->
+  <style>
+    rect, path { fill: #0a0a0a; }
+  </style>
+  <g id="full_diamond">
+    <rect x="91.64" y="26.62" width="128.56" height="128.56" transform="translate(-18.61 136.88) rotate(-45)"/>
+  </g>
+  <g id="outline_diamond">
+    <path d="M69.93,160.83L0,90.9,69.93,20.98l69.93,69.93-69.93,69.93ZM22.63,90.9l47.3,47.3,47.3-47.3-47.3-47.3-47.3,47.3Z"/>
+  </g>
+</svg>

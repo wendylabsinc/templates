@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1.6
+#
+# MAX serving layer (replaces Ollama in the python/llm template). One image
+# for every target: MAX ships aarch64 + x86_64 wheels and selects CPU or GPU
+# at runtime, so no dustynv/JetPack base-image matrix is needed — the CUDA
+# driver is injected by the host via the gpu entitlement.
+#
+# Hard-won Jetson notes (docs/mojo-max-port-findings.md):
+#   - gcc is a RUNTIME requirement: max serve JIT-compiles Mojo modules on
+#     first import and uses the C compiler as linker (MMF-017).
+#   - MODULAR_DEVICE_CONTEXT_MEMORY_MANAGER_VMM=0 and
+#     --no-device-graph-capture avoid the iGPU VMM graph-capture crash
+#     (MMF-004 / upstream #6961) on Orin and Thor.
+#   - The serving auto-tuner double-counts unified memory; explicit
+#     batch/length/memory flags are mandatory on Jetson (MMF-006).
+#   - XDG_CACHE_HOME must live on the persist volume: graph compile is
+#     ~400 s cold vs ~19 s warm on an Orin Nano (MMF-018).
+FROM python:3.12-slim-bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    iproute2 \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir modular==26.5.0
+
+# NOTE: like other templates in this repo, scaffold-time secrets are baked
+# into the image (same caveat as voice-ai-pipecat's GOOGLE_API_KEY).
+ENV HF_HOME=/models/hf \
+    XDG_CACHE_HOME=/models/cache \
+    MODULAR_DEVICE_CONTEXT_MEMORY_MANAGER_VMM=0 \
+    HF_TOKEN="{{.HF_TOKEN}}" \
+    MAX_MODEL="{{.MAX_MODEL}}" \
+    MAX_LENGTH=2048 \
+    MAX_BATCH_SIZE=1 \
+    MAX_DEVICE_MEMORY_UTILIZATION=0.3
+
+RUN mkdir -p /models
+
+COPY entrypoint.sh /usr/local/bin/wendy-max-entrypoint
+RUN chmod 0755 /usr/local/bin/wendy-max-entrypoint
+
+EXPOSE 9011
+
+ENTRYPOINT []
+CMD ["wendy-max-entrypoint"]

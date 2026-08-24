@@ -2,6 +2,9 @@ internal import Foundation
 import GStreamer
 import Hummingbird
 import HummingbirdWebSocket
+import Logging
+import OTel
+import ServiceLifecycle
 
 struct AudioDevice: ResponseCodable {
     let id: String
@@ -28,10 +31,15 @@ actor SpeakerSelection {
 // MARK: - AudioCapture Actor
 
 actor AudioCapture {
+    private let logger: Logger
     private var source: AudioSource?
     private var captureTask: Task<Void, Never>?
     private var clients: [UUID: @Sendable (ByteBuffer) async -> Void] = [:]
     private var currentDevice: String?
+
+    init(logger: Logger) {
+        self.logger = logger
+    }
 
     func start() {
         guard source == nil else { return }
@@ -62,9 +70,12 @@ actor AudioCapture {
                 }
             }
 
-            print("[AudioCapture] GStreamer pipeline started")
+            logger.info("GStreamer audio pipeline started")
         } catch {
-            print("[AudioCapture] Failed to start GStreamer: \(error)")
+            logger.error(
+                "Failed to start GStreamer audio pipeline",
+                metadata: ["error": "\(error)"]
+            )
             source = nil
         }
     }
@@ -282,72 +293,95 @@ private func handleWebSocketText(_ text: String, audioCapture: AudioCapture) asy
 
 // MARK: - Main
 
-let audioCapture = AudioCapture()
-let speakerSelection = SpeakerSelection()
-let playbackManager = PlaybackManager()
-await audioCapture.start()
+struct AudioService: Service {
+    let logger: Logger
 
-let router = Router()
+    func run() async throws {
+        let audioCapture = AudioCapture(logger: logger)
+        let speakerSelection = SpeakerSelection()
+        let playbackManager = PlaybackManager()
+        await audioCapture.start()
 
-router.get("/sounds") { _, _ in listSounds() }
-router.get("/microphones") { _, _ in parseAudioDevices("arecord") }
-router.get("/speakers") { _, _ in parseAudioDevices("aplay") }
+        let router = Router()
 
-router.post("/speaker/{deviceID}") { _, context -> StatusResponse in
-    guard let deviceID = context.parameters.get("deviceID") else {
-        throw HTTPError(.badRequest, message: "missing speaker")
-    }
-    await speakerSelection.set(deviceID)
-    return StatusResponse(status: "ok", speaker: deviceID, file: nil)
-}
+        router.get("/sounds") { _, _ in listSounds() }
+        router.get("/microphones") { _, _ in parseAudioDevices("arecord") }
+        router.get("/speakers") { _, _ in parseAudioDevices("aplay") }
 
-router.post("/play/{filename}") { _, context -> StatusResponse in
-    guard let filename = context.parameters.get("filename") else {
-        throw HTTPError(.notFound, message: "not found")
-    }
-    guard await playSound(filename: filename, speaker: speakerSelection.get(), playback: playbackManager) else {
-        throw HTTPError(.notFound, message: "not found")
-    }
-    return StatusResponse(status: "playing", speaker: nil, file: filename)
-}
-
-router.get("/", use: spaHandler(staticDir: "."))
-router.get("{path+}", use: spaHandler(staticDir: "."))
-
-let wsRouter = Router(context: BasicWebSocketRequestContext.self)
-wsRouter.ws("/stream") { inbound, outbound, _ in
-    let clientId = UUID()
-    print("[WebSocket] Client connected: \(clientId)")
-
-    await audioCapture.addClient(id: clientId) { buffer in
-        try? await outbound.write(.binary(buffer))
-    }
-
-    for try await input in inbound.messages(maxSize: 1_000_000) {
-        guard case .text(let text) = input else { continue }
-        if let ack = await handleWebSocketText(text, audioCapture: audioCapture),
-           let data = try? JSONEncoder().encode(ack),
-           let json = String(data: data, encoding: .utf8) {
-            // Acknowledge so the UI can leave the "Switching" state.
-            try? await outbound.write(.text(json))
+        router.post("/speaker/{deviceID}") { _, context -> StatusResponse in
+            guard let deviceID = context.parameters.get("deviceID") else {
+                throw HTTPError(.badRequest, message: "missing speaker")
+            }
+            await speakerSelection.set(deviceID)
+            return StatusResponse(status: "ok", speaker: deviceID, file: nil)
         }
+
+        router.post("/play/{filename}") { _, context -> StatusResponse in
+            guard let filename = context.parameters.get("filename") else {
+                throw HTTPError(.notFound, message: "not found")
+            }
+            guard await playSound(filename: filename, speaker: speakerSelection.get(), playback: playbackManager) else {
+                throw HTTPError(.notFound, message: "not found")
+            }
+            return StatusResponse(status: "playing", speaker: nil, file: filename)
+        }
+
+        router.get("/", use: spaHandler(staticDir: "."))
+        router.get("{path+}", use: spaHandler(staticDir: "."))
+
+        let wsRouter = Router(context: BasicWebSocketRequestContext.self)
+        wsRouter.ws("/stream") { inbound, outbound, _ in
+            let clientId = UUID()
+            logger.info(
+                "WebSocket client connected",
+                metadata: ["client.id": "\(clientId)"]
+            )
+
+            await audioCapture.addClient(id: clientId) { buffer in
+                try? await outbound.write(.binary(buffer))
+            }
+
+            for try await input in inbound.messages(maxSize: 1_000_000) {
+                guard case .text(let text) = input else { continue }
+                if let ack = await handleWebSocketText(text, audioCapture: audioCapture),
+                   let data = try? JSONEncoder().encode(ack),
+                   let json = String(data: data, encoding: .utf8) {
+                    // Acknowledge so the UI can leave the "Switching" state.
+                    try? await outbound.write(.text(json))
+                }
+            }
+
+            await audioCapture.removeClient(id: clientId)
+            logger.info(
+                "WebSocket client disconnected",
+                metadata: ["client.id": "\(clientId)"]
+            )
+        }
+
+        let app = Application(
+            router: router,
+            server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
+            configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
+        )
+
+        logger.info(
+            "Audio server starting",
+            metadata: ["server.address": "0.0.0.0", "server.port": "{{.PORT}}"]
+        )
+        do {
+            try await app.runService()
+        } catch {
+            await audioCapture.stop()
+            throw error
+        }
+        await audioCapture.stop()
     }
-
-    await audioCapture.removeClient(id: clientId)
-    print("[WebSocket] Client disconnected: \(clientId)")
 }
 
-let app = Application(
-    router: router,
-    server: .http1WebSocketUpgrade(webSocketRouter: wsRouter),
-    configuration: .init(address: .hostname("0.0.0.0", port: {{.PORT}}))
-)
-
-print("[Audio] Server starting on port {{.PORT}}")
-do {
-    try await app.run()
-} catch {
-    await audioCapture.stop()
-    throw error
-}
-await audioCapture.stop()
+let observability = try OTel.bootstrap()
+let logger = Logger(label: "{{.APP_ID}}")
+try await ServiceGroup(
+    services: [observability, AudioService(logger: logger)],
+    gracefulShutdownSignals: [.sigterm, .sigint],
+    logger: logger
+).run()

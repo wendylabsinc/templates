@@ -3,10 +3,14 @@ import Dispatch
 import Foundation
 import Hummingbird
 import HuggingFace
+import Logging
 import MLXHuggingFace
 import MLXLLM
 import MLXLMCommon
+import OTel
+import ServiceLifecycle
 import Tokenizers
+import UnixSignals
 
 func filteredCommandLineArguments() -> [String] {
     let rawArguments = Array(CommandLine.arguments.dropFirst())
@@ -84,23 +88,37 @@ struct MacMLXLLMApp {
             CLIOptions.exit(withError: error)
         }
 
+        let observability = try OTel.bootstrap()
+        let logger = Logger(label: "{{.APP_ID}}")
+        try await ServiceGroup(
+            services: [observability, MacMLXLLMService(options: options, logger: logger)],
+            gracefulShutdownSignals: [.sigterm, .sigint],
+            logger: logger
+        ).run()
+    }
+}
+
+struct MacMLXLLMService: Service {
+    let options: CLIOptions
+    let logger: Logger
+
+    func run() async throws {
         let runtime = try RuntimeLayout(appID: "{{.APP_ID}}")
         try runtime.createDirectories()
         runtime.applyEnvironmentToCurrentProcess()
 
         let apiKey = try runtime.loadOrCreateAPIKey()
-        let openWebUI = OpenWebUISupervisor(options: options, runtime: runtime, apiKey: apiKey)
-        let service = MLXLLMService(modelID: options.model, defaultMaxTokens: options.defaultMaxTokens)
+        let openWebUI = OpenWebUISupervisor(options: options, runtime: runtime, apiKey: apiKey, logger: logger)
+        let service = MLXLLMService(modelID: options.model, defaultMaxTokens: options.defaultMaxTokens, logger: logger)
 
         try openWebUI.ensureInstalled()
         try openWebUI.prefetchModel()
         try await service.prepare()
 
         let openWebUIProcess = try openWebUI.start()
-        let shutdownHandlers = installShutdownHandlers(openWebUIProcess: openWebUIProcess)
         defer {
-            shutdownHandlers.forEach { $0.cancel() }
             openWebUIProcess.terminate()
+            openWebUIProcess.waitUntilExit()
         }
 
         let router = buildRouter(options: options, service: service, apiKey: apiKey)
@@ -109,30 +127,40 @@ struct MacMLXLLMApp {
             configuration: .init(address: .hostname(options.mlxHost, port: options.mlxPort))
         )
 
-        print("MLX_MODEL=\(options.model)")
-        print("MLX_OPENAI_BASE_URL=http://\(options.mlxHost):\(options.mlxPort)/v1")
-        print("OPEN_WEBUI_URL=http://\(ProcessInfo.processInfo.hostName):\(options.webuiPort)")
-        print("OPEN_WEBUI_DATA_DIR=\(runtime.openWebUIDataURL.path)")
-        print("HUGGINGFACE_HUB_CACHE=\(runtime.huggingFaceHubCacheURL.path)")
-        print("The MLX API is bound to localhost and protected with an app-generated API key.")
+        logger.info(
+            "MLX application configured",
+            metadata: [
+                "model.id": "\(options.model)",
+                "mlx.base_url": "http://\(options.mlxHost):\(options.mlxPort)/v1",
+                "open_webui.url": "http://\(ProcessInfo.processInfo.hostName):\(options.webuiPort)",
+                "open_webui.data_dir": "\(runtime.openWebUIDataURL.path)",
+                "huggingface.cache_dir": "\(runtime.huggingFaceHubCacheURL.path)",
+                "mlx.authentication.enabled": "true",
+            ]
+        )
 
-        try await app.runService()
-    }
-}
-
-func installShutdownHandlers(openWebUIProcess: RunningProcess) -> [DispatchSourceSignal] {
-    let signals = [SIGTERM, SIGINT]
-    return signals.map { signalNumber in
-        signal(signalNumber, SIG_IGN)
-        let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
-        source.setEventHandler {
-            print("Received signal \(signalNumber); stopping Open WebUI.")
-            openWebUIProcess.terminate()
-            openWebUIProcess.waitUntilExit()
-            Foundation.exit(signalNumber == SIGINT ? 130 : 143)
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await app.runService()
+            }
+            group.addTask {
+                let status = await withTaskCancellationHandler {
+                    await openWebUIProcess.waitForExit()
+                } onCancel: {
+                    openWebUIProcess.terminate()
+                }
+                await openWebUIProcess.waitForOutputEOF()
+                try Task.checkCancellation()
+                guard let status else { return }
+                logger.error(
+                    "Open WebUI exited unexpectedly",
+                    metadata: ["process.exit_code": "\(status)"]
+                )
+                throw RuntimeError("Open WebUI exited unexpectedly with status \(status)")
+            }
+            _ = try await group.next()
+            group.cancelAll()
         }
-        source.resume()
-        return source
     }
 }
 
@@ -254,27 +282,39 @@ struct OpenWebUISupervisor: Sendable {
     let options: CLIOptions
     let runtime: RuntimeLayout
     let apiKey: String
+    let logger: Logger
 
     func ensureInstalled() throws {
         let installedVersion = (try? String(contentsOf: runtime.openWebUIVersionURL, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
         if FileManager.default.isExecutableFile(atPath: runtime.openWebUIExecutableURL.path), installedVersion == options.openWebUIVersion {
-            print("Open WebUI \(options.openWebUIVersion) already installed at \(runtime.openWebUIExecutableURL.path)")
+            logger.info(
+                "Open WebUI already installed",
+                metadata: [
+                    "open_webui.version": "\(options.openWebUIVersion)",
+                    "process.executable.path": "\(runtime.openWebUIExecutableURL.path)",
+                ]
+            )
             return
         }
 
         let uv = try findUVExecutable()
-        print("Installing Open WebUI \(options.openWebUIVersion) with uv. This may take a few minutes on first run...")
+        logger.info(
+            "Installing Open WebUI with uv; this may take a few minutes on first run",
+            metadata: ["open_webui.version": "\(options.openWebUIVersion)"]
+        )
         try runCommand(
             executable: uv,
             arguments: ["python", "install", "3.11"],
             environment: runtime.uvEnvironment(),
-            prefix: "uv"
+            prefix: "uv",
+            logger: logger
         )
         try runCommand(
             executable: uv,
             arguments: ["tool", "install", "open-webui==\(options.openWebUIVersion)", "--python", "3.11", "--force"],
             environment: runtime.uvEnvironment(),
-            prefix: "uv"
+            prefix: "uv",
+            logger: logger
         )
         try options.openWebUIVersion.write(to: runtime.openWebUIVersionURL, atomically: true, encoding: .utf8)
     }
@@ -284,7 +324,10 @@ struct OpenWebUISupervisor: Sendable {
         var env = runtime.uvEnvironment()
         env["HF_HOME"] = runtime.huggingFaceHomeURL.path
         env["HF_HUB_CACHE"] = runtime.huggingFaceHubCacheURL.path
-        print("Prefetching Hugging Face model \(options.model) with hf. This may take a long time on first run...")
+        logger.info(
+            "Prefetching Hugging Face model; this may take a long time on first run",
+            metadata: ["model.id": "\(options.model)"]
+        )
         do {
             try runCommand(
                 executable: uv,
@@ -295,7 +338,8 @@ struct OpenWebUISupervisor: Sendable {
                     "hf", "download", options.model,
                 ],
                 environment: env,
-                prefix: "hf"
+                prefix: "hf",
+                logger: logger
             )
         } catch {
             throw RuntimeError("""
@@ -335,20 +379,18 @@ struct OpenWebUISupervisor: Sendable {
         ]
         process.environment = env
         process.currentDirectoryURL = runtime.openWebUIDataURL
-        pipeProcessOutput(process, prefix: "open-webui")
-        process.terminationHandler = { process in
-            let status = process.terminationStatus
-            if status == 0 {
-                print("Open WebUI exited.")
-            } else {
-                print("Open WebUI exited with status \(status).")
-                Foundation.exit(status)
-            }
-        }
+        let processOutput = pipeProcessOutput(process, prefix: "open-webui", logger: logger)
+        let runningProcess = RunningProcess(process: process, output: processOutput)
 
-        print("Starting Open WebUI on http://\(options.webuiHost):\(options.webuiPort)")
+        logger.info(
+            "Starting Open WebUI",
+            metadata: [
+                "server.address": "\(options.webuiHost)",
+                "server.port": "\(options.webuiPort)",
+            ]
+        )
         try process.run()
-        return RunningProcess(process: process)
+        return runningProcess
     }
 
     private func findUVExecutable() throws -> String {
@@ -377,12 +419,13 @@ struct OpenWebUISupervisor: Sendable {
         }
 
         if let brew = findExecutable(named: "brew") {
-            print("uv was not found after Brewfile application; running `brew install uv` as a fallback...")
+            logger.warning("uv was not found after Brewfile application; running `brew install uv` as a fallback")
             try? runCommand(
                 executable: brew,
                 arguments: ["install", "uv"],
                 environment: ProcessInfo.processInfo.environment,
-                prefix: "brew"
+                prefix: "brew",
+                logger: logger
             )
             if let uvPrefix = try? captureCommand(executable: brew, arguments: ["--prefix", "uv"]) {
                 candidates.append(URL(fileURLWithPath: uvPrefix).appendingPathComponent("bin/uv").path)
@@ -402,15 +445,38 @@ struct OpenWebUISupervisor: Sendable {
 
 final class RunningProcess: @unchecked Sendable {
     private let process: Process
+    private let output: ProcessOutput
+    private let exitStatuses: AsyncStream<Int32>
 
-    init(process: Process) {
+    init(process: Process, output: ProcessOutput) {
         self.process = process
+        self.output = output
+        let (stream, continuation) = AsyncStream.makeStream(of: Int32.self)
+        self.exitStatuses = stream
+        process.terminationHandler = { process in
+            continuation.yield(process.terminationStatus)
+            continuation.finish()
+        }
     }
 
     func terminate() {
         if process.isRunning {
             process.terminate()
         }
+    }
+
+    func waitForExit() async -> Int32? {
+        for await status in exitStatuses {
+            return status
+        }
+        return nil
+    }
+
+    func waitForOutputEOF() async {
+        let output = self.output
+        await Task.detached {
+            output.waitUntilEOF()
+        }.value
     }
 
     func waitUntilExit() {
@@ -486,36 +552,102 @@ func captureCommand(executable: String, arguments: [String]) throws -> String {
     return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
-func runCommand(executable: String, arguments: [String], environment: [String: String], prefix: String) throws {
+func runCommand(executable: String, arguments: [String], environment: [String: String], prefix: String, logger: Logger) throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = arguments
     process.environment = environment
-    pipeProcessOutput(process, prefix: prefix)
+    let processOutput = pipeProcessOutput(process, prefix: prefix, logger: logger)
     try process.run()
     process.waitUntilExit()
+    processOutput.waitUntilEOF()
     guard process.terminationStatus == 0 else {
         throw RuntimeError("\(executable) \(arguments.joined(separator: " ")) exited with status \(process.terminationStatus)")
     }
 }
 
-func pipeProcessOutput(_ process: Process, prefix: String) {
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = pipe
-    let handle = pipe.fileHandleForReading
-    Thread.detachNewThread {
-        while true {
-            let data = handle.availableData
-            if data.isEmpty { break }
-            guard let text = String(data: data, encoding: .utf8) else { continue }
-            for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
-                if !line.isEmpty {
-                    print("[\(prefix)] \(line)")
+final class ProcessOutputReader: Sendable {
+    private let completion = DispatchGroup()
+
+    init(
+        handle: FileHandle,
+        processName: String,
+        streamName: String,
+        level: Logger.Level,
+        logger: Logger
+    ) {
+        completion.enter()
+
+        Thread.detachNewThread {
+            var pending = Data()
+            let metadata: Logger.Metadata = [
+                "process.name": "\(processName)",
+                "process.stream": "\(streamName)",
+            ]
+
+            func emit(_ lineData: Data) {
+                var lineData = lineData
+                if lineData.last == 0x0D {
+                    lineData.removeLast()
+                }
+                guard !lineData.isEmpty else { return }
+                let line = String(decoding: lineData, as: UTF8.self)
+                logger.log(level: level, "\(line)", metadata: metadata)
+            }
+
+            while true {
+                let data = handle.availableData
+                if data.isEmpty { break }
+                pending.append(data)
+
+                while let newlineIndex = pending.firstIndex(of: 0x0A) {
+                    emit(Data(pending[..<newlineIndex]))
+                    pending.removeSubrange(...newlineIndex)
                 }
             }
+
+            emit(pending)
+            self.completion.leave()
         }
     }
+
+    func waitUntilEOF() {
+        completion.wait()
+    }
+}
+
+struct ProcessOutput: Sendable {
+    let stdout: ProcessOutputReader
+    let stderr: ProcessOutputReader
+
+    func waitUntilEOF() {
+        stdout.waitUntilEOF()
+        stderr.waitUntilEOF()
+    }
+}
+
+func pipeProcessOutput(_ process: Process, prefix: String, logger: Logger) -> ProcessOutput {
+    let stdoutPipe = Pipe()
+    let stderrPipe = Pipe()
+    process.standardOutput = stdoutPipe
+    process.standardError = stderrPipe
+
+    return ProcessOutput(
+        stdout: ProcessOutputReader(
+            handle: stdoutPipe.fileHandleForReading,
+            processName: prefix,
+            streamName: "stdout",
+            level: .info,
+            logger: logger
+        ),
+        stderr: ProcessOutputReader(
+            handle: stderrPipe.fileHandleForReading,
+            processName: prefix,
+            streamName: "stderr",
+            level: .warning,
+            logger: logger
+        )
+    )
 }
 
 func unauthorizedResponseIfNeeded(request: Request, apiKey: String) throws -> Response? {
@@ -532,19 +664,21 @@ func unauthorizedResponseIfNeeded(request: Request, apiKey: String) throws -> Re
 
 final class ModelDownloadProgressLogger: @unchecked Sendable {
     private let modelID: String
+    private let logger: Logger
     private let lock = NSLock()
     private var lastPercent = -1
     private var lastReportedAt = Date.distantPast
 
-    init(modelID: String) {
+    init(modelID: String, logger: Logger) {
         self.modelID = modelID
+        self.logger = logger
     }
 
     func log(_ progress: Progress) {
         let total = progress.totalUnitCount
         let completed = progress.completedUnitCount
         let now = Date()
-        let message: String?
+        let metadata: Logger.Metadata?
 
         lock.lock()
         defer { lock.unlock() }
@@ -559,9 +693,12 @@ final class ModelDownloadProgressLogger: @unchecked Sendable {
 
             lastPercent = max(lastPercent, percent)
             lastReportedAt = now
-            let completedText = ByteCountFormatter.string(fromByteCount: clampedCompleted, countStyle: .file)
-            let totalText = ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
-            message = "Hugging Face download \(modelID): \(lastPercent)% (\(completedText) / \(totalText))"
+            metadata = [
+                "model.id": "\(modelID)",
+                "download.completed_bytes": "\(clampedCompleted)",
+                "download.total_bytes": "\(total)",
+                "download.percent": "\(lastPercent)",
+            ]
         } else {
             let elapsed = now.timeIntervalSince(lastReportedAt)
             guard elapsed >= 10 else {
@@ -569,13 +706,14 @@ final class ModelDownloadProgressLogger: @unchecked Sendable {
             }
 
             lastReportedAt = now
-            let completedText = ByteCountFormatter.string(fromByteCount: max(completed, 0), countStyle: .file)
-            message = "Hugging Face download \(modelID): \(completedText) downloaded"
+            metadata = [
+                "model.id": "\(modelID)",
+                "download.completed_bytes": "\(max(completed, 0))",
+            ]
         }
 
-        if let message {
-            print(message)
-            fflush(stdout)
+        if let metadata {
+            logger.info("Hugging Face model download progress", metadata: metadata)
         }
     }
 }
@@ -583,11 +721,13 @@ final class ModelDownloadProgressLogger: @unchecked Sendable {
 actor MLXLLMService {
     private let modelID: String
     private let defaultMaxTokens: Int
+    private let logger: Logger
     private var container: ModelContainer?
 
-    init(modelID: String, defaultMaxTokens: Int) {
+    init(modelID: String, defaultMaxTokens: Int, logger: Logger) {
         self.modelID = modelID
         self.defaultMaxTokens = defaultMaxTokens
+        self.logger = logger
     }
 
     func prepare() async throws {
@@ -637,8 +777,11 @@ actor MLXLLMService {
             return container
         }
 
-        print("Preparing MLX model \(modelID). The first run may download weights from Hugging Face before Open WebUI is marked ready...")
-        let progressLogger = ModelDownloadProgressLogger(modelID: modelID)
+        logger.info(
+            "Preparing MLX model; the first run may download weights before Open WebUI is ready",
+            metadata: ["model.id": "\(modelID)"]
+        )
+        let progressLogger = ModelDownloadProgressLogger(modelID: modelID, logger: logger)
         let loaded = try await #huggingFaceLoadModelContainer(
             configuration: ModelConfiguration(id: modelID),
             progressHandler: { progress in
@@ -646,7 +789,7 @@ actor MLXLLMService {
             }
         )
         container = loaded
-        print("MLX model ready: \(modelID)")
+        logger.info("MLX model ready", metadata: ["model.id": "\(modelID)"])
         return loaded
     }
 

@@ -3,6 +3,7 @@
 # Mojo 1.0 has no stdlib networking (see docs/mojo-max-port-findings.md).
 from std.ffi import external_call, c_int, c_ssize_t
 from std.math import ceildiv
+from std.os import getenv
 from std.sys import has_accelerator
 from std.time import perf_counter_ns
 
@@ -198,7 +199,12 @@ def main() raises:
         report = "status: FAILED\nerror: " + String(e) + "\n"
     print(report)
 
-    var port = {{.PORT}}
+    # PORT flows through the Dockerfile's ENV: the wendy CLI's template
+    # substitution does not yet cover .mojo files (findings doc, Appendix W).
+    var port = 9020
+    var port_env = getenv("PORT")
+    if port_env != "":
+        port = Int(port_env)
     var fd = external_call["socket", c_int](c_int(2), c_int(1), c_int(0))
     if fd < 0:
         raise Error("socket() failed")

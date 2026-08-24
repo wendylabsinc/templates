@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /build/api /app/api
 COPY --from=builder /build/rt /app/rt
-ENV LD_LIBRARY_PATH=/app/rt
+ENV LD_LIBRARY_PATH=/app/rt \
+    PORT={{.PORT}}
 EXPOSE {{.PORT}}
 CMD ["/app/api"]

@@ -1,0 +1,11 @@
+card: 0
+device: 0
+subdevice: 0
+stream: PLAYBACK
+id: ADMAIF1 CIF ADMAIF1-0
+name: ADMAIF1 CIF ADMAIF1-0
+subname: subdevice #0
+class: 0
+subclass: 0
+subdevices_count: 1
+subdevices_avail: 1

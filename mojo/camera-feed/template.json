@@ -1,0 +1,21 @@
+{
+    "name": "camera-feed",
+    "description": "Live camera feed: pure-Mojo V4L2 MJPEG over WebSocket (no GStreamer)",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port",
+            "type": "integer",
+            "default": 9003,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

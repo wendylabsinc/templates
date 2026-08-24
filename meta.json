@@ -45,13 +45,14 @@
         },
         {
             "name": "camera-feed",
-            "description": "Live camera feed: GStreamer MJPEG over WebSocket",
+            "description": "Live camera feed: MJPEG over WebSocket",
             "languages": [
                 "python",
                 "swift",
                 "rust",
                 "node",
-                "cpp"
+                "cpp",
+                "mojo"
             ]
         },
         {

@@ -36,7 +36,8 @@ ENV PATH="/root/.local/bin:${PATH}" \
     ENABLE_OPENAI_API="True" \
     WEBUI_NAME="Wendy" \
     HOST="0.0.0.0" \
-    PORT="${PORT}"
+    PORT="${PORT}" \
+    HF_HOME="/data/hf-cache"
 
 # Fail the build early if open-webui's native deps can't execute on the build
 # CPU, instead of shipping an image that SIGILLs (exit 132) on first launch.

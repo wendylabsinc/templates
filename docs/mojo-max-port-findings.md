@@ -35,6 +35,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified |
 | [MMF-017](#mmf-017) | `max serve` JIT-compiles Mojo at runtime → undocumented C-toolchain requirement, opaque failure | minor | docs | open — verified |
 | [MMF-018](#mmf-018) | Cold-start graph compile is minutes on edge CPUs; no precompiled-cache distribution | minor | missing-feature | open — verified |
+| [MMF-019](#mmf-019) | `max serve` requires network access to start a fully-cached model (offline crash-loop) | major | bug | open — verified |
 
 ---
 
@@ -326,6 +327,27 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Workaround:** persist `XDG_CACHE_HOME` (our templates mount it on the persist volume).
 - **Upstream:** not yet filed.
 
+## MMF-019: `max serve` requires network access to start a fully-cached model <a name="mmf-019"></a>
+
+- **Template(s):** `mojo/llm`, all MAX serving · **Devices:** verified on Jetson Orin Nano — **2026-08-24**
+- **Category:** bug · **Severity:** major for edge (devices legitimately boot offline)
+- **Repro:** deploy `max serve --model HuggingFaceTB/SmolLM2-135M-Instruct` in a container
+  with **no network** but a **fully populated `HF_HOME`** (weights + tokenizer + compiled
+  graph cache all on a persist volume from a prior online run).
+- **Expected:** serve from the local cache.
+- **Actual:** crash-loop at startup — `validate_hf_repo_access()`
+  (`max/pipelines/weights/hf_utils.py`) calls `huggingface_hub.repo_info()` over the network
+  *before* consulting the cache, and the `ConnectError` is re-raised as
+  `ValueError: Failed to access repository … [Errno -3] Temporary failure in name resolution`.
+  The worker never checks that every artifact it needs is already local.
+- **Workaround (verified):** set `HF_HUB_OFFLINE=1` when the model directory exists under
+  `$HF_HOME/hub/` — with it, the same container starts with zero network: pipeline init
+  20.6 s (warm cache), server ready, inference works. Our template's entrypoint now
+  auto-detects broken DNS + cached weights and sets the flag.
+- **Suggestion:** try the cache first (or honor offline mode automatically) when repo
+  validation can't reach the Hub; a warning beats a crash-loop on an edge device.
+- **Upstream:** not yet filed.
+
 ---
 
 ## Appendix A: per-template port status
@@ -333,7 +355,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | Template | Verdict | Non-Mojo remainder → finding |
 |---|---|---|
 | `mojo/gpu-hello` | portable | — |
-| `mojo/llm` | portable | Open WebUI (JS frontend, out of scope); serving config → MMF-004/005/006 |
+| `mojo/llm` | portable | Open WebUI (JS frontend, out of scope); serving config → MMF-004/005/006; offline start → MMF-019 |
 | `mojo/simple-api` | portable w/ workarounds | hand-rolled HTTP → MMF-011 |
 | `mojo/camera-feed` | portable w/ workarounds | → MMF-011 |
 | `mojo/audio` | portable w/ workarounds | → MMF-011 |
@@ -352,27 +374,40 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 
 ## Appendix W: WendyOS platform issues hit during porting (NOT for Modular)
 
-Found while deploying `mojo/llm` as a two-service group on WendyOS 0.18.2 (agent on a fresh
-Orin Nano; CLI 2026.08.18):
+Found while deploying `mojo/llm` as a two-service group on WendyOS 0.18.2. First hit with
+CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
+2026.08.22-032001** (matrix results inline):
 
-1. **Group-service containers have no outbound network/DNS**, with `network: host`
-   declared per-service (the g1-rc pattern) *or* at app level. Diagnostic from inside the
-   container: rewriting `/etc/resolv.conf` to `1.1.1.1`/`8.8.8.8` still fails — no egress at
-   all, not a resolver issue. Single-service apps with the same entitlement have working
-   egress. Never noticed before because no shipped group template does runtime DNS (robots
-   talk to LAN IPs; installs happen at build time). Update (same session): after a full
-   remove + fresh deploy with an app-level `network` entitlement, HF metadata fetch
-   succeeded — so app-level + fresh-create appears to grant egress where per-service and
-   in-place redeploys do not. Needs a proper matrix test.
-2. **Group-service containers appear memory-capped at ~256 MiB**: MAX's memory estimator
-   reported "Model size exceeds available memory (256.60 MiB > 76.25 MiB)" (76.25 = 0.3 ×
-   254 MiB) while the host had 4.2 GB free; the identical container as a single-service app
-   sees gigabytes. No memory/resources knob exists in wendy.json or `wendy run`. Likely also
-   why Open WebUI never finished booting in the group.
+1. **Group-service containers get an empty network namespace by default** — re-tested on
+   2026.08.22: a group deployed with *no* network entitlement (the exact shape of the
+   shipped `python/llm`) gets containers whose netns holds **only `lo`** (`ip -brief addr`
+   from inside), i.e. **no egress and no ingress** — published ports unreachable from the
+   LAN while a single-service app on the same device serves fine. Rewriting
+   `/etc/resolv.conf` can't help; there is no interface. **Workaround (verified 2026-08-24):**
+   an **app-level** `{ "type": "network", "mode": "host" }` entitlement on a **fresh create**
+   attaches host networking — egress (HF download) and LAN ingress both work, and an
+   in-place redeploy *keeps* networking if the entitlement was already present at create
+   time. Per-service placement of the same entitlement did not work on 2026.08.18 (not
+   re-tested since). Consequence: `python/llm`'s group (Ollama pull at runtime) cannot work
+   as shipped on these agents either.
+2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22**: on
+   2026.08.18 MAX's estimator saw 254 MiB ("Model size exceeds available memory
+   (256.60 MiB > 76.25 MiB)") and Open WebUI never finished booting; on 2026.08.22 the same
+   group compiles and serves the model (no estimator complaint) and Open WebUI boots fully.
+   No memory/resources knob exists in wendy.json to have caused this; agent-side change
+   presumed.
 3. Entitlement changes on an existing app group are not applied by `wendy run` redeploy —
-   a full `apps remove` + fresh deploy is required.
-4. `wendy device logs` streaming connections drop after ~2 minutes of quiet (WiFi device);
-   `wendy device shell` unsupported by the 0.18.2 agent with CLI 2026.08.18.
+   a full `apps remove` + fresh deploy is required. (Not re-tested on 2026.08.22; the
+   workaround in W1 was applied via remove + fresh create.)
+4. `wendy device logs` streaming connections drop after ~2 minutes of quiet (WiFi device;
+   still observed with 2026.08.22 — "keepalive ping failed" during a long graph compile).
+   `wendy device shell`: unsupported by agent with CLI 2026.08.18; with CLI 2026.08.22 it
+   connects (interactive TTY only — no one-shot `-- command` use over a pipe).
+5. **(new, found 2026-08-24)** `wendy run`'s readiness probe window starts before image
+   transfer completes and spans service cold-start; a first-boot graph compile (~4 min) plus
+   Open WebUI's first-boot downloads exceeded the template's 300 s `timeoutSeconds`, so
+   `wendy run` reports a readiness timeout for a deploy that comes up healthy a minute
+   later. Cosmetic, but users will read it as a failed deploy.
 
 ## Appendix B: device validation log
 
@@ -446,6 +481,28 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
   `matmul n=512 errors=0 time_s=0.00184 gflops=145.7` (naive kernel, fp32) · status OK,
   served by the pure-Mojo HTTP layer. Steady-state kernel launch+sync of ~240 µs and
   ~146 GFLOPs naive matmul are healthy sm_87 numbers.
+
+- **2026-08-24 · same Orin Nano · CLI 2026.08.22-053704 / agent 2026.08.22-032001 ·
+  `mojo/llm` two-service group (Appendix W re-test + full verification):**
+  - Default group (no network entitlement, the `python/llm` shape): containers get an
+    **empty netns (lo only)** — no egress, no ingress; max-serve crash-loops on HF repo
+    validation *with all weights cached* → new MMF-019. Single-service app on the same
+    device unaffected.
+  - App-level `{"type":"network","mode":"host"}` + fresh create: egress and LAN ingress both
+    work; entitlement now shipped in the template's wendy.json (Appendix W #1 workaround).
+  - ~256 MiB group memory cap (W2) not reproducible on agent 2026.08.22 — model compiles,
+    serves, and Open WebUI boots fully; appears fixed agent-side.
+  - **Group verified end-to-end**: browser/API → Open WebUI :9010 → loopback → max-serve
+    :9011 → GPU; 37-token completion in 2.4 s (**~15 tok/s** incl. prefill + LAN,
+    SmolLM2-135M bf16). Template bugs found + fixed along the way: open-webui ignores the
+    `PORT` env var (bound its default 8080; fixed with explicit `--port` — latent in
+    `python/llm`, masked there because its default PORT *is* 8080) and Open WebUI's HF cache
+    was ephemeral (now `HF_HOME=/data/hf-cache` on the persist volume).
+  - **MMF-019 workaround verified**: no-network fresh create + warm volume + entrypoint
+    auto-`HF_HUB_OFFLINE=1` → pipeline init 20.6 s, server ready, fully offline.
+  - Cache note: first group-form start re-compiled ~216 s despite the solo run's warm volume
+    (cache key appears sensitive to container/env changes); subsequent group restarts are
+    warm (13.7–20.6 s).
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

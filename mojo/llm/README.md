@@ -21,6 +21,14 @@ two-service shape, with Ollama replaced by `max serve`.
   (MMF-018). The Web UI comes up immediately; the model appears once compiled.
 - CPU-only hosts (e.g. RPi 5): bf16-safetensors repos cannot be served on CPU in MAX 26.5
   (MMF-016) — use an FP32-native model such as `modularai/SmolLM-135M-Instruct-FP32`.
+- **Offline boots work once the model is cached** (MMF-019): `max serve` normally refuses to
+  start without network access even with every weight local, so the entrypoint detects
+  broken DNS and sets `HF_HUB_OFFLINE=1` when the model is already in the `-models` volume
+  (verified: zero-network start in ~20 s warm).
+- The app-level `{ "type": "network", "mode": "host" }` entitlement in `wendy.json` is
+  required on WendyOS ≤ 0.18.2 / agent 2026.08.22: group-service containers otherwise get an
+  empty network namespace — no model download *and* no reachable ports (findings doc,
+  Appendix W). Open WebUI reaches max-serve over loopback for the same reason.
 
 ## Model sizing
 
@@ -35,8 +43,11 @@ other templates in this repo).
 
 ## Status
 
-The **max-serve layer is verified** on a Jetson Orin Nano (JetPack 7.2, MAX 26.5.0,
-2026-08-23) as a single-service deployment. The **two-service group form is currently
-blocked by WendyOS 0.18.2 group-container restrictions** (no egress network for model
-download; ~256 MiB memory cap) — see `docs/mojo-max-port-findings.md` Appendix W. Once the
-platform issues are resolved the group deploys as-is.
+**Verified end-to-end as the two-service group** on a Jetson Orin Nano (JetPack 7.2,
+WendyOS 0.18.2, agent + CLI 2026.08.22, MAX 26.5.0, 2026-08-24): browser → Open WebUI
+(`:9010`) → max-serve (`:9011`) → GPU inference at ~15 tok/s (SmolLM2-135M bf16, incl.
+prefill + LAN). Needs the app-level `network` entitlement and agent ≥ 2026.08.22 (earlier
+agents also cap group containers at ~256 MiB) — see `docs/mojo-max-port-findings.md`
+Appendix W. First boot on a fresh volume takes minutes (model download + graph compile,
+MMF-018); `wendy run`'s readiness wait can elapse during it even though the deploy is
+healthy — the UI comes up shortly after.

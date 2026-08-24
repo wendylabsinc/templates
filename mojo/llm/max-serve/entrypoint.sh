@@ -36,7 +36,16 @@ if ! getent hosts huggingface.co >/dev/null 2>&1; then
      && getent hosts huggingface.co >/dev/null 2>&1; then
     echo "DNS restored via public resolvers (workaround)" >&2
   else
-    echo "DNS still broken; model download will fail" >&2
+    # max serve validates the HF repo over the network even when every weight
+    # is already in HF_HOME, so an offline device crash-loops on a fully
+    # cached model unless HF_HUB_OFFLINE is set.
+    MODEL_CACHE="${HF_HOME:-$HOME/.cache/huggingface}/hub/models--$(printf '%s' "${MAX_MODEL}" | sed 's|/|--|g')"
+    if [ -d "${MODEL_CACHE}" ]; then
+      export HF_HUB_OFFLINE=1
+      echo "No egress, but ${MAX_MODEL} is cached; starting with HF_HUB_OFFLINE=1" >&2
+    else
+      echo "DNS still broken and ${MAX_MODEL} is not cached; model download will fail" >&2
+    fi
   fi
 fi
 

@@ -114,4 +114,6 @@ if brand.exists():
             target.write_text(f"{existing}\n\n{custom_css.strip()}\n")
 PY
 
-exec /root/.local/bin/open-webui serve
+# open-webui ignores the PORT env var; without an explicit flag it binds its
+# built-in default 8080 regardless of the template's PORT setting.
+exec /root/.local/bin/open-webui serve --port "${PORT:-8080}"

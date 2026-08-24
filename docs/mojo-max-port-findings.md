@@ -434,6 +434,11 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
   (`WENDY_HAS_GPU` is a build arg, not a runtime env, in service containers). The two-service
   group form is blocked by the WendyOS issues in Appendix W, not by MAX.
 
+- **2026-08-23 · same Orin Nano · `mojo/simple-api` template (third Mojo port):** deployed
+  via `wendy run`, all endpoints verified on-device (GET `/`, `/health`, POST `/items` with
+  JSON body parse/escape). Lands `common/mojo/wendynet` as a real package (Listener/Request
+  structs, Content-Length body handling, minimal JSON helpers). Slim final image (~90 MB).
+
 - **2026-08-23 · same Orin Nano · `mojo/gpu-hello` template (first Mojo port shipped):**
   deployed via `wendy run` — AOT sm_87 build selected from injected `WENDY_PLATFORM`/
   `WENDY_DEVICE_TYPE` build args, slim no-SDK final image. On-device report:

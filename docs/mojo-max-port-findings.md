@@ -36,6 +36,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-017](#mmf-017) | `max serve` JIT-compiles Mojo at runtime → undocumented C-toolchain requirement, opaque failure | minor | docs | open — verified |
 | [MMF-018](#mmf-018) | Cold-start graph compile is minutes on edge CPUs; no precompiled-cache distribution | minor | missing-feature | open — verified |
 | [MMF-019](#mmf-019) | `max serve` requires network access to start a fully-cached model (offline crash-loop) | major | bug | open — verified |
+| [MMF-020](#mmf-020) | `external_call` re-declaring a libc symbol the stdlib uses fails LLVM lowering with an opaque error | minor | bug/docs | open — verified |
 
 ---
 
@@ -348,6 +349,24 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   validation can't reach the Hub; a warning beats a crash-loop on an edge device.
 - **Upstream:** not yet filed.
 
+## MMF-020: `external_call` symbol collisions with stdlib externs fail opaquely <a name="mmf-020"></a>
+
+- **Template(s):** any FFI-heavy Mojo code (`wendycam`, `wendynet`) · **Mojo 1.0.0** — **2026-08-24**
+- **Category:** bug/docs · **Severity:** minor (but a guaranteed papercut for FFI users)
+- **Repro:** in one program, call `external_call["open", c_int](ptr, flags)` (2-arg) and
+  also use the stdlib file API (which declares `open` with its own signature); same story
+  for `write` vs `print`. Compile with `mojo build`/`mojo run`.
+- **Expected:** either both calls lower (C varargs-style symbol reuse) or a clear
+  frontend diagnostic naming the conflicting declarations.
+- **Actual:** LLVM pipeline failure at the end of compilation —
+  `failed to legalize operation 'pop.external_call' that was explicitly marked illegal`
+  / `run LowerToLLVMPipeline failed` — pointing at the stdlib's internal call site, not
+  the user's. Nothing in the message says "signature conflict for symbol X".
+- **Workaround (verified):** call a sibling symbol the stdlib doesn't declare
+  (`openat(AT_FDCWD, …)` for `open`; `send` on a socketpair instead of `write` on a
+  pipe), or match the stdlib's exact declared shape.
+- **Upstream:** not yet filed.
+
 ---
 
 ## Appendix A: per-template port status
@@ -408,6 +427,12 @@ CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
    Open WebUI's first-boot downloads exceeded the template's 300 s `timeoutSeconds`, so
    `wendy run` reports a readiness timeout for a deploy that comes up healthy a minute
    later. Cosmetic, but users will read it as a failed deploy.
+6. **(new, found 2026-08-24)** `wendy init` template substitution skips `.mojo` files:
+   `isTextFile()` in `go/internal/cli/commands/template.go` (WendyAgent) allowlists
+   `.py/.rs/.swift/...` but not `.mojo`, so `{{.PORT}}`-style tokens survive into
+   scaffolded Mojo sources and the build fails on a parse error. Until the CLI fix ships,
+   the Mojo templates read `PORT` from the environment (set via `ENV PORT={{.PORT}}` in
+   the Dockerfile, which *is* substituted); one-line CLI fix proposed in WendyAgent.
 
 ## Appendix B: device validation log
 

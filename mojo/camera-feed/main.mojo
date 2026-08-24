@@ -34,7 +34,10 @@ from wendynet.ws import (
 )
 from wendycam.camera import Camera, list_cameras
 
-comptime PORT = {{.PORT}}
+# PORT comes from the environment (set by the Dockerfile from the scaffold
+# variable): the wendy CLI's template substitution does not yet cover .mojo
+# files (Appendix W in docs/mojo-max-port-findings.md).
+comptime DEFAULT_PORT = 9003
 comptime FRAME_WIDTH = 1280
 comptime FRAME_HEIGHT = 720
 comptime LOG_CAP = 200
@@ -289,9 +292,13 @@ def pump_frame(mut state: AppState):
 
 
 def main() raises:
+    var port = DEFAULT_PORT
+    var port_env = getenv("PORT")
+    if port_env != "":
+        port = Int(port_env)
     var state = AppState()
-    var listener = Listener(PORT)
-    state.log("camera-feed (mojo) listening on :" + String(PORT))
+    var listener = Listener(port)
+    state.log("camera-feed (mojo) listening on :" + String(port))
 
     while True:
         var ps = PollSet()

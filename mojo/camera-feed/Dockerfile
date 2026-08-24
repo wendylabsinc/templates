@@ -27,6 +27,7 @@ COPY --from=builder /build/camera-feed /app/camera-feed
 COPY --from=builder /build/rt /app/rt
 COPY index.html /app/index.html
 COPY assets/ /app/assets/
-ENV LD_LIBRARY_PATH=/app/rt
+ENV LD_LIBRARY_PATH=/app/rt \
+    PORT={{.PORT}}
 EXPOSE {{.PORT}}
 CMD ["/app/camera-feed"]

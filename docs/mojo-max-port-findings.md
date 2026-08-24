@@ -529,10 +529,26 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     (cache key appears sensitive to container/env changes); subsequent group restarts are
     warm (13.7–20.6 s).
 
+- **2026-08-24 · same Orin Nano · `mojo/camera-feed` template (fourth Mojo port) · Logitech
+  Brio 101 (UVC):**
+  - `wendycam` V4L2 FFI stack proven end-to-end on hardware: enumeration via QUERYCAP
+    correctly filters the UVC metadata node (exactly `/dev/video0` "Brio 101" listed);
+    hand-packed ioctl/struct ABI validated by a C-oracle conformance test before deploy;
+    capture probe: 30/30 valid JPEGs at 640x480.
+  - **Template verified**: all endpoints (`/`, `/cameras`, `/debug`, `/logs`, `/assets`) +
+    WS stream — 60/60 complete JPEG frames at **29.9 fps 1280x720** (~37 KB/frame, full
+    camera rate), `switch_camera` round-trip, concurrent browser + scripted clients from
+    a single-threaded poll(2) loop. No GStreamer, no Python, ~110 MB image.
+  - Found along the way: MMF-020 (extern symbol collisions fail opaquely) and Appendix
+    W#6 (`wendy init` does not substitute `.mojo` files; CLI fix proposed in WendyAgent).
+
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()
 raises:`); `DLHandle` → `OwnedDLHandle`; `UnsafePointer` → `Pointer`, heap buffers via
 `List` (`unsafe_uninit_length=`), pointer `+` → `unsafe_offset()`; `List` is not implicitly
 copyable (`return out^`); `len(String)` removed (`byte_length()` / `codepoints()` /
 `graphemes()`), plain string slicing replaced by keyword forms (`s[byte=...]`); SIMD shift
-RHS must match the operand type exactly (`x >> UInt32(k)`).
+RHS must match the operand type exactly (`x >> UInt32(k)`); `alias` deprecated → `comptime`
+(warning), and `comptime` initializers cannot call raising functions; libc externs the stdlib
+already declares (`open`, `write`) must not be re-declared with different signatures via
+`external_call` (MMF-020) — use `openat`/`send` or match the stdlib's shapes.

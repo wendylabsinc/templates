@@ -7,7 +7,9 @@ func print(_ message: StaticString) {
     }
 }
 
-@_cdecl("_start")
-func start() {
-    print("Hello, world")
+@main
+struct HelloWorldApp {
+    static func main() {
+        print("Hello, world")
+    }
 }

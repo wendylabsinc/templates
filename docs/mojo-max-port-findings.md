@@ -542,6 +542,22 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
   - Found along the way: MMF-020 (extern symbol collisions fail opaquely) and Appendix
     W#6 (`wendy init` does not substitute `.mojo` files; CLI fix proposed in WendyAgent).
 
+- **2026-08-24/25 · same Orin Nano · `mojo/audio` template (fifth Mojo port) · Brio 101 mic:**
+  - `wendyaudio` (libasound via `OwnedDLHandle`, `snd_pcm_set_params` so no hw_params struct
+    ABI, `/proc/asound` enumeration) verified end-to-end: real-time 16 kHz capture from the
+    Brio (probe: 32k samples in 2.008 s; template WS stream measured ~16.0 kHz with live
+    room-noise amplitudes), `switch_microphone` acks, wav playback to completion (null
+    sink), all endpoints at python/audio parity. Single-threaded poll loop, non-blocking
+    ALSA, no GStreamer.
+  - Two ALSA-on-Jetson behaviors worth knowing (handled in the template): clockless APE
+    I2S capture PCMs **open cleanly but never produce a frame** — GStreamer's preroll
+    failure masks this in the python sibling, so the Mojo port adds an explicit
+    first-data-within-400 ms check before accepting a device; and HDMI audio sinks with no
+    display attached accept the open but never consume — playback aborts with a log after
+    ~5 s of zero progress instead of hanging.
+  - `OwnedDLHandle` works well as an FFI strategy (`h.call["sym", ret](args)`), and dodges
+    the MMF-020 extern-collision problem entirely since symbols resolve at runtime.
+
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()
 raises:`); `DLHandle` → `OwnedDLHandle`; `UnsafePointer` → `Pointer`, heap buffers via

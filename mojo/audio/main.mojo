@@ -46,11 +46,13 @@ struct Playback(Movable):
     var pcm: AlsaPcm
     var data: List[UInt8]
     var offset: Int
+    var stalled_ticks: Int
 
     def __init__(out self, var pcm: AlsaPcm, var data: List[UInt8], offset: Int):
         self.pcm = pcm^
         self.data = data^
         self.offset = offset
+        self.stalled_ticks = 0
 
 
 struct AppState(Movable):
@@ -108,6 +110,20 @@ struct AppState(Movable):
         for dev in candidates:
             try:
                 var cap = AlsaPcm.open_capture(dev, SAMPLE_RATE, 1)
+                # Preroll check (GStreamer-parity): some devices open cleanly
+                # but never produce data (e.g. clockless Jetson APE I2S
+                # inputs). Require first samples within ~400 ms or move on.
+                var got_data = False
+                for _ in range(40):
+                    var probe = cap.read_available(CHUNK_FRAMES)
+                    if len(probe) > 0:
+                        got_data = True
+                        break
+                    _ = external_call["usleep", c_int](c_int(10000))
+                if not got_data:
+                    cap.close()
+                    self.log("no data from " + dev + "; trying next")
+                    continue
                 self.log("microphone streaming: " + dev)
                 self.preferred_mic = dev
                 self.captures.append(cap^)
@@ -261,6 +277,17 @@ def pump_playback(mut state: AppState):
             state.playbacks[0].data, state.playbacks[0].offset
         )
         state.playbacks[0].offset += wrote
+        # A sink with no consumer (e.g. HDMI audio with no display attached)
+        # accepts the open but never takes frames — abort instead of hanging.
+        if wrote == 0:
+            state.playbacks[0].stalled_ticks += 1
+            if state.playbacks[0].stalled_ticks > 100:  # ~5 s of no progress
+                state.log("playback stalled (sink not consuming); aborting")
+                state.playbacks[0].pcm.close()
+                state.playbacks = List[Playback]()
+                return
+        else:
+            state.playbacks[0].stalled_ticks = 0
         if state.playbacks[0].offset >= len(state.playbacks[0].data):
             state.playbacks[0].pcm.drain()
             state.playbacks[0].pcm.close()

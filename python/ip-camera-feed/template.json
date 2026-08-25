@@ -1,0 +1,28 @@
+{
+    "name": "ip-camera-feed",
+    "description": "Live feed from a platform-registered IP camera: GStreamer MJPEG over WebSocket via the /dev/video2xx loopback node",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port",
+            "type": "integer",
+            "default": 3005,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "CAMERA_DEVICE",
+            "description": "V4L2 device node to use (e.g. /dev/video203). Leave blank to auto-detect the platform-managed IP camera loopback node.",
+            "type": "string",
+            "default": "",
+            "prompt": "Camera device (blank = auto-detect)"
+        }
+    ]
+}

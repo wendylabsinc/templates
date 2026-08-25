@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-Webcam streaming server.
-GStreamer MJPEG-over-WebSocket. Most USB webcams output MJPEG natively, but
-frames are decoded and re-encoded to a standard JPEG bitstream by default
-(jpegdec ! jpegenc quality=85): Safari is stricter than Chrome about
-webcam-native MJPEG, so a clean re-encode is tried first. Raw-only cameras
-fall back to videoconvert ! jpegenc quality=70; passing native MJPEG through
-untouched is the last-resort fallback (ladder rungs 4-5), not the normal path.
+IP camera streaming server.
+GStreamer MJPEG-over-WebSocket, reading from the platform-managed
+/dev/video2xx v4l2loopback node for a registered IP camera — the bare
+`camera` entitlement maps that node into the container (see README.md).
+The node carries the camera's sub-stream (<=1024px wide, auto-selected by
+the platform), usually already MJPEG — but the pipeline ladder still tries
+jpegdec ! jpegenc quality=85 re-encode rungs first (Safari is stricter than
+Chrome about non-standard MJPEG bitstreams; same ladder as camera-feed),
+then jpegenc quality=70 for raw sources; sending frames as-is is the
+last-resort fallback.
 """
 import asyncio
 import collections
 import glob
 import json
 import logging
+import os
 import platform
 import subprocess
 import sys
@@ -75,7 +79,16 @@ if _assets_dir.is_dir():
     app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
 
 IS_MACOS = platform.system() == "Darwin"
-V4L_SYMLINK_DIRS = (Path("/dev/v4l/by-id"), Path("/dev/v4l/by-path"))
+
+# Explicit device override (template var CAMERA_DEVICE, e.g. "/dev/video203").
+# Takes priority over auto-detection — set this when a device deployment has
+# more than one registered camera and the auto-picked node isn't the right one.
+CAMERA_DEVICE_OVERRIDE = os.environ.get("CAMERA_DEVICE", "").strip()
+
+# Platform-managed IP camera loopback nodes live at /dev/video200 .. /dev/video255
+# (one per registered camera, keyed by device ID). Auto-detection prefers nodes
+# in this band since this template targets registered IP cameras, not USB webcams.
+IP_CAMERA_DEVICE_ID_RANGE = range(200, 256)
 
 
 def _sysfs_video_node_path(path: str) -> Path:
@@ -128,77 +141,50 @@ def _v4l2_is_capture(path: str) -> bool:
         return False
 
 
-def _usb_device_id_for_video_node(path: str) -> str | None:
+def _video_node_device_id(path: str) -> int | None:
+    """Numeric suffix of a /dev/videoN node (the platform's camera device ID
+    for loopback nodes), or None if the node name doesn't parse."""
+    name = Path(path).name
+    if not name.startswith("video"):
+        return None
     try:
-        device_path = (_sysfs_video_node_path(path) / "device").resolve()
-    except Exception:
+        return int(name[len("video"):])
+    except ValueError:
         return None
 
-    for current in [device_path] + list(device_path.parents):
-        if (current / "idVendor").exists() and (current / "idProduct").exists():
-            return current.name.split(":", 1)[0]
-    return None
 
-
-def _linux_symlink_video_nodes() -> list[str]:
-    nodes: list[str] = []
-
-    def add(path: str):
-        if path not in nodes:
-            nodes.append(path)
-
-    by_id = V4L_SYMLINK_DIRS[0]
-    if by_id.is_dir():
-        for link in sorted(by_id.iterdir()):
-            if not link.name.startswith("usb-"):
-                continue
-            try:
-                target = link.resolve()
-            except Exception:
-                continue
-            if target.name.startswith("video"):
-                add(f"/dev/{target.name}")
-    if nodes:
-        _log_v4l_targets_once("by-id", nodes)
-        return nodes
-
-    by_path = V4L_SYMLINK_DIRS[1]
-    if by_path.is_dir():
-        for link in sorted(by_path.iterdir()):
-            if "-usb-" not in link.name and "-usbv" not in link.name:
-                continue
-            try:
-                target = link.resolve()
-            except Exception:
-                continue
-            if target.name.startswith("video"):
-                add(f"/dev/{target.name}")
-    if nodes:
-        _log_v4l_targets_once("by-path", nodes)
-    return nodes
+def _is_ip_camera_node(path: str) -> bool:
+    device_id = _video_node_device_id(path)
+    return device_id is not None and device_id in IP_CAMERA_DEVICE_ID_RANGE
 
 
 def _linux_candidate_video_nodes() -> list[str]:
-    symlink_nodes = _linux_symlink_video_nodes()
-    if symlink_nodes:
-        return symlink_nodes
+    """Ordered list of /dev/video* nodes to try connecting to.
 
-    if any(directory.exists() for directory in V4L_SYMLINK_DIRS):
-        _log_v4l_targets_once("waiting-stable", [])
-        return []
+    CAMERA_DEVICE, when set, pins the exact node the platform assigned to a
+    registered camera (`wendy device camera list`) — discovery is skipped
+    entirely and that node is used as-is. Otherwise every /dev/video* node
+    that reports itself capture-capable (a v4l2loopback node does; its
+    sibling output/metadata nodes, if any, don't) is a candidate, with nodes
+    in the platform's IP-camera device-ID band (200-255) ordered first —
+    this template consumes a registered IP camera, not a USB webcam.
+    """
+    if CAMERA_DEVICE_OVERRIDE:
+        _log_v4l_targets_once("override", [CAMERA_DEVICE_OVERRIDE])
+        return [CAMERA_DEVICE_OVERRIDE]
 
-    nodes = sorted(glob.glob("/dev/video*"), key=lambda p: (_v4l2_node_index(p), p))
-    if not nodes:
+    all_nodes = sorted(glob.glob("/dev/video*"), key=lambda p: (_v4l2_node_index(p), p))
+    capture_nodes = [path for path in all_nodes if _v4l2_is_capture(path)]
+    if not capture_nodes:
         _log_v4l_targets_once("none", [])
-        return nodes
+        return capture_nodes
 
-    usb_nodes = [path for path in nodes if _usb_device_id_for_video_node(path)]
-    if usb_nodes:
-        _log_v4l_targets_once("raw-usb", usb_nodes)
-        return usb_nodes
+    ip_nodes = [path for path in capture_nodes if _is_ip_camera_node(path)]
+    other_nodes = [path for path in capture_nodes if not _is_ip_camera_node(path)]
+    ordered = ip_nodes + other_nodes
 
-    _log_v4l_targets_once("raw", nodes)
-    return nodes
+    _log_v4l_targets_once("ip-first" if ip_nodes else "raw", ordered)
+    return ordered
 
 
 def _log_v4l_targets_once(source: str, nodes: list[str]):
@@ -209,18 +195,14 @@ def _log_v4l_targets_once(source: str, nodes: list[str]):
         return
     _last_v4l_target_log = current
 
-    if source == "by-id":
-        logger.info("Stable V4L USB targets via /dev/v4l/by-id: %s", ", ".join(nodes))
-    elif source == "by-path":
-        logger.info("Stable V4L USB targets via /dev/v4l/by-path: %s", ", ".join(nodes))
-    elif source == "raw-usb":
-        logger.info("Falling back to raw USB V4L2 nodes: %s", ", ".join(nodes))
+    if source == "override":
+        logger.info("Using CAMERA_DEVICE override: %s", ", ".join(nodes))
+    elif source == "ip-first":
+        logger.info("Discovered V4L2 capture nodes (IP-camera band first): %s", ", ".join(nodes))
     elif source == "raw":
-        logger.info("Falling back to raw V4L2 nodes: %s", ", ".join(nodes))
-    elif source == "waiting-stable":
-        logger.info("Waiting for stable V4L USB targets under /dev/v4l")
+        logger.info("Discovered V4L2 capture nodes (no IP-camera band nodes present): %s", ", ".join(nodes))
     else:
-        logger.info("No raw V4L2 nodes available under /dev/video*")
+        logger.info("No capture-capable V4L2 nodes available under /dev/video*")
 
 
 def _log_camera_inventory_once(cameras: list[dict]):
@@ -245,10 +227,13 @@ def _log_camera_inventory_once(cameras: list[dict]):
 
 
 def _enumerate_linux_cameras() -> list[dict]:
-    cameras = []
-    for path in _linux_candidate_video_nodes():
-        if _v4l2_is_capture(path):
-            cameras.append({"id": path, "name": _v4l2_device_name(path)})
+    # _linux_candidate_video_nodes() already applies the capture-capable
+    # filter (except for an explicit CAMERA_DEVICE override, which is
+    # trusted as-is), so no need to re-check here.
+    cameras = [
+        {"id": path, "name": _v4l2_device_name(path)}
+        for path in _linux_candidate_video_nodes()
+    ]
     _log_camera_inventory_once(cameras)
     return cameras
 

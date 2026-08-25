@@ -13,6 +13,8 @@ flagging:
     `ShakeHand(stage)`. These move the arms, not Dex3 fingers — finger
     control is a separate SDK (deferred to v2).
   - LowState type is `unitree_hg.msg.LowState_`, not `unitree_go.…`.
+  - Battery state is not embedded in G1 LowState. It is published as
+    `unitree_hg.msg.BmsState_` on `rt/lf/bmsstate`.
 
 Public API mirrors `go2_controller.Go2Controller` so `main.py` shape
 is preserved.
@@ -106,6 +108,7 @@ FSM_WAIT_S = float(os.environ.get("G1_LOCO_FSM_WAIT_S", "12.0"))
 FSM_RPC_TIMEOUT_S = float(os.environ.get("G1_LOCO_FSM_RPC_TIMEOUT_S", "0.5"))
 FSM_POLL_INTERVAL_S = float(os.environ.get("G1_LOCO_FSM_POLL_INTERVAL_S", "0.25"))
 FSM_MAX_AGE_S = float(os.environ.get("G1_LOCO_FSM_MAX_AGE_S", "2.0"))
+BMS_STATE_TOPIC = os.environ.get("G1_BMS_STATE_TOPIC", "rt/lf/bmsstate")
 
 
 def _clamp(value: float, limit: float) -> float:
@@ -155,6 +158,7 @@ class G1Controller:
         self._switcher = None
         self._estop = threading.Event()
         self._lowstate_sub = None
+        self._bmsstate_sub = None
         self._move_lock = asyncio.Lock()
         self._rpc_lock = asyncio.Lock()
         self._watchdog: Optional[asyncio.Task] = None
@@ -162,6 +166,8 @@ class G1Controller:
         self._latest_fsm_id: Optional[int] = None
         self._latest_fsm_at = 0.0
         self._latest_fsm_error: Optional[str] = "FSM readback has not started"
+        self._last_fsm_error_logged: Optional[str] = None
+        self._last_fsm_error_log_at = 0.0
         self._state_lock = threading.Lock()
         self._latest_state: dict[str, Any] = {}
         # Arm controller is lazily imported in connect() because it
@@ -177,7 +183,7 @@ class G1Controller:
         # G1 publishes LowState on a different IDL than Go2 — the
         # `unitree_hg` package, not `unitree_go`. Get the import wrong
         # and Cyclone silently drops every sample.
-        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import BmsState_, LowState_
 
         self._network_interface = _choose_network_interface(
             self._network_interface_setting,
@@ -216,6 +222,14 @@ class G1Controller:
         self._lowstate_sub = sub
         logger.info("Subscribed to rt/lowstate (unitree_hg.LowState_)")
 
+        bms_sub = ChannelSubscriber(BMS_STATE_TOPIC, BmsState_)
+        bms_sub.Init(self._on_bmsstate, 10)
+        self._bmsstate_sub = bms_sub
+        logger.info(
+            "Subscribed to %s (unitree_hg.BmsState_)",
+            BMS_STATE_TOPIC,
+        )
+
         # Bring up the arm_sdk publisher + TX thread. Optional — failures
         # here are logged but don't abort startup so locomotion still
         # works if the arm_sdk topic is unavailable on this firmware.
@@ -230,18 +244,11 @@ class G1Controller:
     def _on_lowstate(self, msg: Any) -> None:
         try:
             rpy = list(msg.imu_state.rpy) if msg.imu_state.rpy else [0.0, 0.0, 0.0]
-            # G1's HighFreqState equivalent. The fields are roughly
-            # analogous to Go2 but not byte-for-byte identical; we
-            # pluck the ones the brain cares about and fall back to
-            # None / 0 for anything missing on a given firmware.
-            bms = getattr(msg, "power_supply", None) or getattr(msg, "bms_state", None)
-            soc = int(getattr(bms, "soc", 0)) if bms is not None else 0
-            power_v = float(getattr(msg, "power_v", 0.0))
+            # G1's HighFreqState equivalent. Battery state is a separate
+            # DDS topic and is merged by _on_bmsstate.
             foot_force = list(getattr(msg, "foot_force", []) or [])
             tick = int(getattr(msg, "tick", 0))
             state = {
-                "battery_soc": soc,
-                "power_v": power_v,
                 "imu_rpy": rpy,
                 "foot_force": foot_force,
                 "tick": tick,
@@ -250,7 +257,20 @@ class G1Controller:
             logger.warning("Failed to parse LowState: %s", exc)
             return
         with self._state_lock:
-            self._latest_state = state
+            self._latest_state.update(state)
+
+    def _on_bmsstate(self, msg: Any) -> None:
+        """Merge a real G1 battery sample into the public robot state."""
+        try:
+            soc = int(msg.soc)
+            if not 0 <= soc <= 100:
+                raise ValueError(f"battery SOC out of range: {soc}")
+            state = {"battery_soc": soc}
+        except Exception as exc:
+            logger.warning("Failed to parse BmsState: %s", exc)
+            return
+        with self._state_lock:
+            self._latest_state.update(state)
 
     def latest_state(self) -> dict[str, Any]:
         with self._state_lock:
@@ -277,6 +297,18 @@ class G1Controller:
                 raise
             except Exception as exc:
                 self._latest_fsm_error = str(exc)
+                now = time.monotonic()
+                if (
+                    self._latest_fsm_error != self._last_fsm_error_logged
+                    or now - self._last_fsm_error_log_at >= 15.0
+                ):
+                    logger.warning(
+                        "fsm_readback_failed error=%s hint=%s",
+                        self._latest_fsm_error,
+                        "Check the G1 locomotion service and normal control mode.",
+                    )
+                    self._last_fsm_error_logged = self._latest_fsm_error
+                    self._last_fsm_error_log_at = now
             await asyncio.sleep(FSM_POLL_INTERVAL_S)
 
     async def start_fsm_monitor(self) -> None:
@@ -464,6 +496,10 @@ class G1Controller:
                         "note": "already running"}
             if fsm not in (DAMP_FSM, LOCK_STAND_FSM):
                 if not force:
+                    logger.warning(
+                        "stand_refused fsm_id=%s reason=force_required",
+                        fsm,
+                    )
                     return {"ok": False, "fsm_id": fsm,
                             "error": f"unexpected FSM {fsm}; DAMP from here can "
                                      "collapse the robot if it is not "
@@ -480,6 +516,7 @@ class G1Controller:
                 self._latest_fsm_error = None
             return {"ok": ok, "fsm_id": fsm, "standing": ok}
         except Exception as exc:
+            logger.exception("stand_failed error=%s", exc)
             try:
                 client.StopMove()
             except Exception:
@@ -495,6 +532,10 @@ class G1Controller:
                 return {"ok": True, "fsm_id": fsm, "ready_to_walk": True,
                         "note": "already running"}
             if fsm != LOCK_STAND_FSM:
+                logger.warning(
+                    "running_refused fsm_id=%s reason=not_lock_stand",
+                    fsm,
+                )
                 return {"ok": False, "fsm_id": fsm,
                         "error": "not in LOCK STAND; POST /stand first"}
             client.SetFsmId(RUNNING_FSM)
@@ -509,6 +550,7 @@ class G1Controller:
                 self._latest_fsm_error = None
             return {"ok": ok, "fsm_id": fsm, "ready_to_walk": ok}
         except Exception as exc:
+            logger.exception("running_failed error=%s", exc)
             return {"ok": False, "error": str(exc)}
 
     async def stand_up(self, force: bool = False) -> dict[str, Any]:

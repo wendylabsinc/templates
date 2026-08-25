@@ -520,7 +520,7 @@ private struct ClientCommand: Decodable {
 struct CameraFeedYoloApp {
     static func main() async throws {
         let observability = try OTel.bootstrap()
-        let logger = Logger(label: "camera-feed-yolo")
+        let logger = Logger(label: "{{.APP_ID}}")
         try await ServiceGroup(
             services: [observability, CameraFeedYoloService(logger: logger)],
             gracefulShutdownSignals: [.sigterm, .sigint],

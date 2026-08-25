@@ -57,7 +57,7 @@ jobs:
             --recursive \
             --delete-unmatched-destination-objects \
             --cache-control='public, max-age=300' \
-            --exclude='(^|/)\.git/|(^|/)\.github/|(^|/)\.DS_Store$'
+            --exclude='(^|/)\.git/|(^|/)\.github/|(^|/)\.DS_Store$|(^|/)tests/'
           echo "Published: https://templates.wendy.dev/${BRANCH}/"
 
   cleanup:

@@ -1,5 +1,5 @@
 {
-  "originHash" : "a04d132471326091e12c81491b29ccf092f40dfb241477b0c8afdf734ad6f946",
+  "originHash" : "0425c1dc6a00c9832f4857b7e9169a97d60abfa50cde40cb9dc7b2711b060a0c",
   "pins" : [
     {
       "identity" : "async-http-client",
@@ -17,6 +17,33 @@
       "state" : {
         "revision" : "a3a85a85214caf642abaa96ae664e4c772a59f6e",
         "version" : "1.4.1"
+      }
+    },
+    {
+      "identity" : "grpc-swift-2",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/grpc/grpc-swift-2.git",
+      "state" : {
+        "revision" : "28cdd63ef88583ddc67d7bb179eab46fab465ce9",
+        "version" : "2.4.2"
+      }
+    },
+    {
+      "identity" : "grpc-swift-nio-transport",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/grpc/grpc-swift-nio-transport.git",
+      "state" : {
+        "revision" : "c46f77c07c3ae4fce4734e7af03fcb35ab544428",
+        "version" : "2.9.1"
+      }
+    },
+    {
+      "identity" : "grpc-swift-protobuf",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/grpc/grpc-swift-protobuf.git",
+      "state" : {
+        "revision" : "176c5a434fd76f6f479848d1a8f7d44967534168",
+        "version" : "2.4.1"
       }
     },
     {
@@ -245,6 +272,24 @@
       }
     },
     {
+      "identity" : "swift-otel",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swift-otel/swift-otel.git",
+      "state" : {
+        "revision" : "10f2d41a8787167ea49b6055082b178e7b2fe911",
+        "version" : "1.5.0"
+      }
+    },
+    {
+      "identity" : "swift-protobuf",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-protobuf.git",
+      "state" : {
+        "revision" : "55d7a1cc5666b85c13464aea1c4b4a90feccb4c8",
+        "version" : "1.38.1"
+      }
+    },
+    {
       "identity" : "swift-service-context",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-service-context.git",
@@ -287,6 +332,15 @@
       "state" : {
         "revision" : "2fa33e1f5e7131a7fc64c28e6d161dcec0d24820",
         "version" : "1.3.3"
+      }
+    },
+    {
+      "identity" : "swift-w3c-trace-context",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/swift-otel/swift-w3c-trace-context.git",
+      "state" : {
+        "revision" : "5da9b143ba6046734de3fa51dafea28290174e4e",
+        "version" : "1.0.0-beta.5"
       }
     },
     {

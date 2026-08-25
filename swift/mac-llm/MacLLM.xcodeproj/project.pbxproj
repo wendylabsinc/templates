@@ -14,6 +14,7 @@
 		A00000000000000000000105 /* MLXHuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000205 /* MLXHuggingFace */; };
 		A00000000000000000000106 /* HuggingFace in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000206 /* HuggingFace */; };
 		A00000000000000000000107 /* Tokenizers in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000207 /* Tokenizers */; };
+		A00000000000000000000108 /* OTel in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000208 /* OTel */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -52,6 +53,7 @@
 				A00000000000000000000105 /* MLXHuggingFace in Frameworks */,
 				A00000000000000000000106 /* HuggingFace in Frameworks */,
 				A00000000000000000000107 /* Tokenizers in Frameworks */,
+				A00000000000000000000108 /* OTel in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -101,6 +103,7 @@
 				A00000000000000000000205 /* MLXHuggingFace */,
 				A00000000000000000000206 /* HuggingFace */,
 				A00000000000000000000207 /* Tokenizers */,
+				A00000000000000000000208 /* OTel */,
 			);
 			productName = MacLLM;
 			productReference = A00000000000000000000001 /* MacLLM */;
@@ -136,6 +139,7 @@
 				A00000000000000000000303 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
 				A00000000000000000000304 /* XCRemoteSwiftPackageReference "swift-huggingface" */,
 				A00000000000000000000305 /* XCRemoteSwiftPackageReference "swift-transformers" */,
+				A00000000000000000000306 /* XCRemoteSwiftPackageReference "swift-otel" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A00000000000000000000011 /* Products */;
@@ -368,6 +372,14 @@
 				minimumVersion = 1.3.0;
 			};
 		};
+		A00000000000000000000306 /* XCRemoteSwiftPackageReference "swift-otel" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swift-otel/swift-otel.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -405,6 +417,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A00000000000000000000305 /* XCRemoteSwiftPackageReference "swift-transformers" */;
 			productName = Tokenizers;
+		};
+		A00000000000000000000208 /* OTel */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A00000000000000000000306 /* XCRemoteSwiftPackageReference "swift-otel" */;
+			productName = OTel;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

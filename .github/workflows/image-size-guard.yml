@@ -1,0 +1,35 @@
+name: Image size guard
+
+# camera-feed-yolo pre-installs CPU-only torch (Dockerfile:96-101) so
+# ultralytics' transitive torch dep is already satisfied (9.68 GB -> ~0.7 GB,
+# commit cd52658). If a future ultralytics release upper-bounds torch below the
+# cpu wheel, pip reinstalls CUDA torch from PyPI and the image silently
+# re-inflates. The trigger is an upstream release, not a repo change — hence
+# the cron.
+
+on:
+  pull_request:
+    paths:
+      - 'python/camera-feed-yolo/**'
+      - '.github/workflows/image-size-guard.yml'
+  schedule:
+    - cron: '17 6 * * 1'   # weekly, Monday
+  workflow_dispatch:
+
+jobs:
+  camera-feed-yolo-size:
+    runs-on: ubuntu-24.04-arm   # aarch64 = the device arch where the 9.68GB case was measured
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the CPU stage
+        run: docker build --target base-generic -t yolo-cpu-guard python/camera-feed-yolo
+      - name: Assert image size
+        run: |
+          set -euo pipefail
+          SIZE=$(docker image inspect yolo-cpu-guard --format '{{.Size}}')
+          LIMIT=$((3 * 1024 * 1024 * 1024))   # 3 GiB; healthy is ~0.7 GB, regressed is ~9.7 GB
+          echo "base-generic image size: $SIZE bytes (limit $LIMIT)"
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::error::camera-feed-yolo base-generic is ${SIZE} bytes (> 3 GiB). The CPU-only torch pre-install (Dockerfile:96-101) is likely being overridden — check whether ultralytics now upper-bounds torch below the cpu-index version."
+            exit 1
+          fi

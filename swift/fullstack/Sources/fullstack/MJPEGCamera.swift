@@ -70,7 +70,10 @@ actor MJPEGCamera {
             } catch is CancellationError {
                 // normal shutdown
             } catch {
-                logger.error("pipeline error: \(error)")
+                logger.error(
+                    "Camera pipeline failed",
+                    metadata: ["camera.device": "\(device)", "error": "\(error)"]
+                )
             }
         }
     }
@@ -87,7 +90,10 @@ actor MJPEGCamera {
             } catch is CancellationError {
                 throw CancellationError()
             } catch {
-                logger.warning("camera pipeline failed; retrying", metadata: ["device": "\(device)", "error": "\(error)"])
+                logger.warning(
+                    "Camera pipeline failed; retrying",
+                    metadata: ["camera.device": "\(device)", "error": "\(error)"]
+                )
             }
 
             try Task.checkCancellation()
@@ -119,8 +125,12 @@ actor MJPEGCamera {
 
                 let source = try builder.build()
                 logger.info(
-                    "selected camera pipeline",
-                    metadata: ["device": "\(device)", "profile": "\(profile.name)", "pipeline": "\(source.selectedPipeline)"]
+                    "Selected camera pipeline",
+                    metadata: [
+                        "camera.device": "\(device)",
+                        "camera.profile": "\(profile.name)",
+                        "gstreamer.pipeline": "\(source.selectedPipeline)",
+                    ]
                 )
                 return (profile.name, source)
             } catch {
@@ -135,7 +145,10 @@ actor MJPEGCamera {
     private func streamCamera(device: String) async throws {
         #if os(Linux)
         let (profile, source) = try makeVideoSource(device: device)
-        logger.info("started camera pipeline", metadata: ["device": "\(device)", "profile": "\(profile)"])
+        logger.info(
+            "Camera pipeline started",
+            metadata: ["camera.device": "\(device)", "camera.profile": "\(profile)"]
+        )
 
         do {
             for try await frame in source.frames() {
@@ -151,7 +164,10 @@ actor MJPEGCamera {
             throw error
         }
 
-        logger.warning("camera pipeline exited", metadata: ["device": "\(device)", "profile": "\(profile)"])
+        logger.warning(
+            "Camera pipeline exited",
+            metadata: ["camera.device": "\(device)", "camera.profile": "\(profile)"]
+        )
         #else
         throw CameraError.unsupportedPlatform
         #endif

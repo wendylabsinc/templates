@@ -50,6 +50,11 @@
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)"
         },
         {
+            "name": "ip-camera-feed",
+            "description": "Live feed from a platform-registered IP camera: GStreamer MJPEG over WebSocket via the /dev/video2xx loopback node",
+            "languages": ["python"]
+        },
+        {
             "name": "realsense-camera",
             "description": "Live RealSense D415 multi-stream viewer: color + 2x IR + depth as MJPEG",
             "languages": ["python", "cpp"]

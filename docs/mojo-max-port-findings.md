@@ -41,6 +41,8 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-022](#mmf-022) | `resize_nearest` cannot reproduce torch/ONNX nearest-2× upsampling | minor | bug/docs | workaround — verified |
 | [MMF-023](#mmf-023) | Graph compilation needs 5.7–7.2 GB per YOLOv8n sub-graph, never freed; inline weight constants OOM the folder | major | bug | workaround — verified |
 | [MMF-024](#mmf-024) | MEF store is positional per-session; non-default `InferenceSession` options conflict with the implicit global context | minor | bug/docs | workaround — verified |
+| [MMF-025](#mmf-025) | `weights_registry` weights fault iGPU kernels with `CUDA_ERROR_ILLEGAL_ADDRESS` | major | bug | workaround — verified |
+| [MMF-026](#mmf-026) | GPU conv kernels ~10-40× below par on Jetson Orin (522 ms YOLOv8n@320 vs 57 ms on the same device's CPU) | major | performance | open — verified |
 
 ---
 
@@ -400,10 +402,11 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   `reshape (1,H,W,C)→(H·W,C)` → `matmul` → bias `add` → `reshape` back; 0.0 output diff.
 - **GPU flip side (Jetson Orin, 2026-08-26):** the matmul lowering must NOT be used on GPU —
   model setup dies with `kernel "transpose_mogg_8": CUDA call failed: CUDA_ERROR_ILLEGAL_ADDRESS`
-  while repacking a `[512,256] KN → [256,512] NK` matmul weight on the iGPU (likely the same
-  integrated-GPU assumption family as MMF-004; VMM already disabled). 1×1 `conv2d` itself
-  compiles and sets up fine on GPU. Net: the same graph needs per-device lowering — conv2d on
-  GPU, matmul on CPU — which also means CPU and GPU MEFs cannot share a graph definition.
+  while repacking a `[512,256] KN → [256,512] NK` matmul weight on the iGPU. In hindsight this
+  was the first sighting of MMF-025 (the repacked weight was `weights_registry`-backed); 1×1
+  `conv2d` with inline constants works on GPU. Net: the same graph needs per-device lowering —
+  conv2d on GPU, matmul on CPU — which also means CPU and GPU MEFs cannot share a graph
+  definition.
 - **Upstream:** not yet filed.
 
 ## MMF-022: `resize_nearest` cannot reproduce torch/ONNX nearest-2× upsampling <a name="mmf-022"></a>
@@ -468,6 +471,41 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   supported way to order around it in a normal program.
 - **Upstream:** not yet filed.
 
+## MMF-025: `weights_registry` weights fault iGPU kernels (`CUDA_ERROR_ILLEGAL_ADDRESS`) <a name="mmf-025"></a>
+
+- **Template(s):** `mojo/camera-feed-yolo` · **Jetson Orin Nano (sm_87), MAX 26.5.0, JP7.2** — **2026-08-26**
+- **Category:** bug · **Severity:** major (silently poisons any GPU graph fed by a registry)
+- **Repro:** build the YOLOv8n graph for GPU with every weight as
+  `ops.constant_external` + `weights_registry` at `session.load()`; execute on the Orin.
+- **Expected:** registry weights are staged into device-accessible memory (that is the
+  documented serving path, and it works on CPU).
+- **Actual:** the first conv's fused epilogue kernel dies with
+  `CUDA_ERROR_ILLEGAL_ADDRESS`. Identical failure whether the MEF was cross-compiled on a
+  build machine or compiled on the device itself, so it is a runtime weight-staging issue, not
+  a codegen one — consistent with kernels receiving un-mapped host pointers on the
+  unified-memory iGPU (MMF-004's assumption family). The matmul-weight `KN→NK` setup repack
+  crash in MMF-021's GPU note is the same root cause.
+- **Workaround (verified):** inline every weight as `ops.constant` for GPU graphs. (On CPU
+  that direction is what OOMs the constant-folder, MMF-023 — the two workarounds are exact
+  opposites per device.)
+- **Upstream:** not yet filed.
+
+## MMF-026: GPU conv kernels ~10-40× below par on Jetson Orin <a name="mmf-026"></a>
+
+- **Template(s):** `mojo/camera-feed-yolo` · **Jetson Orin Nano (sm_87), MAX 26.5.0, JP7.2** — **2026-08-26**
+- **Category:** performance · **Severity:** major (GPU CV is slower than the same device's CPU)
+- **Detail:** with MMF-025 worked around, the hand-built YOLOv8n runs end-to-end on the Orin
+  GPU but at **522 ms/frame (imgsz 320)** — per-stage (forced syncs): backbone 194 ms, PAN
+  135 ms, detect 193 ms, DFL-decode ~1 ms. The conv-dominated parts are uniformly slow while
+  the elementwise/softmax decode is fine; effective throughput is ~8 GFLOP/s on a ~2 TFLOP/s
+  fp32 part, i.e. the `mo.conv` path appears to hit a naive/fallback kernel on sm_87 (matmul
+  workloads — `mojo/llm` serving — perform fine on this device). The **same model on the same
+  device's CPU runs 57 ms at imgsz 224**, so our template defaults to CPU and leaves
+  `YOLO_DEVICE=gpu` opt-in.
+- **Expected:** GPU convolution comfortably ahead of CPU on a 1024-core Ampere iGPU.
+- **Upstream:** not yet filed. Ask: is there a tuned conv path for sm_8x, and is the
+  fallback-kernel selection observable/loggable?
+
 ---
 
 ## Appendix A: per-template port status
@@ -479,7 +517,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mojo/simple-api` | portable w/ workarounds | hand-rolled HTTP → MMF-011 |
 | `mojo/camera-feed` | portable w/ workarounds | → MMF-011 |
 | `mojo/audio` | portable w/ workarounds | → MMF-011 |
-| `mojo/camera-feed-yolo` | partial — CPU verified in-container | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024; Orin GPU pending |
+| `mojo/camera-feed-yolo` | partial — **verified on Orin** (CPU 57 ms@224; GPU works but MMF-026-slow, opt-in) | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024/025; GPU perf → MMF-026 |
 | `mojo/fullstack` | partial | React frontend (JS in every variant, not a gap) → MMF-011 |
 | `mojo/ros2-talker-listener` | portable w/ workarounds | hand CDR + FFI → MMF-015 |
 | `mojo/voice-ai` | partial (v1 = LLM leg only) | pipecat/STT/TTS stay Python → MMF-002/003 |

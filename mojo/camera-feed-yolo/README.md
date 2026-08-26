@@ -12,11 +12,14 @@ and box unletterboxing run in Mojo. Same endpoints and client protocol as the
 the `/stream` WebSocket (per frame: meta JSON text message, then the binary
 JPEG; inbound `{"switch_camera": id}` and `{"confidence": v}`).
 
-One image serves every target: the MAX wheel picks CPU or GPU at runtime
-(`mojo/llm` rationale). CPU MEF artifacts (imgsz 224) are precompiled at
-image build; on a GPU device the app compiles GPU MEFs (imgsz 320) once on
-first boot — expect a few minutes before first readiness (the readiness
-timeout allows 600 s).
+One image serves every target (`mojo/llm` rationale): CPU MEF artifacts
+(imgsz 224) and Jetson-Orin GPU MEFs (sm_87, imgsz 320, cross-compiled with
+no GPU present via the driver's virtual-device targeting) are both baked at
+image build. Inference defaults to **CPU even on Jetson**: MAX 26.5's conv
+kernels run ~10-40x below par on the Orin iGPU (522 ms/frame vs 57 ms on the
+same device's CPU — MMF-026). `YOLO_DEVICE=gpu` opts into the GPU path,
+which works end to end; an unbaked device/imgsz combination compiles its
+MEFs once on first boot (the readiness timeout allows 600 s).
 
 ## Configuration
 
@@ -24,7 +27,7 @@ timeout allows 600 s).
 |---|---:|---|
 | `APP_ID` | required | Application identifier |
 | `PORT` | `9005` | HTTP/WebSocket listener and UI port |
-| `YOLO_DEVICE` | `auto` | `cpu`, `gpu`, or probe the MAX driver |
+| `YOLO_DEVICE` | `cpu` | `cpu`, `gpu` (opt-in, see MMF-026), or `probe` |
 | `YOLO_IMGSZ` | 320 GPU / 224 CPU | Square inference size (multiple of 32) |
 | `YOLO_MAX_FPS` | `3` | Inference rate cap (frames still stream at camera rate) |
 
@@ -51,7 +54,11 @@ without a baked MEF trigger a one-time on-device graph compile needing
 
 ## Verified
 
-CPU path verified in-container (arm64): graph output matches the fused
-ultralytics reference (max |Δ| 0.002 px box / 2e-6 class score on bus.jpg),
-13.5 ms/frame at imgsz 320 on an M-series Docker VM. Jetson Orin GPU
-verification pending — see `docs/mojo-max-port-findings.md` Appendix B.
+- **Numerics (in-container, arm64):** graph output matches the fused
+  ultralytics reference to max |Δ| 0.002 px box / 2e-6 class score on
+  bus.jpg; 13.5 ms/frame at imgsz 320 on an M-series Docker VM CPU.
+- **Jetson Orin Nano (WendyOS, JP7.2, Logitech Brio):** CPU path — 27 fps
+  1280x720 MJPEG streaming with 57 ms inference at imgsz 224 interleaved
+  (rate-capped at `YOLO_MAX_FPS`). GPU path — runs end to end at imgsz 320
+  but 522 ms/frame on MAX 26.5's conv kernels (MMF-026), hence the CPU
+  default. M-series-built CPU MEFs execute unmodified on Cortex-A78AE.

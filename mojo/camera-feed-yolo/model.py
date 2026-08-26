@@ -102,12 +102,17 @@ class _GraphFactory:
         return ops.constant(np.ascontiguousarray(a), DType.float32, device=self.dev)
 
     def _ext(self, name, a):
-        # Weights ride the load-time registry: inlined ops.constant weights
-        # OOM the constant-folder during compilation (MMF-023).
+        # CPU: weights ride the load-time registry — inlined ops.constant
+        # weights OOM the constant-folder during compilation (MMF-023).
+        # GPU: the opposite — registry-backed weights reach iGPU kernels as
+        # host pointers the GPU faults on (CUDA_ERROR_ILLEGAL_ADDRESS,
+        # MMF-025), while inline constants compile fine there.
         from max.dtype import DType
         from max.graph import TensorType, ops
 
         a = np.ascontiguousarray(a)
+        if self.device == "gpu":
+            return self._const(a)
         self.registry[name] = a
         return ops.constant_external(name, TensorType(DType.float32, a.shape, device=self.dev))
 

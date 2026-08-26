@@ -18,8 +18,13 @@ def resolve_config() -> tuple:
     wheel picks CPU or GPU at runtime (same rationale as mojo/llm), so the
     device is probed here rather than baked at build.
     """
-    device = os.environ.get("YOLO_DEVICE", "auto")
-    if device == "auto":
+    # Default is CPU even on GPU devices: MAX 26.5's conv kernels on the
+    # Jetson iGPU run ~10-40x below par (522 ms/frame at imgsz 320 vs 57 ms
+    # on the same device's CPU at 224 — MMF-026), so "auto" would pick the
+    # slower path. YOLO_DEVICE=gpu stays available (works end to end) for
+    # when the kernels catch up; "probe" restores accelerator autodetect.
+    device = os.environ.get("YOLO_DEVICE", "cpu")
+    if device in ("auto", "probe"):
         try:
             from max.driver import accelerator_count
 

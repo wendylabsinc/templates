@@ -380,10 +380,9 @@ async def perception_ws_proxy(ws: WebSocket):
             pass
 
 
-# Static files at /static/* (vendored later if we add real assets).
-# The SPA itself is served from / via the catch-all below.
-if (STATIC_DIR / "static").is_dir():
-    app.mount("/static", StaticFiles(directory=STATIC_DIR / "static"), name="static")
+# Static assets live beside index.html and are mounted at /static/*.
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/", include_in_schema=False)

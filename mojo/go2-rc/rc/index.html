@@ -486,7 +486,7 @@
 
       <div class="status">
         <span class="brand">
-          <img src="/static/wendy-logo.svg" alt="Wendy" />
+          <img src="/assets/wendy-logo.svg" alt="Wendy" />
           <span class="brand-copy">Go2 control</span>
         </span>
         <span class="pill"
@@ -500,6 +500,7 @@
         <span class="pill"
           ><span id="battery-label">Battery: —</span></span
         >
+        <span class="pill"><span id="max-label">MAX: …</span></span>
       </div>
 
       <div class="actions">
@@ -544,6 +545,9 @@
     <script>
       // === API helpers ====================================================
       const TICK_MS = 100; // 10 Hz — matches go2-motion's 1 s watchdog with margin
+      const CAMERA_ORIGIN = `${location.protocol}//${location.hostname}:8000`;
+      const WS_PROTOCOL = location.protocol === "https:" ? "wss:" : "ws:";
+      const CAMERA_WS_ORIGIN = `${WS_PROTOCOL}//${location.hostname}:8000`;
 
       // Hardware caps from go2-motion — UI is allowed to send anything,
       // but we clamp client-side too so the slider's 100% behaves
@@ -582,7 +586,7 @@
       function attachCamera() {
         // Cache-bust each (re)attach so MJPEG reloads after a hiccup
         // instead of serving the closed stream from the browser cache.
-        cam.src = `/api/camera?t=${Date.now()}`;
+        cam.src = `${CAMERA_ORIGIN}/stream/color?t=${Date.now()}`;
       }
       cam.addEventListener("load", () => {
         camFallback.classList.remove("visible");
@@ -860,13 +864,13 @@
 
       async function pollStatus() {
         const h = await getJSON("/api/health");
-        if (h && h.motion && h.motion.ok) {
+        if (h && h.ok) {
           motionDot.className = "dot ok";
           motionLabel.textContent = "Motion: ready";
         } else {
           motionDot.className = "dot bad";
           motionLabel.textContent = `Motion: ${
-            (h && h.motion && h.motion.reason) || "down"
+            (h && h.reason) || "down"
           }`;
         }
         const s = await getJSON("/api/state");
@@ -884,6 +888,20 @@
       }
       pollStatus();
       setInterval(pollStatus, 2000);
+
+      async function pollRuntime() {
+        const maxLabel = document.getElementById("max-label");
+        try {
+          const response = await fetch("/api/runtime");
+          const runtime = response.ok ? await response.json() : null;
+          maxLabel.textContent = runtime && runtime.ok
+            ? `MAX ${runtime.max}: ${runtime.mode}`
+            : "MAX: unavailable";
+        } catch {
+          maxLabel.textContent = "MAX: unavailable";
+        }
+      }
+      pollRuntime();
 
       // === Push-to-talk: browser mic → dog speaker ========================
       // Hold the talk button (or T key) → grab mic via getUserMedia,
@@ -942,8 +960,7 @@
           console.warn("AudioContext({sampleRate}) unsupported, falling back:", e);
           talkCtx = new Ctor();
         }
-        const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        talkSock = new WebSocket(`${proto}//${location.host}/api/talk/ws`);
+        talkSock = new WebSocket(`${CAMERA_WS_ORIGIN}/ws/talk`);
         talkSock.binaryType = "arraybuffer";
 
         try { await talkCtx.resume(); } catch { /* */ }
@@ -1179,8 +1196,7 @@
 
       // WebSocket with auto-reconnect. Same-origin, scheme follows the page.
       function connectPerception() {
-        const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        const url = `${proto}//${location.host}/api/perception/ws`;
+        const url = `${CAMERA_WS_ORIGIN}/ws/perception`;
         const sock = new WebSocket(url);
         sock.addEventListener("message", (e) => {
           try { applySnap(JSON.parse(e.data)); } catch { /* malformed — drop */ }

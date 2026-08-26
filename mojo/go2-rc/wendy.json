@@ -1,0 +1,39 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        { "type": "network", "mode": "host" }
+    ],
+    "services": {
+        "motion": {
+            "context": "./motion",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "camera": {
+            "context": "./camera",
+            "entitlements": [
+                { "type": "network", "mode": "host" }
+            ]
+        },
+        "rc": {
+            "context": "./rc",
+            "dependsOn": ["motion", "camera"],
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "gpu" }
+            ]
+        }
+    },
+    "readiness": {
+        "tcpSocket": { "port": {{.RC_PORT}} },
+        "timeoutSeconds": 300
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.RC_PORT}}"
+        }
+    }
+}

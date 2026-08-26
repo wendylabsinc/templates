@@ -50,8 +50,41 @@ def resolve_config() -> tuple:
     return device, imgsz
 
 
+def _gpu_arch() -> str:
+    """Target GPU arch: the physical device's when one is present, else the
+    YOLO_GPU_ARCH build/run arg (sm_87 = Jetson Orin default)."""
+    try:
+        from max import driver
+
+        if driver.accelerator_count() > 0:
+            return driver.accelerator_architecture_name()
+    except Exception:
+        pass
+    return os.environ.get("YOLO_GPU_ARCH", "sm_87")
+
+
+def _enable_virtual_gpu_if_needed() -> None:
+    """GPU MEFs can be cross-compiled on a machine with no GPU: the driver's
+    virtual-device mode targets a named arch (undocumented but working —
+    docs/mojo-max-port-findings.md MMF-023 notes). The Dockerfile uses this
+    to bake Jetson MEFs at image-build time."""
+    from max import driver
+
+    try:
+        if driver.accelerator_count() > 0:
+            return
+    except Exception:
+        pass
+    arch = _gpu_arch()
+    driver.set_virtual_device_api("cuda")
+    driver.set_virtual_device_target_arch(arch)
+    driver.set_virtual_device_count(1)
+    print(f"[model] no physical GPU — cross-compiling via virtual device ({arch})", flush=True)
+
+
 def _mef_dir(device: str, imgsz: int, part: str) -> str:
-    return os.path.join(APP_DIR, "mefs", f"{device}-{imgsz}", part)
+    tag = f"gpu-{_gpu_arch()}-{imgsz}" if device == "gpu" else f"cpu-{imgsz}"
+    return os.path.join(APP_DIR, "mefs", tag, part)
 
 
 def _session(device: str, **kwargs):
@@ -262,6 +295,8 @@ class _GraphFactory:
 
 
 def compile_part(part: str, imgsz: int, device: str) -> None:
+    if device == "gpu":
+        _enable_virtual_gpu_if_needed()
     out_dir = _mef_dir(device, imgsz, part)
     os.makedirs(out_dir, exist_ok=True)
     session = _session(device, export_mefs=out_dir)

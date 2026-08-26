@@ -81,9 +81,13 @@ ENV MODULAR_DEVICE_CONTEXT_MEMORY_MANAGER_VMM=0 \
     PYTHONUNBUFFERED=1 \
     PORT={{.PORT}}
 
-# Precompile the CPU MEFs (imgsz 224 parity with python/camera-feed-yolo).
-# One part per process; ~6-7 GB peak per part (MMF-023).
+# Precompile MEFs, one part per process, ~6-7 GB peak per part (MMF-023):
+# CPU at imgsz 224 (python-sibling parity), and Jetson-Orin GPU (sm_87,
+# imgsz 320) cross-compiled with no GPU present via the driver's
+# virtual-device targeting. Other GPU archs fall back to a one-time
+# first-boot compile on the device (or set YOLO_GPU_ARCH at build).
 RUN YOLO_DEVICE=cpu python3 /app/model.py compile
+RUN YOLO_DEVICE=gpu python3 /app/model.py compile
 
 EXPOSE {{.PORT}}
 CMD ["/app/camera-feed-yolo"]

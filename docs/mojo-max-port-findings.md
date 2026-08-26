@@ -37,6 +37,10 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-018](#mmf-018) | Cold-start graph compile is minutes on edge CPUs; no precompiled-cache distribution | minor | missing-feature | open — verified |
 | [MMF-019](#mmf-019) | `max serve` requires network access to start a fully-cached model (offline crash-loop) | major | bug | open — verified |
 | [MMF-020](#mmf-020) | `external_call` re-declaring a libc symbol the stdlib uses fails LLVM lowering with an opaque error | minor | bug/docs | open — verified |
+| [MMF-021](#mmf-021) | 1×1 `conv2d` fails CPU compilation: no kernel for `layout_transform_RSCF_to_KNkni` | major | bug | workaround — verified |
+| [MMF-022](#mmf-022) | `resize_nearest` cannot reproduce torch/ONNX nearest-2× upsampling | minor | bug/docs | workaround — verified |
+| [MMF-023](#mmf-023) | Graph compilation needs 5.7–7.2 GB per YOLOv8n sub-graph, never freed; inline weight constants OOM the folder | major | bug | workaround — verified |
+| [MMF-024](#mmf-024) | MEF store is positional per-session; non-default `InferenceSession` options conflict with the implicit global context | minor | bug/docs | workaround — verified |
 
 ---
 
@@ -56,7 +60,14 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Notes for Modular:** MAX's own kernel library already ships ONNX-semantics `nms.mojo`,
   `resize.mojo`, `pool.mojo`, `gather_scatter.mojo` — much of the op surface appears to exist;
   what's missing is the architecture + a detection modality. Our port (`mojo/camera-feed-yolo`)
-  will hand-build YOLOv8n as a MAX graph and log every missing op here.
+  hand-builds YOLOv8n as a MAX graph and logs every missing op here.
+- **Hand-build outcome (2026-08-26, MAX 26.5.0, arm64 CPU):** the op surface is **complete** —
+  `conv2d`/`silu`/`max_pool2d`/`chunk`/`concat`/`softmax`/`matmul` and friends cover all of
+  YOLOv8n; the graph's raw output matches the fused ultralytics model to 2e-6 (class scores) /
+  0.002 px (boxes) and runs 13.5 ms/frame at imgsz 320 on an M-series Docker VM CPU. What it
+  took: 1×1-conv matmul rewrite (MMF-021), broadcast upsample (MMF-022), 3-way graph split with
+  per-process MEF precompilation (MMF-023), external weight registry (MMF-023). So the gap is
+  purely the missing architecture/modalities — the kernels are there.
 - **Upstream:** not yet filed.
 
 ## MMF-002: ONNX + TorchScript ingestion removed with no edge migration path <a name="mmf-002"></a>
@@ -236,6 +247,13 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   Python graph API. A "full Mojo" application must therefore either drive Python from Mojo
   (mature direction, our approach) or keep a Python sidecar for model definition. Model
   *definition* in Mojo — the language's original pitch — is not currently possible against MAX.
+- **Verified working (2026-08-26, `mojo/camera-feed-yolo`):** the drive-Python-from-Mojo
+  direction holds up: the AOT Mojo binary imports `model.py`, passes its buffer addresses once
+  (`Int(list.unsafe_ptr())`), numpy wraps them as zero-copy views
+  (`np.ctypeslib.as_array((ctypes.c_float * n).from_address(addr))`), and per-frame interop is
+  a single Python call. Conversion syntax that exists in 1.0: `Int(py=obj)` / `Float64(py=obj)`
+  (plain `Int(obj)` does not). Pointer-from-address constructors are gone from `Pointer`, which
+  is why addresses cross the boundary as `Int` and numpy does the wrapping.
 - **Upstream:** not yet filed. Ask: is a Mojo-native graph-building API planned post-1.0?
 
 ## MMF-013: Apple-GPU (Metal) serving coverage is a moving subset <a name="mmf-013"></a>
@@ -367,6 +385,73 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   pipe), or match the stdlib's exact declared shape.
 - **Upstream:** not yet filed.
 
+## MMF-021: 1×1 `conv2d` fails CPU compilation (missing layout-transform kernel) <a name="mmf-021"></a>
+
+- **Template(s):** `mojo/camera-feed-yolo` (YOLOv8n is ~half 1×1 convs) · **MAX 26.5.0, arm64 CPU** — **2026-08-26**
+- **Category:** bug · **Severity:** major (blocks any CNN with pointwise convs on CPU)
+- **Repro:** build a graph with a single `ops.conv2d` whose filter is 1×1 (e.g. 32→32,
+  stride 1, RSCF layout), load it in an `InferenceSession` on CPU.
+- **Expected:** compiles like the 3×3 case does.
+- **Actual:** `'mo.layout.transform' op [MO_TO_MOGG] no kernel registered for
+  'layout_transform_RSCF_to_KNkni'` → `[ConstantFold] Unable to load models: Failed to run
+  MOToMGP pipeline`. `FilterLayout.FCRS` fails identically; k=3 convs of any channel count
+  compile fine, so the KNkni packing path is only reached — and only broken — for 1×1.
+- **Workaround (verified, exact):** lower 1×1/stride-1 convs to
+  `reshape (1,H,W,C)→(H·W,C)` → `matmul` → bias `add` → `reshape` back; 0.0 output diff.
+- **Upstream:** not yet filed.
+
+## MMF-022: `resize_nearest` cannot reproduce torch/ONNX nearest-2× upsampling <a name="mmf-022"></a>
+
+- **Template(s):** `mojo/camera-feed-yolo` (FPN upsample path) · **MAX 26.5.0, arm64 CPU** — **2026-08-26**
+- **Category:** bug/docs · **Severity:** minor (easy rewrite, hard-to-spot numerics)
+- **Repro:** `ops.resize_nearest(x, [1, 2H, 2W, C], coordinate_transform_mode=2)` (asymmetric)
+  on an NHWC tensor vs. plain 2×2 pixel duplication.
+- **Expected:** integer-factor nearest upscaling equals pixel duplication (torch
+  `nn.Upsample(scale_factor=2, mode="nearest")`, ONNX `Resize` nearest/asymmetric/floor).
+- **Actual:** outputs differ on real feature maps for every coordinate/round mode tried; the
+  docs don't say which combination (if any) matches the torch/ONNX convention.
+- **Workaround (verified, exact):** `reshape (1,H,1,W,1,C)` → `broadcast_to (1,H,2,W,2,C)` →
+  `reshape (1,2H,2W,C)` — duplication by construction.
+- **Upstream:** not yet filed. Ask: which mode pair is ONNX `nearest`+`asymmetric`+`floor`?
+
+## MMF-023: Graph compilation memory: 5.7–7.2 GB per YOLOv8n sub-graph, never freed <a name="mmf-023"></a>
+
+- **Template(s):** `mojo/camera-feed-yolo` · **MAX 26.5.0, arm64 CPU (Docker VM, 16 vcpu)** — **2026-08-26**
+- **Category:** bug · **Severity:** major (locks 8 GB edge devices out of on-device compile)
+- **Detail:** compiling the hand-built YOLOv8n as one graph exceeds 7.2 GB and OOMs; split into
+  backbone / PAN+detect / DFL-decode the parts peak at 5.7 / 7.2 / 1.4 GB. The footprint is
+  **independent of imgsz** (640 vs 320 identical) — it scales with op count, i.e. it's
+  per-kernel codegen, not activation planning. Compiler memory is **never released** after
+  `session.load()`: compiling the three parts sequentially in one process OOMs where each part
+  alone succeeds. Two aggravators: (a) weights inlined as `ops.constant` blow up the
+  constant-fold pass (an 8 GB container dies even though the weights total 12 MB) — use
+  `ops.constant_external` + `weights_registry`; (b) `OMP_NUM_THREADS`/cpuset made no difference.
+- **Consequence for edge:** an Orin Nano (8 GB shared) cannot compile this CV model on-device
+  with anything else resident. Our template precompiles CPU MEFs in the Docker build (one part
+  per process) and defers GPU MEFs to a one-time first-boot compile — measured on-device numbers
+  to follow in Appendix B.
+- **Mitigation that works:** `InferenceSession(export_mefs=…)` / `precompiled_mefs=…` — all
+  three MEFs load in 0.1 s at 827 MB resident. This is the missing "precompiled-cache
+  distribution" story of MMF-018, and it does work per-machine; what's still absent is a
+  documented cross-target (CPU-arch / GPU-arch) MEF build flow.
+- **Upstream:** not yet filed.
+
+## MMF-024: MEF store and `InferenceSession` option-conflict papercuts <a name="mmf-024"></a>
+
+- **Template(s):** `mojo/camera-feed-yolo` · **MAX 26.5.0** — **2026-08-26**
+- **Category:** bug/docs · **Severity:** minor
+- **Papercut 1 — positional MEF store:** `export_mefs` names artifacts `000-<graph>.mef` per
+  session; several single-graph compile processes sharing one directory overwrite the manifest
+  and imports then fail with "graph 0 does not match the precompiled artifact" even though the
+  right `.mef` sits beside it. Matching is positional per-session, not by graph name.
+  **Workaround:** one subdirectory per graph, one import session each.
+- **Papercut 2 — option conflicts with the implicit context:** `InferenceSession(num_threads=N)`
+  aborts with `LLVM ERROR: Init::getOrCreateContext() requested an M::Context with different
+  Init::Options…` (or the `AsyncRT::getOrCreateCPUDevice` variant) when a `Graph`, `CPU()`, or
+  even just module import created the context/device first with defaults. There is no
+  supported way to order around it in a normal program.
+- **Upstream:** not yet filed.
+
 ---
 
 ## Appendix A: per-template port status
@@ -378,7 +463,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mojo/simple-api` | portable w/ workarounds | hand-rolled HTTP → MMF-011 |
 | `mojo/camera-feed` | portable w/ workarounds | → MMF-011 |
 | `mojo/audio` | portable w/ workarounds | → MMF-011 |
-| `mojo/camera-feed-yolo` | partial | `model.py` graph definition → MMF-001/002/012 |
+| `mojo/camera-feed-yolo` | partial — CPU verified in-container | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024; Orin GPU pending |
 | `mojo/fullstack` | partial | React frontend (JS in every variant, not a gap) → MMF-011 |
 | `mojo/ros2-talker-listener` | portable w/ workarounds | hand CDR + FFI → MMF-015 |
 | `mojo/voice-ai` | partial (v1 = LLM leg only) | pipecat/STT/TTS stay Python → MMF-002/003 |

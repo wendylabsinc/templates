@@ -103,7 +103,8 @@
                 "swift",
                 "rust",
                 "node",
-                "cpp"
+                "cpp",
+                "mojo"
             ]
         },
         {

@@ -61,11 +61,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir modular==26.5.0
 
 WORKDIR /app
+# Layer order matters: only the layers above the MEF-compile RUNs may
+# invalidate them — the compile inputs are exactly weights + model.py.
 COPY --from=weights /out/weights.npz /out/names.txt /app/
-COPY --from=mojo-build /build/camera-feed-yolo /app/camera-feed-yolo
-COPY --from=mojo-build /build/rt /app/rt
-COPY model.py index.html /app/
-COPY assets/ /app/assets/
+COPY model.py /app/
 
 # Surface the device capabilities the CLI passed in (informational; the app
 # probes the MAX driver at runtime for the actual GPU decision).
@@ -88,6 +87,13 @@ ENV MODULAR_DEVICE_CONTEXT_MEMORY_MANAGER_VMM=0 \
 # first-boot compile on the device (or set YOLO_GPU_ARCH at build).
 RUN YOLO_DEVICE=cpu python3 /app/model.py compile
 RUN YOLO_DEVICE=gpu python3 /app/model.py compile
+
+# Everything serve-time layers after the compiles: iterating on the app, the
+# runtime, or the UI must not trigger a MEF rebuild.
+COPY --from=mojo-build /build/camera-feed-yolo /app/camera-feed-yolo
+COPY --from=mojo-build /build/rt /app/rt
+COPY yolo_session.py index.html /app/
+COPY assets/ /app/assets/
 
 EXPOSE {{.PORT}}
 CMD ["/app/camera-feed-yolo"]

@@ -151,7 +151,7 @@ struct Yolo(Movable):
         # Device + imgsz resolution lives in model.py (it can probe the MAX
         # driver); the buffers here must match the imgsz it picks.
         Python.add_to_path("/app")
-        var model_mod = Python.import_module("model")
+        var model_mod = Python.import_module("yolo_session")
         var cfg = model_mod.resolve_config()
         var device = cfg[0]
         var imgsz = Int(py=cfg[1])

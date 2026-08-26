@@ -32,27 +32,6 @@ def num_anchors(imgsz: int) -> int:
     return sum((imgsz // s) ** 2 for s in STRIDES)
 
 
-def resolve_config() -> tuple:
-    """(device, imgsz) for this boot — called by the Mojo app before it
-    allocates the interop buffers. One image serves every target: the MAX
-    wheel picks CPU or GPU at runtime (same rationale as mojo/llm), so the
-    device is probed here rather than baked at build.
-    """
-    device = os.environ.get("YOLO_DEVICE", "auto")
-    if device == "auto":
-        try:
-            from max.driver import accelerator_count
-
-            device = "gpu" if accelerator_count() > 0 else "cpu"
-        except Exception:
-            device = "cpu"
-    imgsz_env = os.environ.get("YOLO_IMGSZ", "")
-    # Parity with python/camera-feed-yolo: 320 on GPU, 224 on CPU.
-    imgsz = int(imgsz_env) if imgsz_env else (320 if device == "gpu" else 224)
-    print(f"[model] device={device} imgsz={imgsz}", flush=True)
-    return device, imgsz
-
-
 def _gpu_arch() -> str:
     """Target GPU arch: the physical device's when one is present, else the
     YOLO_GPU_ARCH build/run arg (sm_87 = Jetson Orin default)."""
@@ -339,82 +318,23 @@ def ensure_compiled(imgsz: int, device: str) -> None:
         )
 
 
-class Session:
-    """Inference session driven by the Mojo app.
-
-    The Mojo side owns the input/output buffers and passes their addresses
-    once; numpy wraps them as zero-copy views (ctypes.from_address), so the
-    per-frame interop cost is one Python call.
-    """
-
-    def __init__(self, in_addr: int, out_addr: int, imgsz: int, device: str):
-        import ctypes
-
-        ensure_compiled(imgsz, device)
-        self.device = device
-        self._accel = None
-        if device == "gpu":
-            from max.driver import Accelerator
-
-            self._accel = Accelerator()
-        self.imgsz = imgsz
-        self.na = num_anchors(imgsz)
-        self.inp = np.ctypeslib.as_array(
-            (ctypes.c_float * (imgsz * imgsz * 3)).from_address(in_addr)
-        ).reshape(1, imgsz, imgsz, 3)
-        self.out = np.ctypeslib.as_array(
-            (ctypes.c_float * (84 * self.na)).from_address(out_addr)
-        ).reshape(84, self.na)
-        self.models = []
-        for part in PARTS:
-            session = _session(device, precompiled_mefs=_mef_dir(device, imgsz, part))
-            factory = _GraphFactory(imgsz, device)
-            self.models.append(session.load(factory.build(part), weights_registry=factory.registry))
-        # Warm-up execution so the first camera frame is not the slow one.
-        self.infer()
-
-    def infer(self) -> None:
-        # execute() does not move host arrays to the GPU itself: the input
-        # must arrive as a device Buffer, and intermediates stay on-device
-        # through the chain; only the final decode output returns to host.
-        if self._accel is not None:
-            from max.driver import CPU, Buffer
-
-            x = Buffer.from_numpy(self.inp).to(self._accel)
-            p3, p4, p5 = self.models[0].execute(x)
-            h15, h18, h21 = self.models[1].execute(p3, p4, p5)
-            feats = self.models[2].execute(h15, h18, h21)[0]
-            result = self.models[3].execute(feats)[0].to(CPU()).to_numpy()
-        else:
-            p3, p4, p5 = self.models[0].execute(self.inp)
-            h15, h18, h21 = self.models[1].execute(p3, p4, p5)
-            feats = self.models[2].execute(h15, h18, h21)[0]
-            result = self.models[3].execute(feats)[0].to_numpy()
-        np.copyto(self.out, result[0])
-
 
 def main() -> None:
-    device, imgsz = resolve_config()
+    # Compile-only CLI (Docker build stage; the serve runtime lives in
+    # yolo_session.py, which is layered AFTER the MEF compiles so runtime
+    # changes don't invalidate them). Defaults mirror yolo_session's
+    # resolve_config, minus the driver probe: compile targets are explicit.
+    device = os.environ.get("YOLO_DEVICE", "cpu")
+    imgsz_env = os.environ.get("YOLO_IMGSZ", "")
+    imgsz = int(imgsz_env) if imgsz_env else (320 if device == "gpu" else 224)
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "compile":
         if len(sys.argv) > 2:
             compile_part(sys.argv[2], imgsz, device)
         else:
             ensure_compiled(imgsz, device)
-    elif cmd == "bench":
-        import time
-
-        buf_in = np.zeros(imgsz * imgsz * 3, dtype=np.float32)
-        buf_out = np.zeros(84 * num_anchors(imgsz), dtype=np.float32)
-        s = Session(buf_in.ctypes.data, buf_out.ctypes.data, imgsz, device)
-        n = int(sys.argv[2]) if len(sys.argv) > 2 else 20
-        t0 = time.perf_counter()
-        for _ in range(n):
-            s.infer()
-        dt = (time.perf_counter() - t0) / n
-        print(f"[model] {dt * 1000:.1f} ms/frame ({1 / dt:.1f} fps) device={device} imgsz={imgsz}")
     else:
-        print("usage: model.py compile [part] | bench [n]", file=sys.stderr)
+        print("usage: model.py compile [part]", file=sys.stderr)
         sys.exit(2)
 
 

@@ -1,158 +1,93 @@
 # {{.APP_ID}}
 
-Native macOS LLM chat app for **Wendy Agent for Mac**. It runs:
+A native Apple Silicon chat application for Wendy Agent for Mac. A Swift MLX
+backend exposes a private OpenAI-compatible API to Open WebUI, which provides
+the browser interface.
 
-- a Swift / Apple MLX OpenAI-compatible model backend on localhost
-- Open WebUI as the browser UI
+## Requirements
 
-This template targets `platform: "darwin"`. It is not a Linux container template;
-the model backend runs as a native macOS process so Apple Silicon can use MLX,
-Metal, and unified memory.
+- An Apple Silicon Mac running Wendy Agent for Mac
+- Wendy CLI access to that Mac
+- Xcode with the Swift toolchain needed by the project
+- Homebrew; `Brewfile.wendy` installs `uv` on the target
+- Internet access and enough disk for Open WebUI and the selected Hugging Face
+  MLX model
+- Unified memory suitable for the selected model
+
+This is a native `darwin` project, not a Linux container. The first run installs
+Open WebUI and downloads the model before readiness succeeds.
+
+## Run and verify
+
+```sh
+wendy run
+```
+
+Open `http://<mac-hostname>:{{.PORT}}`, create or open a chat, and send a short
+prompt. The WebUI is exposed on the Mac's network interfaces. The MLX `/v1` API
+listens only on `127.0.0.1:{{.MLX_PORT}}` and uses an app-generated bearer token.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `APP_ID` | required | Application name and local data-directory name |
+| `PORT` | `8080` | Public Open WebUI port and readiness probe |
+| `MLX_PORT` | `11435` | Private localhost MLX API port |
+| `MODEL_ID` | `mlx-community/Qwen2.5-3B-Instruct-4bit` | Hugging Face MLX model |
+| `OPEN_WEBUI_VERSION` | `0.9.5` | Open WebUI package installed with `uv` |
+| `MAX_TOKENS` | `256` | Default completion token limit |
+
+Use MLX-format models and start with a small 4-bit model. Larger models require
+more download space and unified memory. To change a generated project, edit the
+arguments in `wendy.json` and run it again.
 
 ## How it works
 
-`wendy run` builds this Xcode project with `xcodebuild` and deploys the native Swift supervisor to the target Mac. The Xcode build is intentional: MLX Swift requires compiled Metal shader resources from the `Cmlx` package, and upstream MLX documents that “SwiftPM (command line) cannot build the Metal shaders so the ultimate build has to be done via Xcode.”
+`wendy run` builds the `MacLLM` Xcode scheme so MLX Metal resources are
+available. `Sources/{{.APP_ID}}/App.swift` installs the app-local Python tools,
+prefetches the model, starts the Swift MLX server, starts Open WebUI, connects
+the two, and shuts down child processes with the supervisor.
 
-On startup the supervisor:
-
-1. applies `Brewfile.wendy` on the target Mac, installing `uv`
-2. installs pinned Open WebUI (`{{.OPEN_WEBUI_VERSION}}`) app-locally with `uv`
-3. prefetches the configured MLX model with Hugging Face's Python CLI via `uv`
-4. loads the cached model with the Swift Hugging Face / MLX client
-5. starts a private MLX OpenAI-compatible API on `127.0.0.1:{{.MLX_PORT}}`
-6. starts Open WebUI on `0.0.0.0:{{.PORT}}`
-7. configures Open WebUI to talk to the private MLX API with an app-generated API key
-
-App-local runtime data is stored on the target Mac under:
+Application data is stored under:
 
 ```text
 ~/Library/Application Support/{{.APP_ID}}/
 ```
 
-Model weights use the user-wide Hugging Face cache, honoring `HF_HUB_CACHE` /
-`HF_HOME` when set and otherwise defaulting to:
+Model files use `HF_HUB_CACHE` or `HF_HOME` when set, otherwise the normal
+Hugging Face cache under `~/.cache/huggingface/hub/`.
 
-```text
-~/.cache/huggingface/hub/
-```
+## Extend it
 
-Models are downloaded during app startup with Hugging Face's Python CLI before
-Open WebUI is marked ready. The Swift MLX backend then loads the model from the
-shared cache. Do not commit model weights, Open WebUI data, `.build/`, or
-`.xcode/` artifacts.
+- Add or change OpenAI-compatible routes in `App.swift`.
+- Add supervisor arguments in `CLIOptions` and the matching `wendy.json`
+  `run.args` entry.
+- Change Open WebUI setup in `OpenWebUIRuntime` and dependency installation in
+  `Brewfile.wendy`.
+- Set `HF_TOKEN` in the target environment for gated models.
 
-## Run on a headless Mac agent
-
-Install and launch `WendyAgentMac.app` on the target Mac, then run from this
-project directory:
-
-```sh
-wendy run --device <mac-agent-name>
-```
-
-The first run can take a few minutes while Homebrew installs `uv`, `uv` installs
-Open WebUI, and the app downloads/loads the configured model from Hugging Face.
-Large models can take much longer depending on network speed.
-
-When startup completes, open:
-
-```text
-http://<mac-hostname>:{{.PORT}}
-```
-
-For example:
-
-```text
-http://mac-mini.local:{{.PORT}}
-```
-
-Open WebUI is exposed on the LAN. The raw MLX `/v1` API is bound to localhost
-only and protected with a generated bearer token used internally by Open WebUI.
-
-## Configuration
-
-The default model is:
-
-```text
-{{.MODEL_ID}}
-```
-
-Change it in `wendy.json` under `run.args` (`--model`) or regenerate with:
-
-```sh
-wendy init --target darwin --template mac-llm --var MODEL_ID=mlx-community/Qwen2.5-3B-Instruct-4bit
-```
-
-Useful options in `wendy.json`:
-
-- `--webui-port {{.PORT}}` — public Open WebUI port
-- `--mlx-port {{.MLX_PORT}}` — private localhost MLX API port
-- `--open-webui-version {{.OPEN_WEBUI_VERSION}}` — pinned Open WebUI package
-- `--default-max-tokens {{.MAX_TOKENS}}` — fallback generation length
-
-## Choosing a model
-
-Use MLX-format models from Hugging Face, commonly under `mlx-community/`.
-Smaller 4-bit models are best for initial validation; larger models benefit from
-newer Apple Silicon and more unified memory.
-
-Model downloads can take a long time. Large models are downloaded into the
-shared Hugging Face cache, so future apps can reuse them.
-
-| Model | Approx download | Recommended hardware | UX expectation |
-|---|---:|---|---|
-| `mlx-community/SmolLM-135M-Instruct-4bit` | ~100–200 MB | Any Apple Silicon Mac | Smoke test only; quality is toy-level |
-| `mlx-community/Llama-3.2-1B-Instruct-4bit` | ~700 MB–1 GB | Any Apple Silicon Mac, 8 GB+ | Very fast, modest quality |
-| `mlx-community/Qwen2.5-3B-Instruct-4bit` | ~1.8–2 GB | M1/M2/M3/M4/M5, 16 GB+ | Best practical default; responsive on baseline Apple Silicon |
-| `mlx-community/Qwen2.5-7B-Instruct-4bit` | ~4–5 GB | Newer/faster Apple Silicon, 24 GB+ preferred | Better quality, but too slow for good interactivity on M1 / 16 GB |
-| `mlx-community/Qwen2.5-14B-Instruct-4bit` | ~8–10 GB | 32 GB+ unified memory | High-quality demo; smooth on higher-memory Macs |
-| `mlx-community/Qwen2.5-32B-Instruct-4bit` | ~18–20 GB | 64 GB+ unified memory | Excellent quality; smooth on high-end Apple Silicon with 64 GB |
-| `mlx-community/Qwen2.5-72B-Instruct-4bit` | ~40–50 GB | 64 GB+ unified memory, experimental | Best quality in this list, but slower; tolerable rather than smooth on 64 GB high-end Macs |
-
-Recommended presets:
-
-- **Broad default:** `mlx-community/Qwen2.5-3B-Instruct-4bit`
-- **Baseline 16 GB Apple Silicon:** `mlx-community/Qwen2.5-3B-Instruct-4bit`
-- **Better quality on newer / larger-memory Macs:** `mlx-community/Qwen2.5-7B-Instruct-4bit`
-- **High-quality demo:** `mlx-community/Qwen2.5-14B-Instruct-4bit`
-- **High-end smooth demo:** `mlx-community/Qwen2.5-32B-Instruct-4bit`
-- **Showcase / stress test:** `mlx-community/Qwen2.5-72B-Instruct-4bit`
-
-For interactive demos, `--default-max-tokens 256` is a good starting point.
-
-## Local development
-
-Build on Apple Silicon macOS:
-
-```sh
-xcodebuild \
-  -project MacLLM.xcodeproj \
-  -scheme MacLLM \
-  -configuration Release \
-  -derivedDataPath .xcode \
-  -skipMacroValidation \
-  -skipPackagePluginValidation
-```
-
-Run locally without Wendy:
-
-```sh
-.xcode/Build/Products/Release/MacLLM \
-  --webui-host 127.0.0.1 \
-  --webui-port {{.PORT}} \
-  --mlx-host 127.0.0.1 \
-  --mlx-port {{.MLX_PORT}} \
-  --model {{.MODEL_ID}}
-```
-
-This still requires `uv` on your development Mac:
+For local development:
 
 ```sh
 brew install uv
+xcodebuild -project MacLLM.xcodeproj -scheme MacLLM \
+  -configuration Release -derivedDataPath .xcode \
+  -skipMacroValidation -skipPackagePluginValidation
+.xcode/Build/Products/Release/MacLLM \
+  --webui-host 127.0.0.1 --webui-port {{.PORT}} \
+  --mlx-host 127.0.0.1 --mlx-port {{.MLX_PORT}} \
+  --model {{.MODEL_ID}}
 ```
 
-The app runs Hugging Face's Python CLI through `uv` to prefetch model weights,
-then uses the Swift Hugging Face client library at runtime to load the cached
-model for MLX. For private or gated models, pass `HF_TOKEN` in the app
-environment on the target Mac. To use a custom shared model cache, set
-`HF_HUB_CACHE` or `HF_HOME` before launching the app.
+## Operations and troubleshooting
+
+```sh
+wendy device logs {{.APP_ID}} --tail 150
+wendy device apps stop {{.APP_ID}}
+```
+
+If startup is slow, check whether `uv`, Open WebUI, or the model is still being
+installed. If loading fails, confirm the model is MLX-compatible and fits in
+available disk and unified memory. Stop or change any process already using
+either configured port.

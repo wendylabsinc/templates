@@ -363,13 +363,13 @@ join the same ROS 2 graph as the other Humble-based Wendy templates.
 ## Deploy
 
 ```sh
-wendy run --device <device> -y --detach
+wendy run -y --detach
 ```
 
 ## See it work
 
 ```sh
-wendy device logs --device <device>
+wendy device logs
 ```
 
 You should see the talker's `Publishing: 'Hello World: N'` and the listener's
@@ -534,8 +534,8 @@ Render via `wendy init` and deploy for the real cross-container, host-networked 
 ```bash
 # in a scratch dir
 wendy init --app-id ros2demo --template ros2-talker-listener --language swift --var ROS_DOMAIN_ID=0
-cd ros2demo && wendy run --device <device> -y --detach
-wendy device logs --device <device>   # expect interleaved Publishing:/I heard:
+cd ros2demo && wendy run -y --detach
+wendy device logs   # expect interleaved Publishing:/I heard:
 ```
 Expected: both services deploy; logs show messages flowing between the two containers.
 

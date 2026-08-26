@@ -1,65 +1,80 @@
-# go2-rosbag — Go2 topic recorder &amp; inspector
+# {{.APP_ID}}
 
-Deploy to a Go2 and it discovers **every DDS topic the robot exposes**, lets you
-**inspect** each one (message schema, a live sample, publish rate, pubs/subs),
-hands you **ready-to-use snippets**, and **records an mcap rosbag** of all topics
-or just the ones you pick. Bags open directly in Foxglove and are standard
-`ros2 bag` (mcap) you can `ros2 bag play`.
+A browser-based topic inspector and MCAP recorder for the Unitree Go2. It
+discovers native Go2 DDS topics with Unitree type support, displays schemas and
+samples, records all or selected topics, and downloads completed bags.
 
-## What it does
+## When to use this template
 
-- Runs **ROS 2 Humble + CycloneDDS + the Unitree message packages**, so
-  `ros2 bag record` has type support for the Go2's native topics
-  (`rt/lowstate`, `rt/sportmodestate`, `rt/utlidar/*`, `rt/api/*`, …).
-- Auto-binds CycloneDDS to the network interface that reaches the robot
-  (multi-homed dog → picks the `192.168.123.x` interface).
-- Serves a web UI on **`:7000`** to **understand** topics, not just list them:
-  - **Filter** by name/type and browse topics **grouped by namespace**.
-  - Click any topic to **inspect** it: full **message schema**
-    (`ros2 interface show`), a **live sample** (`ros2 topic echo --once`),
-    **publishers/subscribers + QoS** (`ros2 topic info -v`), and an on-demand
-    **rate** measurement (`ros2 topic hz`).
-  - One-click **copy snippets**: `ros2 topic echo`, `ros2 topic info`, and a
-    minimal **rclpy subscriber** stub typed to that topic.
-- **Records** all topics or a **selected subset** (tick the checkboxes →
-  *Record selected*). Bags go to a **`persist`** volume so they survive
-  redeploys/reboots.
+For one-off recording from a normal ROS 2 graph, use
+`wendy device ros2 bag record`. Use this project when you need its persistent web
+UI, Go2 message packages, topic inspection, selected-topic workflow, or source
+code to customize recording.
 
-## Deploy
+## Requirements
+
+- A Unitree Go2 EDU and a WendyOS computer on the robot DDS network
+- Persistent storage with enough free space for the chosen topics and duration
+- Network access during the first build for ROS 2, CycloneDDS, Unitree message
+  packages, and MCAP support
+
+High-rate LiDAR and image topics can grow bags quickly. Watch the live size and
+stop recording when the needed interval is complete.
+
+## Run and verify
 
 ```sh
-wendy run --service recorder --device <dog> -y --detach
+wendy run
 ```
 
-Then open **`http://<dog>:7000`**:
-- The **Topics** card lists every topic + type (also dumped to `/data/topics.txt`),
-  filterable and grouped by namespace. Click a topic to inspect it.
-- **Record all** → `ros2 bag record -a -s mcap`; or tick topics and **Record
-  selected** → `ros2 bag record <topics…>`. **Stop & save** finalizes the bag.
-- Download each bag as **`.mcap`** (Foxglove) or **`.tar.gz`** (`ros2 bag play`).
+Open `http://<go2-hostname>:{{.PORT}}`. Confirm that topics and types appear,
+inspect one topic, start a short selected-topic recording, stop it, and download
+the resulting MCAP file.
 
-## API
+## Configuration
 
-| route | what |
-|-------|------|
-| `GET /api/topics` | all topics + types |
-| `GET /api/topic?name=/x` | type, message schema, pubs/subs, one-shot sample |
-| `GET /api/hz?name=/x` | measured publish rate (~5s sample) |
-| `POST /api/record/start` | body `{"topics":[…]}` for a subset, or `{}`/none for all |
-| `POST /api/record/stop` | finalize the current bag |
-| `GET /api/bags`, `GET /download?bag=…&fmt=mcap\|tar` | list / download bags |
+| Setting | Default | Purpose |
+|---|---|---|
+| `APP_ID` | required | App-group identifier |
+| `PORT` | `7000` | Web UI and API port |
+| `GO2_IP` | `192.168.123.161` | Address used to select the host interface that reaches the robot network |
+| `ROS_DOMAIN_ID` | `0` | Runtime DDS domain set in `recorder/Dockerfile` |
+| `AUTO_RECORD` | `0` | Set to `1` to begin an all-topic recording at startup |
 
-## Config (env)
+Use `wendy run --env ROS_DOMAIN_ID=<id>` or `--env AUTO_RECORD=1` for temporary
+runtime overrides.
 
-| var | default | meaning |
-|-----|---------|---------|
-| `GO2_IP` | `192.168.123.161` | any address on the robot's DDS net — used only to pick the bind interface |
-| `ROS_DOMAIN_ID` | `0` | Go2 default DDS domain |
-| `AUTO_RECORD` | `0` | set `1` to start recording immediately on launch |
-| `PORT` | `7000` | web UI / API port |
+## How it works
 
-## Notes
+The single `recorder` service uses host networking and mounts the `rosbags`
+persistent volume at `/data`. `recorder/entrypoint.sh` determines the local
+interface that routes to `GO2_IP` and configures CycloneDDS.
+`recorder/server.py` wraps ROS 2 CLI operations and the recorder process.
 
-- Recording **all** topics includes high-rate ones (lidar, images) — bags grow
-  fast. Stop when you have what you need; check live size in the UI.
-- Single recorder at a time. Stop the current one before starting another.
+| API | Purpose |
+|---|---|
+| `GET /api/topics` | Topic and type list |
+| `GET /api/topic?name=/x` | Type, schema, endpoints, QoS, and one sample |
+| `GET /api/hz?name=/x` | Short publish-rate measurement |
+| `POST /api/record/start` | Start all topics or a JSON `topics` list |
+| `POST /api/record/stop` | Stop and finalize the current bag |
+| `GET /api/bags` and `GET /download` | List and download recordings |
+
+## Extend it
+
+- Add inspection or recording routes in `recorder/server.py`.
+- Add required ROS 2 or Unitree packages in `recorder/Dockerfile`.
+- Change DDS interface selection in `recorder/entrypoint.sh`.
+- Add retention or upload behavior around completed files in `/data`.
+
+## Operations and troubleshooting
+
+```sh
+wendy device logs {{.APP_ID}} --service recorder --tail 200
+wendy device apps stop {{.APP_ID}}
+```
+
+If the topic list is empty, check the selected local interface, robot network,
+and domain ID. If inspection fails for only one topic, its type support or QoS
+may differ from the installed packages. Stop recording through the UI before
+stopping the app so rosbag can finalize its metadata.

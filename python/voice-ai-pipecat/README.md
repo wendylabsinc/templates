@@ -1,128 +1,115 @@
 # {{.APP_ID}}
 
-Always-on voice assistant built on [Pipecat](https://github.com/pipecat-ai/pipecat):
-
-```
-browser mic --WS--> FastAPI --> faster-whisper (STT) --> Gemini 2.5 Flash --> Piper (TTS) --WS--> browser
-                                                          + Google Search grounding
-```
-
-The React visualizer renders two reactive line groups: **blue** for your microphone
-and **emerald** for the bot's TTS.
+A Pipecat voice assistant for WendyOS. It uses local wake-word detection,
+faster-whisper speech recognition, and Piper speech synthesis with a cloud LLM.
+The React UI shows audio activity, device state, settings, and conversation
+status.
 
 ## Requirements
 
-- A [Google AI Studio](https://aistudio.google.com/) API key for Gemini.
-- USB audio device (Anker PowerConf or similar) if running on a Wendy device.
+- A reachable WendyOS device and Wendy CLI access
+- A microphone and speaker available through ALSA
+- Internet access for the selected cloud LLM and optional search tools
+- A Google AI Studio API key for the initial Gemini configuration
+- Enough disk for the container and the persistent speech-model cache
 
-## Deploy
+The default transport uses the target's microphone and speaker without an open
+browser. When a browser connects to `/bot-audio`, Pipecat hands the session to
+the browser microphone and audio output; it returns to local audio after the
+browser disconnects.
 
-```bash
-wendy run .
+## Run and verify
+
+```sh
+wendy run
 ```
 
-The `postStart` hook opens the visualizer at `https://${WENDY_HOSTNAME}:{{.PORT}}`.
+Open `https://<device-hostname>:{{.PORT}}`. The first start creates a self-signed
+certificate in persistent storage, so the browser may require a one-time
+security exception. Grant microphone permission if you use browser audio.
 
-### TLS and the browser warning
+Select the intended audio devices. To verify local audio, say the configured
+wake word and ask a short question. For browser audio, connect the browser
+session and speak directly; browser sessions do not use the wake-word gate.
+`GET /api/status` reports the active transport and any pipeline error;
+`GET /api/audio-devices` shows the device enumeration.
 
-The visualizer uses `navigator.mediaDevices.getUserMedia` to capture mic
-audio. Browsers gate that API behind a secure origin, so the server has
-to be reached over HTTPS (or `localhost`). On first boot the entrypoint
-generates a self-signed cert at `/models/tls/{cert,key}.pem` (persisted
-across container restarts) and uvicorn serves HTTPS on `{{.PORT}}`.
+## Configuration
 
-Because the cert is self-signed, the **first time you open the page on a
-machine you'll see "Not secure" / "Your connection is not private"**. Click
-through (Chrome: *Advanced → Proceed*) once per browser; the exception is
-remembered and the mic API will work on subsequent visits.
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_ID` | required | Application and model-volume name |
+| `PORT` | `3005` | HTTPS, API, and WebSocket port |
+| `GOOGLE_API_KEY` | required | Initial Gemini API key; rendered into the image environment |
+| `AUDIO_INPUT_DEVICE` | `default` | Local input index, name substring, or `default` |
+| `AUDIO_OUTPUT_DEVICE` | `default` | Local output index, name substring, or `default` |
+| `WAKE_WORD_MODELS` | `hey_jarvis` | Comma-separated bundled openWakeWord models |
+| `WAKE_WORD_THRESHOLD` | `0.5` | Wake confidence from `0.0` to `1.0` |
+| `WAKE_LISTEN_SECS` | `8.0` | Listening window after wake detection |
+| `LOG_TRANSCRIPTS` | `false` | Include speech and response text in logs |
 
-For zero browser warnings (and reliable Safari support, which is strict
-about self-signed certs), generate a trusted cert with
-[`mkcert`](https://github.com/FiloSottile/mkcert) on your dev machine and
-push it onto the device:
+The UI persists provider, model, prompt, wake-word, audio, and conversation
+settings under `/models/state`. Keep `LOG_TRANSCRIPTS=false` unless log content
+is appropriate for the environment. Regenerate or rebuild after changing a
+secret that was rendered into the Dockerfile.
 
-```bash
-brew install mkcert
-mkcert -install
-mkcert ${WENDY_HOSTNAME} localhost 127.0.0.1
-# copy the resulting *.pem files into /models/tls/cert.pem and /models/tls/key.pem
-# (e.g. via `wendy device file push`), then restart the app.
+## How it works
+
+```text
+┌────────────────┐ wake-word gate ┌───────────────┐
+│ local ALSA mic │ ─────────────▶ │               │
+└────────────────┘                │ session input │
+┌────────────────┐ /bot-audio WS  │               │
+│ browser mic    │ ─────────────▶ │               │
+└────────────────┘                └───────┬───────┘
+                                          │
+                                          ▼
+                                  ┌────────────────┐    ┌─────────────────┐    ┌───────┐
+                                  │ faster-whisper │ ─▶ │ cloud LLM/tools │ ─▶ │ Piper │
+                                  └────────────────┘    └─────────────────┘    └───┬───┘
+                                                                                   │
+                                  ┌───────────────────────────┐
+                                  │ matching session output   │ ◀───────────────────┘
+                                  │ ALSA speaker / browser WS │
+                                  └───────────────────────────┘
 ```
 
-The entrypoint detects existing cert files and skips the self-signed
-regen automatically.
+- `main.py` serves the UI and API, manages local/browser transport handoff,
+  audio device selection, settings, TLS, and session lifecycle.
+- `pipeline.py` builds the Pipecat STT, LLM, tools, TTS, wake-word, and
+  conversation pipeline.
+- `entrypoint.sh` configures ALSA, seeds `/models`, and creates TLS files.
+- `frontend/` is the production React source for this template.
+- `wendy.json` grants host networking, audio access, and persistent `/models`
+  storage. It does not run a bundled Ollama service.
 
-## Running the frontend standalone
+Write routes can optionally be protected with a runtime bearer token:
 
-If you want to iterate on the UI against a running Pipecat backend, start
-the backend first (e.g. `wendy run .` on a device, or `python main.py`
-locally), then point Vite's dev proxy at it:
-
-```bash
-cd frontend
-npm ci
-DEV_BACKEND_URL=https://localhost:{{.PORT}} npm run dev
+```sh
+wendy run --env WENDY_AUTH_TOKEN=<secret>
 ```
 
-`vite.config.ts` proxies `/api/*` and `/bot-audio` to `DEV_BACKEND_URL`,
-so the standalone frontend uses the same relative paths that the
-production build does — no per-call origin overrides needed. If you want
-to override just the WebSocket (e.g. point at a different backend host),
-`VITE_BOT_WS_URL` still wins over the page origin.
+## Extend it
 
-The canonical source for the frontend lives at
-`common/voice-ai-pipecat-frontend/` in the `wendylabsinc/templates` repo. The
-`frontend/` directory here is a vendored copy — if you change code upstream,
-re-copy it into this directory before shipping.
+- Change STT, LLM, tools, or TTS construction in `pipeline.py`.
+- Add settings through the models and handlers in `main.py` and the settings UI
+  in `frontend/src/components/SettingsDrawer.tsx`.
+- Add another audio transport by following the local and browser session paths
+  in `main.py`.
+- Run `npm install` and `DEV_BACKEND_URL=https://localhost:{{.PORT}} npm run dev`
+  in `frontend/` for standalone UI development.
 
-## Entitlements
+## Operations and troubleshooting
 
-| Entitlement | Why |
-| --- | --- |
-| `network` (host) | outbound to cloud LLM/STT APIs, plus serving the frontend |
-| `audio` | ALSA mic + speaker access for the PowerConf |
-| `persist` (`/models`) | caches the seeded Piper voice + Whisper TINY across restarts, and persists TLS cert + saved settings |
+```sh
+wendy device logs {{.APP_ID}} --tail 200
+wendy device apps stop {{.APP_ID}}
+```
 
-## First-run note
-
-On first boot the container seeds the **faster-whisper** tiny model (~75 MB)
-and the default **Piper** voice (`en_US-lessac-medium`, ~63 MB) from the image
-into `/models/` (a persistent volume), so subsequent starts are instant. The
-seed copy happens automatically in `entrypoint.sh`.
-
-This is the cloud-LLM build — pick a provider (Google / OpenAI / Anthropic /
-Groq) in the settings drawer. The "ollama" option remains in the dropdown for
-backward compatibility but the daemon isn't bundled in this image; selecting
-it surfaces a `Local LLM disabled in this build` banner via `/api/status`.
-For an offline LLM build see the WIP `voice-ai-pipecat-jetson` template.
-
-## Picking a model
-
-`pipeline.py` uses `WhisperSTTService(model=Model.TINY)` and Piper's
-`en_US-lessac-medium` voice by default. Swap those lines to upgrade:
-
-- Whisper: `Model.BASE`, `Model.SMALL`, etc. (check VRAM on Jetson.)
-- Piper: any voice from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices).
-
-## Known limitation: USB hot-plug
-
-ALSA binds to the PowerConf at container start. If you unplug the device
-mid-conversation, the visualizer shows an error via the `Alert` overlay but
-reconnecting currently requires a `wendy run` restart. A follow-up
-`usb-hotplug` entitlement in wendy-agent is on the roadmap to enable live
-re-detection.
-
-## Troubleshooting
-
-- **No audio in the visualizer** — check the microphone selector (upper right);
-  on first load the browser may block mic access. Reload after granting
-  permission.
-- **Gemini returns an auth error** — confirm `GOOGLE_API_KEY` is set in the
-  container (baked in from the template variable). Rotate by rebuilding.
-- **Base image pull returns `401 Unauthorized`** — the template defaults to the
-  public `dustynv/tensorrt:8.6-r36.2.0` Jetson image so normal builds do not
-  require an NGC login. Override `JETSON_BASE_IMAGE` only if you manage registry
-  credentials for your builder.
-- **Jetson CUDA not detected** — check the CTranslate2 build log in
-  `Dockerfile`. The template targets JetPack 6.0's CUDA 12.2 + cuDNN 8.9
-  stack with CTranslate2 4.4.0.
+- If the UI cannot use its microphone, open the HTTPS URL, accept the
+  certificate, and grant browser permission.
+- If local audio fails, use `/api/audio-devices` or the UI picker and check the
+  PortAudio enumeration near startup.
+- If the LLM rejects a request, check the selected provider, model, and API key.
+- If an audio device is removed while active, reconnect it and restart the app
+  if the pipeline does not recover.

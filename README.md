@@ -1,263 +1,73 @@
 <p align="center">
-  <img src="docs/media/demo.gif" alt="Wendy templates on NVIDIA Jetson" width="360">
+  <img src="docs/media/demo.gif" alt="Creating a Wendy project from a template" width="360">
 </p>
 
-# Wendy Templates
+# Wendy templates
 
-Project templates for the [Wendy CLI](https://github.com/wendylabsinc/wendy-agent). Used by `wendy init --template` to scaffold new projects.
+This repository contains project templates for the Wendy CLI. Use a template to
+create a runnable WendyOS, Wendy Lite, or Wendy Agent for Mac project.
 
-## Usage
+## Create a project
 
-```bash
-# Interactive — pick template, language, and configure variables
+Run the interactive project wizard:
+
+```sh
 wendy init
-
-# Non-interactive
-wendy init --app-id my-api --template simple-api --language rust --var PORT=9090
-
-# Override any template variable
-wendy init --app-id my-api --template simple-api --language python --var PORT=8080
 ```
 
-## Available Templates
+Or choose the project settings on the command line:
 
-### simple-api
-
-A minimal HTTP API with JSON endpoints (`GET /`, `GET /health`, `POST /items`), ready to deploy to WendyOS.
-
-| Language | Framework | Default Port | Directory |
-|----------|-----------|-------------|-----------|
-| Python | FastAPI 0.135.3 (uv + Python 3.14) | 3001 | `python/simple-api/` |
-| Swift | Hummingbird 2.21.1 | 6001 | `swift/simple-api/` |
-| Rust | Axum 0.8.8 | 4001 | `rust/simple-api/` |
-| Node | TypeScript + Express | 5001 | `node/simple-api/` |
-| C++ | Drogon 1.9.12 | 7001 | `cpp/simple-api/` |
-
-Each template includes:
-- `wendy.json` — network entitlement, TCP readiness probe, postStart hook
-- `Dockerfile` — containerized deployment
-- Application source code
-
-### fullstack
-
-Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage Dockerfile builds the React frontend then serves it alongside a CRUD API for cars.
-
-### camera-feed
-
-Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
-
-### ip-camera-feed
-
-Live view of a platform-registered IP camera via GStreamer MJPEG over WebSocket. Unlike `camera-feed` (a direct USB webcam), this consumes a camera through the platform's registration pipeline (`wendy device camera list` / `login` / `test`) — the `camera` entitlement maps the platform-managed `/dev/video2xx` loopback node into the container, no RTSP dialing in the template itself. The node carries the camera's sub-stream (<=1024px wide), not full-res. Entitlements: network (host), camera.
-
-### realsense-camera
-
-Live Intel RealSense D415 multi-stream viewer: color, left IR, right IR, and colorized depth as MJPEG streams.
-
-| Language | Framework | Default Port | Directory |
-|----------|-----------|-------------|-----------|
-| Python | FastAPI + pyrealsense2 | 8000 | `python/realsense-camera/` |
-| C++ | Drogon + librealsense | 7007 | `cpp/realsense-camera/` |
-
-The shared viewer frontend source lives at `common/realsense-camera-frontend/` and is vendored into both language template directories.
-
-### ros2-talker-listener
-
-The canonical ROS 2 `talker` / `listener` demo in Swift, built on
-[swift-ros2](https://github.com/youtalk/swift-ros2) — a pure-Swift ROS 2 client
-that speaks the ROS 2 (Humble) wire format directly over CycloneDDS, with no
-`rclcpp` or C++ interop. A two-service app group: a `std_msgs/String` publisher
-on `/chatter` and a subscriber that logs what it hears.
-
-| Language | Framework | Directory |
-|----------|-----------|-----------|
-| Swift | swift-ros2 1.2.0 + CycloneDDS (ROS 2 Humble) | `swift/ros2-talker-listener/` |
-
-Deploy with `wendy run` and watch the exchange via `wendy device logs`.
-
-### audio
-
-Live audio waveform visualization with GStreamer mic capture. Streams raw PCM S16LE 16kHz mono over WebSocket. Includes sample .wav files for playback. Entitlements: network (host), audio.
-
-### voice-ai-pipecat
-
-Always-on voice AI assistant: local [faster-whisper](https://github.com/SYSTRAN/faster-whisper) STT -> Gemini 2.5 Flash (with native Google Search grounding) -> local [Piper](https://github.com/rhasspy/piper) TTS, orchestrated by [Pipecat](https://github.com/pipecat-ai/pipecat). React visualizer ships two reactive line groups (blue = your voice, emerald = the bot). Entitlements: network (host), audio, gpu, persist (caches model weights at `/models`).
-
-| Language | Framework | Default Port | Directory |
-|----------|-----------|-------------|-----------|
-| Python | Pipecat + FastAPI | 3005 | `python/voice-ai-pipecat/` |
-
-The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into the Python template directory.
-
-### llm
-
-Local LLM chat app with Open WebUI.
-
-On WendyOS, the Python template runs Ollama and Open WebUI as a **multi-service app group**: a standard `docker-compose.yml` defines the `ollama` and `open-webui` services, while a companion `wendy.json` adds the `appId` and GPU entitlement for Ollama.
-
-| Target | Language | Framework | Default Port | Directory |
-|--------|----------|-----------|-------------|-----------|
-| WendyOS | Python | Ollama + Open WebUI | 8080 | `python/llm/` |
-
-```bash
-wendy init --app-id llm --target wendyos --language python --template llm --assistant skip --git-init no
+```sh
+wendy init \
+  --app-id my-api \
+  --template simple-api \
+  --language python \
+  --var PORT=8080
+cd my-api
+wendy run
 ```
 
-### mac-llm
+Use `wendy init --help` for target, language, entitlement, and variable options.
+Each generated project contains its own README with requirements, run commands,
+configuration, architecture, and extension points.
 
-Native macOS MLX LLM chat app with Open WebUI for Wendy Agent for Mac. The Swift template runs a native Apple MLX backend plus Open WebUI. `Brewfile.wendy` installs `uv` on the target Mac, and the Swift supervisor installs pinned Open WebUI app-locally with `uv`, starts the private MLX `/v1` API on localhost, and exposes Open WebUI on the LAN.
+## Template catalog
 
-| Target | Language | Framework | Default Port | Directory |
-|--------|----------|-----------|-------------|-----------|
-| Wendy Agent for Mac | Swift | MLX LLM + Hummingbird + Open WebUI | 8080 | `swift/mac-llm/` |
+Unless a row says otherwise, the target is WendyOS. Camera, audio, USB, GPU,
+robot, and model requirements are summarized here to help with selection; the
+generated project README contains the setup details.
 
-```bash
-wendy init --app-id mac-llm --target darwin --language swift --template mac-llm --assistant skip --git-init no
-```
+| Template | Languages | Target or main requirement | Purpose |
+|---|---|---|---|
+| `simple-api` | [C++](cpp/simple-api/), [Node](node/simple-api/), [Python](python/simple-api/), [Rust](rust/simple-api/), [Swift](swift/simple-api/) | WendyOS; no special hardware | Minimal JSON API with health and item endpoints |
+| `fullstack` | [C++](cpp/fullstack/), [Node](node/fullstack/), [Python](python/fullstack/), [Rust](rust/fullstack/), [Swift](swift/fullstack/) | WendyOS; device features need matching hardware | React dashboard, CRUD API, persistent SQLite data, and device pages |
+| `camera-feed` | [C++](cpp/camera-feed/), [Node](node/camera-feed/), [Python](python/camera-feed/), [Rust](rust/camera-feed/), [Swift](swift/camera-feed/) | WendyOS and a camera | Browser camera viewer using GStreamer and WebSocket MJPEG |
+| `audio` | [C++](cpp/audio/), [Node](node/audio/), [Python](python/audio/), [Rust](rust/audio/), [Swift](swift/audio/) | WendyOS and capture/playback devices | Live microphone waveform, device selection, and sample playback |
+| `camera-feed-yolo` | [C++](cpp/camera-feed-yolo/), [Node](node/camera-feed-yolo/), [Python](python/camera-feed-yolo/), [Rust](rust/camera-feed-yolo/), [Swift](swift/camera-feed-yolo/) | WendyOS and a camera; optional NVIDIA Jetson GPU | Live camera viewer with YOLOv8 object detection |
+| `realsense-camera` | [C++](cpp/realsense-camera/), [Python](python/realsense-camera/) | WendyOS and Intel RealSense D415 | Color, infrared, and depth stream viewer |
+| `ip-camera-feed` | [Python](python/ip-camera-feed/) | WendyOS with a registered IP camera and loopback support | View a platform-managed IP camera through its V4L2 node |
+| `voice-ai-pipecat` | [Python](python/voice-ai-pipecat/) | WendyOS, audio devices, network, and an AI provider key | Wake-word voice assistant with local speech processing and cloud LLMs |
+| `llm` | [Python](python/llm/) | WendyOS with enough disk and memory for the selected model | Ollama and Open WebUI multi-service chat app |
+| `mac-llm` | [Swift](swift/mac-llm/) | Wendy Agent for Mac on Apple Silicon | Native MLX model backend with Open WebUI |
+| `ros2-talker-listener` | [Swift](swift/ros2-talker-listener/) | WendyOS and ROS 2-compatible networking | Swift ROS 2 publisher and subscriber over CycloneDDS |
+| `go2-rc` | [Python](python/go2-rc/) | Unitree Go2 EDU | Browser teleoperation with motion and camera services |
+| `g1-rc` | [Python](python/g1-rc/) | Unitree G1 with supported camera and robot network | Browser teleoperation, posture, gestures, and arm presets |
+| `rc-car` | [Python](python/rc-car/) | Yahboom ROSMASTER R2, serial controller, camera, and optional joystick | Browser and gamepad control for an Ackermann robot car |
+| `go2-foxglove` | [Python](python/go2-foxglove/) | Unitree Go2 EDU and Foxglove | Stream Go2 DDS and camera data to one Foxglove connection |
+| `go2-rosbag` | [Python](python/go2-rosbag/) | Unitree Go2 EDU and persistent storage | Inspect Go2 topics and record MCAP rosbag files in a browser |
+| `go2-initial-test` | [Python](python/go2-initial-test/) | Unitree Go2 EDU; large multi-service deployment | Dashboard for checking robot interfaces before development |
+| `blink-led` | [Swift](swift/blink-led/) | Wendy Lite | Blink the board LED through GPIO |
+| `hello-world` | [Swift](swift/hello-world/) | Wendy Lite | Print one message from a minimal embedded Swift app |
 
-### common
+## Contributing
 
-Shared building blocks (not selectable as templates):
+See [CONTRIBUTING.md](CONTRIBUTING.md) for template structure, rendering rules,
+shared-source maintenance, tests, and hosted-source deployment.
 
-- `shadcn-vite-frontend/` — Vite + React + shadcn/ui dashboard
-- `camera-feed-html/` — Webcam viewer HTML page
-- `audio-feed-html/` — Audio waveform visualizer HTML page
-- `realsense-camera-frontend/` — React + Vite viewer for the `realsense-camera` template (color + IR + depth streams)
-- `voice-ai-pipecat-frontend/` — React + Three.js visualizer for the `voice-ai-pipecat` template (blue mic lines + emerald bot lines)
+The `common/` directory contains maintainer sources used by several templates;
+it is not selectable through `wendy init`.
 
----
+## Acknowledgments
 
-## Hosted template sources
-
-Every push mirrors this repo to a public, branch-namespaced clone at **[templates.wendy.dev](https://templates.wendy.dev/)**, so any branch's template sources are fetchable over plain HTTPS without cloning the repo:
-
-```
-https://templates.wendy.dev/<branch>/<path>
-```
-
-| URL | Serves |
-|-----|--------|
-| `https://templates.wendy.dev/` | 302 redirect to `/main/` |
-| `https://templates.wendy.dev/main/python/simple-api/wendy.json` | that file on `main` |
-| `https://templates.wendy.dev/<branch>/...` | the same path on any branch |
-
-Deployment is handled by [`.github/workflows/deploy-templates.yml`](.github/workflows/deploy-templates.yml): on every push it `rsync`s the repo tree (minus `.git`/`.github`) to `gs://wendy-templates-public/<branch>/`; deleting a branch removes its prefix. Content is fronted by Cloud CDN with a 5-minute `max-age`, so updates go live within a few minutes. Auth is keyless via GitHub OIDC / Workload Identity Federation — no secrets in the repo. The backing infrastructure (GCS bucket, CDN backend, HTTPS load balancer, managed cert, DNS) is managed in Google Cloud and mirrors the `docs.wendy.dev` setup.
-
-### Branch names with slashes
-
-Slashes in a branch name (e.g. `max/foo/bar`) are preserved verbatim as URL path segments — `https://templates.wendy.dev/max/foo/bar/...` — and need no encoding. You don't have to worry about a deep branch clobbering a shallower one (e.g. `max/foo` vs `max/foo/bar`): Git itself forbids a branch and a path-prefix of it from existing at the same time (the directory/file ref conflict), so the `rsync --delete` of one branch can never overlap another's prefix.
-
----
-
-## Creating Templates
-
-Templates are plain project directories with a `template.json` manifest and Go [`text/template`](https://pkg.go.dev/text/template) syntax in the source files.
-
-### Directory structure
-
-```
-{language}/{template-name}/
-├── template.json          # Variable declarations (required)
-├── wendy.json             # App config (rendered)
-├── Dockerfile             # Container build (rendered)
-└── ...                    # Source files (rendered)
-```
-
-Templates are organized by language at the top level (`python/`, `swift/`, `rust/`, `node/`, `cpp/`). Each template directory must contain a `template.json`.
-
-### template.json
-
-The manifest declares the template's variables — their types, defaults, prompts, and validation rules. The CLI reads this at runtime to present interactive prompts (Bubble Tea) or accept `--var KEY=VALUE` flags.
-
-```json
-{
-    "name": "simple-api",
-    "description": "Minimal HTTP API with FastAPI",
-    "variables": [
-        {
-            "name": "APP_ID",
-            "description": "Application identifier",
-            "type": "string",
-            "required": true,
-            "prompt": "App ID"
-        },
-        {
-            "name": "PORT",
-            "description": "Primary HTTP port",
-            "type": "integer",
-            "default": 3001,
-            "prompt": "HTTP port",
-            "validate": { "min": 1, "max": 65535 }
-        }
-    ]
-}
-```
-
-#### Variable fields
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `name` | string | yes | Variable name, referenced in templates as `{{.NAME}}` |
-| `description` | string | no | Help text shown in prompts |
-| `type` | string | yes | `"string"`, `"integer"`, or `"boolean"` |
-| `default` | any | no | Default value (type must match `type`) |
-| `required` | boolean | no | If true and no default, the CLI will prompt or error |
-| `prompt` | string | no | Label shown in interactive mode |
-| `validate` | object | no | Validation rules (see below) |
-
-#### Validation rules
-
-For `integer` variables:
-```json
-{ "min": 1, "max": 65535 }
-```
-
-For `string` variables:
-```json
-{ "pattern": "^[a-z][a-z0-9-]*$" }
-```
-
-### Template syntax
-
-Files use Go [`text/template`](https://pkg.go.dev/text/template) syntax. Variables are accessed with a dot prefix:
-
-```
-{{.APP_ID}}          — string substitution
-{{.PORT}}            — integer substitution (rendered as string)
-```
-
-Go template conditionals and logic are supported:
-
-```
-{{if .ENABLE_CORS}}
-app.use(cors());
-{{end}}
-```
-
-### How the CLI processes templates
-
-1. Downloads the `wendylabsinc/templates` repo as a tarball from GitHub
-2. Extracts `{language}/{template-name}/` into a temp area
-3. Reads `template.json` to discover variables
-4. For each variable: checks `--var NAME=VALUE` flags, falls back to Bubble Tea prompts (text input for strings/integers, confirm for booleans)
-5. Renders every file (except `template.json`) through `text/template` with the collected values
-6. Writes output to `./{app-id}/`, renames template-named directories to the app ID
-7. Deletes `template.json` from the output
-8. Optionally runs `git init`
-
-### Special variables
-
-`APP_ID` is always available — it comes from the `--app-id` flag or the interactive prompt. You do not need to declare it in `template.json` (but you can to customize the prompt text).
-
-### Tips
-
-- Keep `template.json` next to `wendy.json` and `Dockerfile` at the template root
-- Test your templates by running `wendy init --template {name} --language {lang}` locally
-- Avoid complex logic in templates — conditionals are supported but keep them minimal
-- Use sensible defaults so non-interactive mode works out of the box
-
----
-
-## Acknowledgements
-
-Sample `.wav` audio files in the audio template are from [pdx-cs-sound/wavs](https://github.com/pdx-cs-sound/wavs). Thanks to the Portland State University CS Sound group for making these available.
+The audio templates include sample WAV files from
+[pdx-cs-sound/wavs](https://github.com/pdx-cs-sound/wavs).

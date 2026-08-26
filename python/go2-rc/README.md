@@ -1,75 +1,91 @@
-# go2-rc
+# {{.APP_ID}}
 
-Remote-control the **Unitree Go2 EDU** from a browser, built as a
-**multi-service app group**: three single-responsibility containers defined by
-one native `wendy.json` `services` map.
+A browser remote control for the Unitree Go2 EDU. It combines a Unitree motion
+API, the robot's WebRTC camera, and a teleoperation UI in one app group.
 
-```
-go2-rc/
-├── wendy.json     ← native multi-service app group (3 services)
-├── motion/        ← FastAPI motion API (:3201) — the only process linking the Unitree SDK
-├── camera/        ← MJPEG/WebRTC camera stream (:8000) from the dog's onboard camera
-└── rc/            ← teleop web UI (:RC_PORT) — drive the dog + watch the feed
-```
+## Requirements
 
-## Architecture
+- A Unitree Go2 EDU with a WendyOS computer connected to the robot's
+  `192.168.123.0/24` network
+- The interface name and Go2 controller IP used by that network
+- A clear test area and immediate access to the robot's hardware stop
+- Network access during the first build for Python and Unitree SDK dependencies
 
-```
-                         your browser
-                              │  http://<device>:{{.RC_PORT}}
-                              ▼
-   ┌──────────────────────────────────────────────┐
-   │  rc        teleop web UI (FastAPI + static)    │
-   │  ─ proxies /api/motion → 127.0.0.1:3201        │
-   │  ─ proxies /api/camera → 127.0.0.1:8000        │
-   └───────────────┬───────────────────┬────────────┘
-                   │                   │
-        127.0.0.1:3201        127.0.0.1:8000
-                   ▼                   ▼
-   ┌───────────────────────┐  ┌────────────────────────┐
-   │  motion  SportClient  │  │  camera  WebRTC/MJPEG   │
-   │  drives the dog over  │  │  pulls the dog's camera │
-   │  CycloneDDS on eth0   │  │  over WebRTC on eth0    │
-   └───────────┬───────────┘  └────────────┬───────────┘
-               │                            │
-               └──────────► Unitree Go2 EDU ◄┘
-                          (192.168.123.0/24)
-```
+The Go2 camera permits one WebRTC client. Disconnect the Unitree mobile app or
+other camera client before using this application.
 
-The three services talk to each other over **localhost** and to the physical
-dog over the **`192.168.123.0/24`** network — both made possible by the
-`network: host` entitlement each service declares. This is why there is no
-`shared-ipc`/`shared-network` isolation here: host networking already covers
-sibling-to-sibling and container-to-robot traffic, and the camera/motion DDS
-stacks must bind directly to the robot NIC (`eth0`).
+## Run and verify
 
-## Services
-
-| Service  | Port | Role |
-| -------- | ---- | ---- |
-| `motion` | 3201 | FastAPI control plane — `/velocity`, `/move`, `/stop`, `/sit`, …. The only container linking `unitree_sdk2_python`'s `SportClient`; velocity clamps + watchdog live here. |
-| `camera` | 8000 | Pulls the Go2's onboard camera over WebRTC and re-serves it as MJPEG at `/stream/color`. |
-| `rc`     | `{{.RC_PORT}}` | Teleop web UI. Serves the control page and proxies motion + camera so the browser only needs one origin. Starts after `motion` and `camera`. |
-
-## Configure
-
-This template prompts for:
-
-- **APP_ID** — the app group identifier.
-- **RC_PORT** (default `3500`) — where you open the teleop UI.
-- **GO2_IP** (default `192.168.123.161`) — the Go2 main-controller IP the camera connects to.
-- **NETWORK_INTERFACE** (default `eth0`) — the NIC on the deploy host that carries the `192.168.123.0/24` address. On the Go2's onboard Jetson this is `eth0`.
-
-## Deploy
+Start with the robot stationary and the area clear:
 
 ```sh
-wendy init --template go2-rc
-cd <app-id>
-wendy run --device <go2-jetson>
+wendy run
 ```
 
-Then open `http://<go2-jetson>:{{.RC_PORT}}` and drive.
+Open `http://<go2-hostname>:{{.RC_PORT}}`. Confirm the camera and status
+information load. Send a small joystick or keyboard input, release it, then
+press **STOP** and confirm the robot stops.
 
-> **Safety:** `motion` enforces velocity caps and a 1-second watchdog next to
-> the hardware — if the UI stops sending commands, the dog stops. Keep a clear
-> area around the robot and be ready to hit **Stop**.
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_ID` | required | App-group identifier |
+| `RC_PORT` | `3500` | Browser UI port |
+| `GO2_IP` | `192.168.123.161` | Robot controller used for WebRTC camera access |
+| `NETWORK_INTERFACE` | `eth0` | Interface on the WendyOS host carrying the robot network |
+
+## How it works
+
+```text
+┌─────────┐ HTTP ┌──────────┐ motion API ┌─────────────┐ DDS  ┌─────┐
+│ browser │ ◀──▶ │ rc proxy │ ─────────▶ │ motion      │ ───▶ │ Go2 │
+└─────────┘      └────┬─────┘   :3201    │ SportClient │      └─────┘
+                      │                  └─────────────┘
+                      │ /api/camera
+                      ▼
+                  ┌────────┐ WebRTC ┌────────────┐
+                  │ camera │ ◀───── │ Go2 camera │
+                  │ :8000  │        └────────────┘
+                  └────────┘
+```
+
+| Service | Port | Role |
+|---|---:|---|
+| `motion` | `3201` | Unitree `SportClient` API, DDS state, velocity limits, skills, and watchdog |
+| `camera` | `8000` | Go2 WebRTC client re-served as MJPEG at `/stream/color` |
+| `rc` | `{{.RC_PORT}}` | Browser UI and proxy for motion and camera APIs |
+
+All services use host networking so they can communicate over localhost and
+bind directly to the robot interface. The RC service starts after motion and
+camera.
+
+## Extend it
+
+- Add skills or control endpoints in `motion/main.py` and
+  `motion/go2_controller.py`.
+- Extend camera or audio handling in `camera/`.
+- Add proxy routes in `rc/main.py` and controls in `rc/static/index.html`.
+- Add a service directory and `wendy.json` entry for an independent robot
+  function.
+
+## Operations and troubleshooting
+
+```sh
+wendy device logs {{.APP_ID}} --tail 200
+wendy device logs {{.APP_ID}} --service motion --tail 150
+wendy device apps stop {{.APP_ID}}
+```
+
+If DDS does not connect, verify `NETWORK_INTERFACE` is on the robot network. If
+the camera fails while motion works, disconnect other Go2 WebRTC clients and
+check `GO2_IP`. Filter logs by service to separate connection failures.
+
+## Safety
+
+- Keep people and obstacles outside the robot's movement area.
+- Keep the physical remote and hardware stop available.
+- The motion service limits commands to ±0.6 m/s forward, ±0.4 m/s lateral, and
+  ±1.0 rad/s yaw.
+- A one-second watchdog calls `StopMove` when velocity updates stop. Treat it as
+  a backup, not a replacement for the hardware stop.

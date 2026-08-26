@@ -1,71 +1,74 @@
-# ip-camera-feed
+# {{.APP_ID}}
 
-Live view of a **platform-registered IP camera** in a browser: GStreamer
-MJPEG-over-WebSocket, single service, no ML. This template consumes a camera
-through the platform's camera-registration pipeline rather than dialing RTSP
-itself — `rtspsrc` appears nowhere in this template by design. It is the
-IP-camera counterpart of `python/camera-feed` (which targets a directly
-attached USB webcam).
-
-## How it works
-
-The bare `{ "type": "camera" }` entitlement in `wendy.json` maps the
-platform-managed `/dev/video2xx` loopback node into the container. Every
-registered camera (device IDs 200-255, MAC-keyed) gets its own node at
-`/dev/video<id>` on the device; a container holding the `camera` entitlement
-sees whichever nodes exist automatically — nothing to wire up per container.
-
-`app.py` auto-detects that node: it enumerates `/dev/video*`, keeps only
-capture-capable nodes, and orders anything in the 200-255 band first (see
-`CAMERA_DEVICE` below to pin an exact node instead).
-
-> **The loopback node carries the camera's sub-stream** (<=1024px wide,
-> auto-selected by the platform) — **there is no per-container stream
-> selection**. It's right-sized for viewing and inference, not full-res
-> recording.
-
-## Configure & deploy
-
-Register the camera and validate credentials before deploying:
-
-```sh
-wendy device camera list                 # shows discovered cameras (--refresh to re-scan)
-wendy device camera login <id>           # store credentials for a camera
-wendy device camera test <id>            # validate the stored credentials
-wendy init --app-id my-cam --template ip-camera-feed --language python
-cd my-cam
-wendy run --device <device-hostname>
-```
-
-Then open `http://<device-hostname>:{{.PORT}}` and watch the feed.
+A browser viewer for an IP camera already registered with WendyOS. The app reads
+the platform-managed V4L2 loopback node and streams MJPEG to the browser; it does
+not connect to the camera's RTSP endpoint itself.
 
 ## Requirements
 
-- The camera must already be **registered** (`wendy device camera login`)
-  before this template can see it — an unregistered camera has no loopback
-  node.
-- The target device's **WendyOS build must ship the `v4l2loopback` module**.
-  On builds that don't, the `/dev/video2xx` node simply won't exist and this
-  template will show no camera. `wendy device camera view <id>` still works
-  from the CLI in that case and proves the camera itself is fine — the gap is
-  the loopback node, not the camera or its credentials.
+- A reachable WendyOS device and Wendy CLI access
+- An IP camera discovered by the device and registered with stored credentials
+- WendyOS support for the platform camera loopback node (`/dev/video2xx`)
 
-## Gotchas
+The loopback carries the platform-selected substream, normally limited to about
+1024 pixels wide. Use the CLI `camera view` command when you only need to inspect
+a registered camera; use this template when you need source code, a web UI, or
+custom processing.
 
-- **Camera must be registered first.** `wendy device camera list` (optionally
-  with `--refresh`) is how you confirm the platform sees it before deploying.
-- **`CAMERA_DEVICE` override.** If a device has more than one registered
-  camera and auto-detection doesn't pick the one you want, set the
-  `CAMERA_DEVICE` template variable to the exact node (e.g. `/dev/video203`,
-  matching the ID from `wendy device camera list`) at `wendy init` time, or
-  leave it blank (the default) for auto-detection. This value is baked into
-  the image as a Dockerfile `ENV` when the template is rendered, not read
-  from the running container — to point a deployed app at a different
-  camera, re-run `wendy init` with the new value and redeploy; editing the
-  running container's environment has no effect. An invalid override (a
-  node that isn't actually capture-capable, or doesn't exist) will still
-  appear in the camera list, but the stream will never come up — the app
-  retries forever rather than surfacing an error.
-- No RTSP, no ML — just the MJPEG viewer. For object detection on a
-  registered camera's feed, adapt `python/camera-feed-yolo`'s model-serving
-  code onto this template's discovery.
+## Prepare the camera
+
+```sh
+wendy device camera list
+wendy device camera login <camera-id>
+wendy device camera view --id <camera-id>
+```
+
+The login command prompts for the camera password. The view command checks that
+the platform can receive video before the application is deployed.
+
+## Run and verify
+
+```sh
+wendy run
+```
+
+Open `http://<device-hostname>:{{.PORT}}`. The page should list a registered
+camera node and show its stream. `GET /cameras` lists candidates and
+`WS /stream` carries MJPEG frames and camera-switch messages.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `APP_ID` | required | Application identifier |
+| `PORT` | `3005` | HTTP/WebSocket listener, readiness probe, and UI port |
+| `CAMERA_DEVICE` | empty | Exact loopback node, such as `/dev/video203`; empty selects a capture-capable `/dev/video200`–`/dev/video255` node first |
+
+`CAMERA_DEVICE` is rendered into the image. Regenerate or edit the project and
+rebuild to change it.
+
+## How it works
+
+`wendy.json` grants host networking and camera access. `app.py` enumerates V4L2
+capture nodes, prefers the platform-managed ID range, starts a GStreamer
+pipeline for the selected node, and retries after pipeline loss. `index.html`
+provides the browser viewer and camera selector.
+
+## Extend it
+
+- Change the candidate ordering or GStreamer pipelines in `app.py`.
+- Add inference between capture and JPEG output, using the `camera-feed-yolo`
+  project as a reference.
+- Add camera status or controls to the WebSocket protocol and `index.html`.
+
+## Operations and troubleshooting
+
+```sh
+wendy device logs {{.APP_ID}} --tail 150
+wendy device apps stop {{.APP_ID}}
+```
+
+If the CLI can view the camera but this app lists no suitable node, the target
+likely lacks the loopback node. If several cameras exist, set `CAMERA_DEVICE` to
+the node matching the desired camera ID. Stop any other app that holds the same
+V4L2 node.

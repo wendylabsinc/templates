@@ -1,73 +1,49 @@
-# React + TypeScript + Vite
+# Fullstack frontend base
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This React, Vite, Tailwind, and shadcn/ui project is the maintainer base for the
+five `fullstack` frontends:
 
-Currently, two official plugins are available:
+- `cpp/fullstack/frontend/`
+- `node/fullstack/frontend/`
+- `python/fullstack/frontend/`
+- `rust/fullstack/frontend/`
+- `swift/fullstack/frontend/`
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The generated-project copies intentionally add `src/lib/device-storage.ts` and
+adapt `src/pages/audio.tsx` and `src/pages/camera.tsx` to their backend behavior.
+All other common files should remain synchronized. The repository test enforces
+that boundary.
 
-## React Compiler
+Run:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+python3 -m pytest tests/test_template_readmes.py
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+For local development of the base UI:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm install
+npm run dev
 ```
+
+Before merging frontend changes, run:
+
+```sh
+npm run lint
+npm run build
+```
+
+The current ESLint config uses `tseslint.configs.recommended`, which does not
+perform type-aware linting. Production projects can switch to a type-checked
+typescript-eslint config and point its parser options at the existing TypeScript
+project files.
+
+The default Vite config has no backend proxy. Consumer pages call `/api/*` on
+the current origin, so add a temporary proxy when developing against a separate
+backend.
+
+Add reusable pages, components, hooks, and styles here. Merge changes into all
+five consumers while retaining their documented overrides. Add a component
+with `npx shadcn@latest add <component>` and commit the generated source and
+package changes.

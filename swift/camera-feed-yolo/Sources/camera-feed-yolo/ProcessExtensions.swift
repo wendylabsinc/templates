@@ -1,6 +1,5 @@
 import Dispatch
 import Foundation
-import Synchronization
 #if canImport(Glibc)
 import Glibc
 #elseif canImport(Darwin)
@@ -87,43 +86,6 @@ extension Process {
 // Waiting without blocking a thread
 // ───────────────────────────────────────────────────────────────────────────
 
-/// A one-shot latch: `wait()` suspends until the first `signal()`, and returns
-/// straight away for every call after that.
-///
-/// Not `Semaphore`, whose `wait()` returns early when the caller is cancelled —
-/// see `waitUntilExit()` below, which must not.
-private final class ExitLatch: Sendable {
-    private struct State {
-        var continuation: CheckedContinuation<Void, Never>?
-        var signalled = false
-    }
-
-    private let state = Mutex(State())
-
-    /// Suspends until the latch is signalled. At most one caller per latch.
-    func wait() async {
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            let resumeNow = state.withLock { s -> Bool in
-                if s.signalled { return true }
-                s.continuation = continuation
-                return false
-            }
-            // Never resume a continuation while holding the lock.
-            if resumeNow { continuation.resume() }
-        }
-    }
-
-    /// Opens the latch. May be called more than once; only the first one resumes.
-    func signal() {
-        let continuation = state.withLock { s -> CheckedContinuation<Void, Never>? in
-            s.signalled = true
-            defer { s.continuation = nil }
-            return s.continuation
-        }
-        continuation?.resume()
-    }
-}
-
 extension Process {
     /// Like `waitUntilExit()`, but suspends the calling task instead of parking its
     /// thread. In an async context this overload is the one that gets picked.
@@ -132,17 +94,16 @@ extension Process {
     /// Returns immediately for a process that was never launched, like the
     /// synchronous version.
     ///
-    /// Deliberately not cancellable: this is what reaps the child, and the caller is
-    /// typically *already* cancelled by the time it terminates the child and waits —
-    /// returning early there would leave the child running.
+    /// Returns early — with the child possibly still alive — if the calling task is
+    /// cancelled. A caller that has to reap the child runs this in its own Task.
     func waitUntilExit() async {
-        let latch = ExitLatch()
-        // Captures the latch and not self: Process is not Sendable, the handler is.
-        terminationHandler = { _ in latch.signal() }
+        let exited = Semaphore()
+        // Captures the semaphore and not self: Process is not Sendable, the handler is.
+        terminationHandler = { _ in exited.raise() }
         // Arm first, then check: an exit landing between the two fires the handler,
         // and one that happened before the handler was installed is caught here.
-        // Both can fire — the latch absorbs that.
-        if !isRunning { latch.signal() }
-        await latch.wait()
+        // Both can fire — the spare permit dies with the semaphore.
+        if !isRunning { exited.raise() }
+        await exited.wait()
     }
 }

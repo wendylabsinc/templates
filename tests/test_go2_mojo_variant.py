@@ -34,14 +34,17 @@ def test_python_robot_services_stay_in_sync_between_variants():
 
 def test_mojo_motion_service_uses_native_unitree_bindings():
     source = (MOJO / "motion" / "main.mojo").read_text()
-    bridge = (MOJO / "motion" / "bridge" / "src" / "unitree_mojo.cpp").read_text()
     dockerfile = (MOJO / "motion" / "Dockerfile").read_text()
     assert "from unitree_mojo import Go2Client" in source
-    assert "unitree::robot::go2::SportClient" in bridge
-    assert 'Subscriber>("rt/lowstate")' in bridge
-    assert "kDefaultWatchdogMs = 1000" in bridge
+    assert "https://github.com/wendylabsinc/unitree-mojo.git" in dockerfile
+    assert "ARG UNITREE_MOJO_REF=v0.1.0" in dockerfile
+    assert "-I /opt/unitree-mojo" in dockerfile
     assert "modular==26.5.0" in dockerfile
     assert "unitree_sdk2_python" not in dockerfile
+    assert not (MOJO / "motion" / "main.py").exists()
+    assert not (MOJO / "motion" / "requirements.txt").exists()
+    assert not (MOJO / "motion" / "bridge").exists()
+    assert not (MOJO / "motion" / "unitree_mojo").exists()
 
 
 def test_mojo_ui_uses_wendy_brand_and_reports_max_runtime():

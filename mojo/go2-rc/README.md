@@ -2,8 +2,10 @@
 
 A Wendy-branded browser controller for the Unitree Go2 EDU. The control surface
 is compiled with Mojo 1.0 and initializes MAX 26.5 on the target accelerator.
-The motion service uses native Mojo 1.0 bindings over Unitree SDK2. The camera
-service stays in Python because Mojo does not yet provide a WebRTC stack.
+The motion service uses the public
+[`unitree-mojo`](https://github.com/wendylabsinc/unitree-mojo) v0.1.0 bindings
+over Unitree SDK2. The camera service stays in Python because Mojo does not yet
+provide a WebRTC stack.
 
 ## Requirements
 

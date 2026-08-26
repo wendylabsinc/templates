@@ -2,20 +2,22 @@
 FROM ubuntu:22.04 AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG UNITREE_SDK2_REF=9754cd153af3da471b0fe5f3aa535e426fb11db3
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential ca-certificates cmake git libboost-all-dev libeigen3-dev \
       libfmt-dev libyaml-cpp-dev python3-pip \
     && rm -rf /var/lib/apt/lists/*
 RUN pip3 install --no-cache-dir modular==26.5.0
+
+ARG UNITREE_SDK2_REF=9754cd153af3da471b0fe5f3aa535e426fb11db3
+ARG UNITREE_MOJO_REF=v0.1.0
 RUN git clone https://github.com/unitreerobotics/unitree_sdk2.git /opt/unitree_sdk2 \
     && git -C /opt/unitree_sdk2 checkout "${UNITREE_SDK2_REF}"
+RUN git clone --depth 1 --branch "${UNITREE_MOJO_REF}" \
+      https://github.com/wendylabsinc/unitree-mojo.git /opt/unitree-mojo
 
 WORKDIR /build
-COPY CMakeLists.txt .
-COPY bridge bridge
-RUN cmake -S . -B native \
+RUN cmake -S /opt/unitree-mojo -B native \
       -DUNITREE_SDK2_DIR=/opt/unitree_sdk2 \
       -DBUILD_EXAMPLES=OFF \
       -DCMAKE_BUILD_TYPE=Release \
@@ -26,9 +28,8 @@ RUN cmake -S . -B native \
     && ln -s libddscxx.so /build/dds/libddscxx.so.0
 
 COPY main.mojo .
-COPY unitree_mojo unitree_mojo
 COPY wendynet wendynet
-RUN mojo build -I /build -o /build/go2-motion main.mojo
+RUN mojo build -I /opt/unitree-mojo -I /build -o /build/go2-motion main.mojo
 RUN mkdir -p /build/runtime \
     && find /usr/local/lib/python3.10/dist-packages/modular/lib \
        -maxdepth 1 -type f \

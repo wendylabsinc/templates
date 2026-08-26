@@ -432,8 +432,14 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   to follow in Appendix B.
 - **Mitigation that works:** `InferenceSession(export_mefs=…)` / `precompiled_mefs=…` — all
   three MEFs load in 0.1 s at 827 MB resident. This is the missing "precompiled-cache
-  distribution" story of MMF-018, and it does work per-machine; what's still absent is a
-  documented cross-target (CPU-arch / GPU-arch) MEF build flow.
+  distribution" story of MMF-018, and it does work per-machine.
+- **Cross-target GPU compile works (verified 2026-08-26, undocumented):**
+  `driver.set_virtual_device_api("cuda")` + `set_virtual_device_target_arch("sm_87")` +
+  `set_virtual_device_count(1)` on a GPU-less arm64 build machine lets
+  `InferenceSession(devices=[Accelerator()], export_mefs=…)` compile Jetson-Orin GPU MEFs —
+  our Dockerfile bakes them at image build. These APIs appear in no public docs; they deserve
+  a documented "precompile for target device" story (it obsoletes on-device cold compiles,
+  MMF-018).
 - **Upstream:** not yet filed.
 
 ## MMF-024: MEF store and `InferenceSession` option-conflict papercuts <a name="mmf-024"></a>

@@ -1,8 +1,8 @@
 # Browser-facing control surface for the Unitree Go2 template.
 #
-# Mojo owns the static UI and reports the active MAX accelerator. The motion
-# and camera services remain Python because Mojo 1.0 has no Unitree DDS or
-# WebRTC bindings. The browser talks to those host-network services directly.
+# Mojo owns the static UI, MAX accelerator report, and Unitree motion service.
+# The camera remains Python because Mojo 1.0 has no WebRTC stack. The browser
+# talks to both host-network services through this same-origin proxy.
 from std.ffi import external_call, c_int, c_ssize_t
 from std.os import getenv
 from std.pathlib import Path

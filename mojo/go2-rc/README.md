@@ -2,8 +2,8 @@
 
 A Wendy-branded browser controller for the Unitree Go2 EDU. The control surface
 is compiled with Mojo 1.0 and initializes MAX 26.5 on the target accelerator.
-The Unitree motion and camera services stay in Python because Mojo does not yet
-provide Unitree DDS or WebRTC bindings.
+The motion service uses native Mojo 1.0 bindings over Unitree SDK2. The camera
+service stays in Python because Mojo does not yet provide a WebRTC stack.
 
 ## Requirements
 
@@ -34,15 +34,14 @@ input, release it, and press **STOP** to confirm the robot stops.
 
 | Service | Runtime | Port | Role |
 |---|---|---:|---|
-| `motion` | Python + Unitree SDK | `3201` | DDS state, motion commands, skills, limits, and watchdog |
+| `motion` | Mojo 1.0 + Unitree SDK2 | `3201` | Native DDS state, motion commands, skills, limits, and watchdog |
 | `camera` | Python + aiortc/CycloneDDS | `8000` | Go2 WebRTC camera, talk audio, and lidar snapshots |
 | `rc` | Mojo 1.0 + MAX 26.5 | `{{.RC_PORT}}` | Branded control UI and live MAX accelerator capability report |
 
 The three services use host networking. The browser-facing Mojo service serves
 the UI; the UI talks to the motion and camera ports on the same WendyOS host.
 The MAX integration intentionally probes the actual compiled accelerator and
-reports it in the UI. It does not claim to replace the Python-only Unitree or
-WebRTC integrations.
+reports it in the UI. The camera/WebRTC integration remains Python-only.
 
 ## Configuration
 

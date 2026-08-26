@@ -1,72 +1,52 @@
 # syntax=docker/dockerfile:1.6
-# Minimal Go2 motion API. Same shape as templates/python/go2-basic — Ubuntu
-# 22.04 base + cyclonedds 0.10.5 from source + unitree_sdk2_python pinned to
-# a known-good SHA. Matches what unitree_sdk2_python expects at the C-lib
-# level so the SportClient bindings link cleanly on linux/arm64.
-FROM ubuntu:22.04
+FROM ubuntu:22.04 AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONUNBUFFERED=1
+ARG DEBIAN_FRONTEND=noninteractive
+ARG UNITREE_SDK2_REF=9754cd153af3da471b0fe5f3aa535e426fb11db3
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3 \
-        python3-pip \
-        python3-dev \
-        git \
-        build-essential \
-        cmake \
-        pkg-config \
-        ca-certificates \
-        ccache \
+      build-essential ca-certificates cmake git libboost-all-dev libeigen3-dev \
+      libfmt-dev libyaml-cpp-dev python3-pip \
     && rm -rf /var/lib/apt/lists/*
+RUN pip3 install --no-cache-dir modular==26.5.0
+RUN git clone https://github.com/unitreerobotics/unitree_sdk2.git /opt/unitree_sdk2 \
+    && git -C /opt/unitree_sdk2 checkout "${UNITREE_SDK2_REF}"
 
-ENV CCACHE_DIR=/ccache
+WORKDIR /build
+COPY CMakeLists.txt .
+COPY bridge bridge
+RUN cmake -S . -B native \
+      -DUNITREE_SDK2_DIR=/opt/unitree_sdk2 \
+      -DBUILD_EXAMPLES=OFF \
+      -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build native --parallel \
+    && mkdir -p /build/dds \
+    && cp /opt/unitree_sdk2/thirdparty/lib/$(uname -m)/libddsc*.so /build/dds/ \
+    && ln -s libddsc.so /build/dds/libddsc.so.0 \
+    && ln -s libddscxx.so /build/dds/libddscxx.so.0
 
-# Build CycloneDDS 0.10.5 from source. Matched to what
-# unitree_sdk2_python expects (no PyPI wheels for arm64 Linux on this
-# version, and the system apt repos don't ship anything compatible).
-ARG CYCLONEDDS_VERSION=0.10.5
-RUN --mount=type=cache,target=/ccache \
-    git clone --depth 1 --branch ${CYCLONEDDS_VERSION} \
-        https://github.com/eclipse-cyclonedds/cyclonedds.git /tmp/cyclonedds \
-    && cmake -S /tmp/cyclonedds -B /tmp/cyclonedds/build \
-        -DCMAKE_INSTALL_PREFIX=/usr/local \
-        -DBUILD_EXAMPLES=OFF \
-        -DBUILD_TESTING=OFF \
-        -DBUILD_IDLC=ON \
-        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
-        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-    && cmake --build /tmp/cyclonedds/build -j"$(nproc)" \
-    && cmake --install /tmp/cyclonedds/build \
-    && ldconfig \
-    && rm -rf /tmp/cyclonedds
+COPY main.mojo .
+COPY unitree_mojo unitree_mojo
+COPY wendynet wendynet
+RUN mojo build -I /build -o /build/go2-motion main.mojo
+RUN mkdir -p /build/runtime \
+    && find /usr/local/lib/python3.10/dist-packages/modular/lib \
+       -maxdepth 1 -type f \
+       \( -name 'libKGENCompilerRTShared.so' \
+          -o -name 'libMSupportGlobals.so' \
+          -o -name 'libAsyncRTRuntimeGlobals.so' \) \
+       -exec cp {} /build/runtime/ \;
 
-# cyclonedds-python and unitree_sdk2_python both look up the native lib here.
-ENV CYCLONEDDS_HOME=/usr/local
+FROM ubuntu:22.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /build/go2-motion /app/go2-motion
+COPY --from=builder /build/runtime /app/runtime
+COPY --from=builder /build/native/libunitree_mojo.so /app/lib/libunitree_mojo.so
+COPY --from=builder /build/dds /app/lib
 
-WORKDIR /app
-
-# unitree_sdk2_python publishes no tags; pin a known-good master SHA.
-ARG UNITREE_SDK2_PYTHON_REF=db9b2d210081387fcd1e7ed9ac4c56a02983bb85
-
-COPY requirements.txt .
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --upgrade pip \
-    && pip3 install -r requirements.txt \
-    && pip3 install \
-        "git+https://github.com/unitreerobotics/unitree_sdk2_python.git@${UNITREE_SDK2_PYTHON_REF}" \
-    && mkdir -p /usr/local/lib/python3.10/dist-packages/unitree_sdk2py/b2 \
-    && touch /usr/local/lib/python3.10/dist-packages/unitree_sdk2py/b2/__init__.py
-# Upstream ships unitree_sdk2py/b2/ without an __init__.py. setuptools
-# then drops the directory from the wheel and the package's top-level
-# import blows up with a misleading "circular import" error. Stub it.
-# See unitreerobotics/unitree_sdk2_python issues #93 and #73.
-
-COPY main.py go2_controller.py ./
-
-ENV PORT=3201
-ENV GO2_NETWORK_INTERFACE={{.NETWORK_INTERFACE}}
-
+ENV LD_LIBRARY_PATH=/app/lib:/app/runtime \
+    GO2_NETWORK_INTERFACE={{.NETWORK_INTERFACE}}
 EXPOSE 3201
-
-CMD ["python3", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "3201"]
+CMD ["/app/go2-motion"]

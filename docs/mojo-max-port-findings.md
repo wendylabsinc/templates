@@ -518,7 +518,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mojo/camera-feed` | portable w/ workarounds | → MMF-011 |
 | `mojo/audio` | portable w/ workarounds | → MMF-011 |
 | `mojo/camera-feed-yolo` | partial — **verified on Orin** (CPU 57 ms@224; GPU works but MMF-026-slow, opt-in) | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024/025; GPU perf → MMF-026 |
-| `mojo/fullstack` | partial | React frontend (JS in every variant, not a gap) → MMF-011 |
+| `mojo/fullstack` | portable w/ workarounds — **verified on Orin** (CRUD + system + camera/audio WS + in-process Mojo GPU kernel route, 122 GFLOPS) | React frontend (JS in every variant, not a gap); hand-rolled HTTP → MMF-011; SQLite via `wendydb` dlopen (no stdlib DB layer, same no-batteries class as MMF-011) |
 | `mojo/ros2-talker-listener` | portable w/ workarounds | hand CDR + FFI → MMF-015 |
 | `mojo/voice-ai` | partial (v1 = LLM leg only) | pipecat/STT/TTS stay Python → MMF-002/003 |
 | `mojo/go2-initial-test` | partial, deferred (no robot) | hardware services → MMF-015 |
@@ -696,6 +696,26 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     ~5 s of zero progress instead of hanging.
   - `OwnedDLHandle` works well as an FFI strategy (`h.call["sym", ret](args)`), and dodges
     the MMF-020 extern-collision problem entirely since symbols resolve at runtime.
+
+- **2026-08-26 · same Orin Nano · `mojo/fullstack` template (sixth Mojo port) · Brio 101:**
+  - The FastAPI fullstack backend rebuilt on wendynet in one poll(2) loop, verified
+    end-to-end on-device: cars CRUD at exact sibling parity (201/200/404/422/204 status
+    behavior, `{"detail":"Car not found"}` bodies, `updated_at` stamping) on SQLite through
+    the new **`wendydb`** package (`libsqlite3.so.0` via `OwnedDLHandle`; prepare/bind/step
+    with `SQLITE_TRANSIENT` — clean FFI story, no issues, container test suite green);
+    `/api/system` from `/proc` + `uname(2)`/`statvfs(2)`; static React SPA byte-identical
+    to the python sibling; 145 MB image, no Python/SDK at runtime.
+  - **`/api/gpu` runs a real Mojo matmul kernel in-process** (gpu-hello-style AOT
+    `--target-accelerator sm_87` cross-compile selected by the same Dockerfile `case` on
+    `WENDY_PLATFORM`): first request returns in ~0.6 s including CUDA context creation
+    (no JIT — the kernel is AOT), reporting `Orin (nvgpu)`, the gpu-thermal zone, and a
+    verified 512³ naive matmul at **122 GFLOPS**, then cached. Where the python sibling
+    shells out to nvidia-smi, the Mojo port proves the GPU by using it.
+  - Streams at parity: camera WS 14.5 fps sustained (camera-limited — the verified
+    `mojo/camera-feed` app measured 12.1 fps the same evening on the same Brio; auto-
+    exposure in dim light halves the sensor rate vs the earlier 29.9 fps daytime run);
+    audio WS steady-state 19.7 chunks/s ≈ real-time 16 kHz after the first-connect APE
+    preroll walk (Appendix note in the audio entry above applies unchanged).
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

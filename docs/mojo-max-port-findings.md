@@ -741,6 +741,12 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     same-symbol/different-shape `external_call`s fail LLVM lowering even without stdlib
     involvement, and ASAP destruction frees a `List` whose raw address was just taken
     unless the value is referenced after the FFI call that consumes the pointer.
+  - **On-device (same Orin Nano, WendyOS 0.18.2): verified.** Deployed as a two-service
+    group via `wendy init --branch` → `wendy run`; the listener hears every 1 Hz message
+    ~20–25 ms after publication, zero drops observed over minutes of logs. Notably the
+    group's **per-service** `network: host` entitlements worked on a fresh create with
+    agent 2026.08.22 (new data point for Appendix W#1, which had only app-level placement
+    working on 2026.08.18).
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

@@ -385,6 +385,12 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Workaround (verified):** call a sibling symbol the stdlib doesn't declare
   (`openat(AT_FDCWD, …)` for `open`; `send` on a socketpair instead of `write` on a
   pipe), or match the stdlib's exact declared shape.
+- **Addendum (2026-08-26, found building wendydds):** the same lowering failure hits
+  **two of your own `external_call`s to one symbol with different Mojo argument types**
+  — e.g. `external_call["memcpy", Int](ptr, addr_as_Int, n)` in one place and
+  `external_call["memcpy", Int](ptr, other_ptr, n)` in another. Keep exactly one
+  argument shape per symbol across the whole program (the templates standardize on
+  `memcpy(dest_ptr, src_as_Int, len_Int)`).
 - **Upstream:** not yet filed.
 
 ## MMF-021: 1×1 `conv2d` fails CPU compilation (missing layout-transform kernel) <a name="mmf-021"></a>
@@ -519,7 +525,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mojo/audio` | portable w/ workarounds | → MMF-011 |
 | `mojo/camera-feed-yolo` | partial — **verified on Orin** (CPU 57 ms@224; GPU works but MMF-026-slow, opt-in) | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024/025; GPU perf → MMF-026 |
 | `mojo/fullstack` | portable w/ workarounds — **verified on Orin** (CRUD + system + camera/audio WS + in-process Mojo GPU kernel route, 122 GFLOPS) | React frontend (JS in every variant, not a gap); hand-rolled HTTP → MMF-011; SQLite via `wendydb` dlopen (no stdlib DB layer, same no-batteries class as MMF-011) |
-| `mojo/ros2-talker-listener` | portable w/ workarounds | hand CDR + FFI → MMF-015 |
+| `mojo/ros2-talker-listener` | portable w/ workarounds — **container-verified interop with real ROS 2 (both rmw vendors, both directions)** | libddsc FFI + hand-packed topic descriptor → MMF-015 (no hand CDR needed after all: descriptor-based topics let CycloneDDS serialize; no C shim either) |
 | `mojo/voice-ai` | partial (v1 = LLM leg only) | pipecat/STT/TTS stay Python → MMF-002/003 |
 | `mojo/go2-initial-test` | partial, deferred (no robot) | hardware services → MMF-015 |
 | `mojo/go2-rc`, `mojo/g1-rc` | partial, deferred (no robot) | WebRTC camera, unitree SDK → MMF-015 |
@@ -717,6 +723,25 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     audio WS steady-state 19.7 chunks/s ≈ real-time 16 kHz after the first-connect APE
     preroll walk (Appendix note in the audio entry above applies unchanged).
 
+- **2026-08-26 · Docker linux/arm64 (Apple Silicon host) · `mojo/ros2-talker-listener` +
+  `wendydds` (seventh Mojo port) · CycloneDDS 0.10.5 / ROS 2 Humble:**
+  - **Pure-Mojo ROS 2 pub/sub works with no ROS installation and no C shim**: `wendydds`
+    dlopens `libddsc.so.0` and hand-packs the `dds_topic_descriptor_t` for
+    `std_msgs::msg::dds_::String_` — layout constants conformance-tested against the real
+    headers by a C oracle (wendycam-style), the idlc-emitted XTypes
+    TypeInformation/TypeObject blobs embedded verbatim, `rt/` topic mangling, ROS default
+    QoS (reliable 100 ms / keep-last 10 / volatile). Descriptor-based topics mean
+    CycloneDDS serializes the C-shaped sample itself, so the anticipated hand-CDR layer
+    (and swift-ros2's C sertype bridge) is not needed for plain message types.
+  - **Interop matrix (containers, domain 0): all green.** Mojo talker →
+    `ros2 topic echo /chatter std_msgs/msg/String` under default `rmw_fastrtps_cpp`
+    (cross-vendor RTPS) ✓ · same under `rmw_cyclonedds_cpp` ✓ · `ros2 topic pub` → Mojo
+    listener ✓. Loopback suite: 3-sample round trip incl. unicode + empty string.
+  - Two Mojo-FFI gotchas found and worked around (see MMF-020 addendum + porting notes):
+    same-symbol/different-shape `external_call`s fail LLVM lowering even without stdlib
+    involvement, and ASAP destruction frees a `List` whose raw address was just taken
+    unless the value is referenced after the FFI call that consumes the pointer.
+
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()
 raises:`); `DLHandle` → `OwnedDLHandle`; `UnsafePointer` → `Pointer`, heap buffers via
@@ -726,4 +751,7 @@ copyable (`return out^`); `len(String)` removed (`byte_length()` / `codepoints()
 RHS must match the operand type exactly (`x >> UInt32(k)`); `alias` deprecated → `comptime`
 (warning), and `comptime` initializers cannot call raising functions; libc externs the stdlib
 already declares (`open`, `write`) must not be re-declared with different signatures via
-`external_call` (MMF-020) — use `openat`/`send` or match the stdlib's shapes.
+`external_call` (MMF-020) — use `openat`/`send` or match the stdlib's shapes, and keep one
+argument shape per extern across your own calls too (MMF-020 addendum); `Int(ptr)` gives the
+raw address, but ASAP destruction frees a `List` right after its last named use — reference
+it *after* the FFI call that consumes its address, or keep it as a struct field.

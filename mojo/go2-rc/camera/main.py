@@ -638,13 +638,13 @@ def stream_color() -> StreamingResponse:
 
 @app.websocket("/ws/talk")
 async def ws_talk(ws: WebSocket) -> None:
-    """Browser → dog speaker. Receives binary 8 kHz mono Int16 PCM frames.
+    """Browser → dog speaker. Receives binary 48 kHz mono Int16 PCM frames.
 
-    Each binary message is one audio chunk (typically 20 ms = 160 samples
-    = 320 bytes). We don't validate length — the AudioData publisher
-    handles whatever the browser sends, encoded as µ-law per chunk.
-    Text frames are ignored (kept open for future control messages
-    like start/stop markers if we ever need them).
+    Each binary message is one audio chunk (typically 20 ms = 960 samples
+    = 1,920 bytes). The PCM is queued on the outbound WebRTC track, which
+    duplicates mono to stereo for the negotiated Opus stream. Text frames
+    are ignored (kept open for future control messages like start/stop
+    markers if we ever need them).
     """
     await ws.accept()
     # Re-arm megaphone if it's been idle. Cheap if recently active

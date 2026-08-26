@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 
@@ -11,7 +12,7 @@ def test_mojo_controller_uses_max_and_same_origin_motion_proxy():
     assert "from max.gpu.host import DeviceContext" in source
     assert 'elif request.path == "/api/runtime"' in source
     assert "proxy_http(connection, 8000" in source
-    assert "proxy_http(\n                    connection,\n                    3201" in source
+    assert re.search(r"proxy_http\(\s*connection,\s*3201\b", source)
 
 
 def test_mojo_variant_does_not_open_robot_apis_with_wildcard_cors():

@@ -45,12 +45,13 @@ FRAME_BYTES = SAMPLES_PER_FRAME * 2  # mono Int16 input
 
 
 class OutboundPCMTrack(MediaStreamTrack):
-    """A MediaStreamTrack that emits 8 kHz mono Int16 PCM as AudioFrames.
+    """A MediaStreamTrack that emits 48 kHz stereo Int16 AudioFrames.
 
-    Audio is fed in via `push_pcm(bytes)` — typically from the WebSocket
-    handler that's receiving 20 ms PCM chunks from the browser. When
-    the queue is empty, `recv()` returns silence frames so the WebRTC
-    clock keeps ticking and the connection stays healthy.
+    Audio is fed in as 48 kHz mono Int16 via `push_pcm(bytes)` — typically
+    from the WebSocket handler receiving 20 ms PCM chunks from the browser.
+    Each frame duplicates the mono samples across both negotiated Opus
+    channels. When the queue is empty, `recv()` returns silence frames so
+    the WebRTC clock keeps ticking and the connection stays healthy.
     """
 
     kind = "audio"
@@ -124,9 +125,6 @@ class OutboundPCMTrack(MediaStreamTrack):
             pcm = pcm[:FRAME_BYTES]
         else:
             pcm = pcm + self._silence[: FRAME_BYTES - len(pcm)]
-            had_data_at_start = had_data_at_start and (
-                pcm[: FRAME_BYTES - len(self._silence)] != b""
-            )
 
         # Periodic stats so we can see exactly what's flowing.
         # ─ pushes/s   : how often the browser is sending us PCM

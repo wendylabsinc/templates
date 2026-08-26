@@ -887,9 +887,9 @@
 
       // === Push-to-talk: browser mic → dog speaker ========================
       // Hold the talk button (or T key) → grab mic via getUserMedia,
-      // capture PCM via Web Audio, decimate to 8 kHz mono Int16, send
-      // ~20 ms binary frames over WebSocket. go2-camera µ-law-encodes
-      // and publishes to the dog's audio bus.
+      // capture 48 kHz mono Int16 PCM via Web Audio, and send ~20 ms
+      // binary frames over WebSocket. go2-camera queues the PCM on the
+      // outbound WebRTC track for Opus encoding and playback.
       //
       // Mic permission requires HTTPS or localhost; we already deploy
       // behind TLS so this just works.
@@ -928,11 +928,9 @@
         //      isn't strictly enforced but keeps things tidy.
         //   3. THEN await resume() and getUserMedia.
         //
-        // We ask for `sampleRate: TALK_OUT_RATE` (8 kHz) so the browser
-        // resamples internally with a proper anti-alias filter, and our
-        // ScriptProcessor sees clean 8 kHz frames — no manual decimator,
-        // no aliasing noise on machines whose native rate isn't a
-        // multiple of 8000 (Mac AudioContext defaults to 44.1 kHz).
+        // We ask for `sampleRate: TALK_OUT_RATE` (48 kHz) so the browser
+        // normally provides samples at the WebRTC target rate without
+        // application-side resampling (Mac AudioContext may use 44.1 kHz).
         // If the browser refuses the requested rate (rare on modern
         // Chrome/Safari/Firefox), it'll throw and we fall back.
         const Ctor = window.AudioContext || window.webkitAudioContext;
@@ -961,10 +959,8 @@
         if (!talkActive || !talkCtx) return;
         talkSrc = talkCtx.createMediaStreamSource(talkStream);
         // ScriptProcessor must use a power-of-two buffer >= 256. At
-        // 8 kHz, 1024 = 128 ms latency — fine for PTT and not so small
-        // it glitches on slower devices. If the AudioContext fell back
-        // to 44.1/48 kHz (rare), this still works — we resample inline
-        // below with linear interpolation.
+        // 48 kHz, 1024 is about 21 ms of input. If the AudioContext falls
+        // back to another rate, we resample inline with linear interpolation.
         talkProc = talkCtx.createScriptProcessor(1024, 1, 1);
         const ctxRate = talkCtx.sampleRate;
         const needsResample = Math.abs(ctxRate - TALK_OUT_RATE) > 1;
@@ -973,7 +969,7 @@
           `resample=${needsResample}`
         );
         const ratio = ctxRate / TALK_OUT_RATE;
-        let pendingOut = []; // accumulated Int16s, flushed in 160-sample frames
+        let pendingOut = []; // Int16 samples, flushed in 960-sample frames
         let resamplePos = 0; // fractional read position across callbacks
 
         function clampToInt16(s) {
@@ -985,7 +981,7 @@
           if (!talkActive) return;
           const inBuf = e.inputBuffer.getChannelData(0);
           if (!needsResample) {
-            // Native 8 kHz — straight Float32 → Int16, no decimation.
+            // Native 48 kHz — straight Float32 → Int16, no resampling.
             for (let i = 0; i < inBuf.length; i++) {
               pendingOut.push(clampToInt16(inBuf[i]));
             }

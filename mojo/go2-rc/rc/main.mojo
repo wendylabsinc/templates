@@ -190,6 +190,12 @@ def main() raises:
                 respond_json(connection, "200 OK", '{"ok":true}')
             else:
                 respond(connection, "404 Not Found", "text/plain", "not found")
-        except:
-            pass
+        except error:
+            print("request failed: " + String(error))
+            respond(
+                connection,
+                "500 Internal Server Error",
+                "text/plain",
+                "internal server error",
+            )
         listener.close_conn(connection)

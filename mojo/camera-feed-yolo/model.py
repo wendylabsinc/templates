@@ -133,13 +133,16 @@ class _GraphFactory:
         return ops.constant_external(name, TensorType(DType.float32, a.shape, device=self.dev))
 
     def _conv_raw(self, x, wname, bname, stride=1, act=True):
-        # 1x1 convs are lowered to matmul: conv2d's RSCF->KNkni filter repack
-        # has no registered CPU kernel in 26.5 (MMF-021).
+        # On CPU, 1x1 convs are lowered to matmul: conv2d's RSCF->KNkni filter
+        # repack has no registered CPU kernel in 26.5 (MMF-021). On GPU the
+        # conv path works — and must be used: the matmul route's KN->NK weight
+        # repack crashes with CUDA_ERROR_ILLEGAL_ADDRESS at model setup on the
+        # Jetson iGPU (MMF-021 notes).
         from max.graph import ops
 
         w = self.weights[wname]
         k = w.shape[2]
-        if k == 1 and stride == 1:
+        if k == 1 and stride == 1 and self.device == "cpu":
             _, h, wd, c = (int(d) for d in x.shape)
             y = ops.reshape(x, (h * wd, c))
             y = ops.add(

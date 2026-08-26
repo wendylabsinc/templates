@@ -18,7 +18,15 @@
 
 # ── weights: extract fused YOLOv8n tensors (torch only lives here) ───────────
 FROM python:3.12-slim-bookworm AS weights
-RUN --mount=type=cache,target=/root/.cache/pip pip install ultralytics
+# libgl1/libglib2.0-0: ultralytics unconditionally imports cv2 at package
+# import, which needs them even for a headless weight dump.
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+# CPU torch first: the default index's aarch64 torch bundles multi-GB CUDA
+# libs this stage would never use.
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu \
+    && pip install ultralytics
 COPY extract_weights.py /build/
 RUN mkdir /out && cd /build && python extract_weights.py /out
 

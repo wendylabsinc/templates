@@ -1,4 +1,4 @@
-internal import Foundation
+import Foundation
 import Hummingbird
 import HummingbirdWebSocket
 import COnnxRuntime
@@ -6,6 +6,7 @@ import CTurboJPEG
 import Logging
 import OTel
 import ServiceLifecycle
+import Synchronization
 
 // ───────────────────────────────────────────────────────────────────────────
 // Constants
@@ -326,76 +327,17 @@ final class YoloEngine: @unchecked Sendable {
     }
 }
 
-struct JPEGFrameParser: Sendable {
-    private var buffer = Data()
-    mutating func append(_ data: Data) -> [Data] {
-        // Cap before append so a malformed source can't grow the buffer past
-        // the limit before the next reset.
-        if buffer.count + data.count > 10_000_000 { buffer.removeAll() }
-        buffer.append(data)
-        var frames: [Data] = []
-        while let range = findFrame() {
-            frames.append(Data(buffer[range]))
-            buffer.removeSubrange(buffer.startIndex...range.upperBound)
-        }
-        return frames
-    }
-    private func findFrame() -> ClosedRange<Int>? {
-        guard buffer.count >= 4 else { return nil }
-        var soi: Int?
-        for i in buffer.startIndex..<(buffer.endIndex - 1) {
-            if buffer[i] == 0xFF && buffer[i + 1] == 0xD8 { soi = i; break }
-        }
-        guard let start = soi else { return nil }
-        for i in (start + 2)..<(buffer.endIndex - 1) {
-            if buffer[i] == 0xFF && buffer[i + 1] == 0xD9 { return start...(i + 1) }
-        }
-        return nil
-    }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Camera info & enumeration
-// ───────────────────────────────────────────────────────────────────────────
-
-struct CameraInfo: Codable, Sendable {
-    let id: String
-    let name: String
-}
-
-func listCameras() -> [CameraInfo] {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/v4l2-ctl")
-    process.arguments = ["--list-devices"]
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = FileHandle.nullDevice
-    do {
-        try process.run()
-        process.waitUntilExit()
-    } catch {
-        return []
-    }
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    guard let output = String(data: data, encoding: .utf8) else { return [] }
-    var cameras: [CameraInfo] = []
-    var currentName: String?
-    for line in output.components(separatedBy: "\n") {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        if !line.hasPrefix("\t") && !line.hasPrefix(" ") && trimmed.hasSuffix(":") {
-            currentName = String(trimmed.dropLast())
-        } else if trimmed.hasPrefix("/dev/video") {
-            cameras.append(CameraInfo(id: trimmed, name: currentName ?? trimmed))
-        }
-    }
-    return cameras
-}
-
 // ───────────────────────────────────────────────────────────────────────────
 // MJPEGCamera actor — owns the gst-launch-1.0 process + tracks subscribers.
 // ───────────────────────────────────────────────────────────────────────────
 
 actor MJPEGCamera {
+    struct CameraInfo: Codable, Sendable {
+        let id: String
+        let name: String
+        let selected: Bool
+    }
+
     private let logger: Logger
     private var subscribers: [ObjectIdentifier: @Sendable (Data, String) async -> Void] = [:]
     private var pipelineTask: Task<Void, any Error>?
@@ -435,6 +377,10 @@ actor MJPEGCamera {
         guard device != currentDevice else { return }
         currentDevice = device
         if !subscribers.isEmpty { stopPipeline(); startPipeline() }
+    }
+
+    func listCameras() -> [CameraInfo] {
+        V4LCameraDiscovery().listCameras().map { CameraInfo(id: $0.device, name: $0.name, selected: $0.device == currentDevice) }
     }
 
     private func broadcast(_ frame: Data) async {
@@ -507,7 +453,14 @@ actor MJPEGCamera {
         // Passthrough on RPi/CPU avoids a 30fps decode/re-encode brown-out under
         // GStreamer + inference load. Jetson keeps the decode/encode for quality
         // since it has hardware JPEG codecs.
-        if passthrough {
+        if device == "test" {
+            process.arguments = [
+                "videotestsrc", "!",
+                "video/x-raw,width=1280,height=720,framerate=30/1", "!",
+                "jpegenc", "!",
+                "fdsink", "fd=1",
+            ]
+        } else if passthrough {
             process.arguments = [
                 "v4l2src", "device=\(device)", "!",
                 "image/jpeg", "!",
@@ -525,27 +478,22 @@ actor MJPEGCamera {
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
-        try process.run()
-
         let handle = pipe.fileHandleForReading
-        let (stream, continuation) = AsyncStream<Data>.makeStream()
-        handle.readabilityHandler = { fh in
-            let data = fh.availableData
-            if data.isEmpty { continuation.finish() } else { continuation.yield(data) }
-        }
-        defer { handle.readabilityHandler = nil }
+
+        try process.runWithEmptySignalMask()
 
         var parser = JPEGFrameParser()
-        await withTaskCancellationHandler {
-            for await chunk in stream {
-                let frames = parser.append(chunk)
-                for frame in frames { await self.broadcast(frame) }
+
+        let reader = FileHandleAsyncReader(fileHandle: handle, maxPendingBytes: 1_000_000)
+        while let chunk = await reader.read() {
+            let frames = parser.append(chunk)
+            for frame in frames {
+                await self.broadcast(frame)
             }
-            process.terminate()
-        } onCancel: {
-            process.terminate()
-            continuation.finish()
         }
+
+        process.terminate()
+        await process.waitUntilExit()
     }
 }
 
@@ -626,9 +574,9 @@ struct CameraFeedYoloService: Service {
 
         // ── HTTP routes ──
         let router = Router()
-        router.get("/cameras") { _, _ in listCameras() }
+        router.get("/cameras") { _, _ in await camera.listCameras() }
         router.get("/", use: spaHandler(staticDir: "."))
-        router.get("{path+}", use: spaHandler(staticDir: "."))
+        router.get("assets/**", use: spaHandler(staticDir: "."))
 
         // ── WebSocket /stream ──
         let wsRouter = Router(context: BasicWebSocketRequestContext.self)
@@ -636,13 +584,16 @@ struct CameraFeedYoloService: Service {
             final class ConnectionID: Sendable {}
             let connID = ConnectionID()
             let id = ObjectIdentifier(connID)
+            let sendSlot = SendSlot()
 
             await camera.subscribe(id: id) { frame, metaJson in
-                do {
-                    try await outbound.write(.text(metaJson))
-                    try await outbound.write(.binary(ByteBuffer(bytes: frame)))
-                } catch {
-                    logger.error("WebSocket write failed", metadata: ["error": "\(error)"])
+                await sendSlot.trySend {
+                    do {
+                        try await outbound.write(.text(metaJson))
+                        try await outbound.write(.binary(ByteBuffer(bytes: frame)))
+                    } catch {
+                        logger.error("WebSocket write failed", metadata: ["error": "\(error)"])
+                    }
                 }
             }
 
@@ -721,4 +672,21 @@ struct CameraFeedYoloService: Service {
             }
         }
     }
+}
+
+actor SendSlot {
+    private var inFlight = false
+
+    // Starts `body` detached so the broadcast loop isn't blocked, unless a
+    // previous send is still running — in that case the frame is dropped.
+    func trySend(_ body: @escaping @Sendable () async -> Void) {
+        guard !inFlight else { return }
+        inFlight = true
+        Task {
+            await body()
+            await self.finish()
+        }
+    }
+
+    private func finish() { inFlight = false }
 }

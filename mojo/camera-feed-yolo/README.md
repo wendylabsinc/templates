@@ -34,10 +34,10 @@ without a baked MEF trigger a one-time on-device graph compile needing
 
 ## Notes
 
-- The Docker build needs **>= 8 GB RAM** for the MEF compile stage: each of
-  the three graph parts peaks at 5.7-7.2 GB in the 26.5 compiler, memory it
-  never frees — which is also why compilation runs one part per process and
-  why the device itself never compiles the CPU path (MMF-023).
+- The Docker build needs **>= 8 GB RAM** for the MEF compile stage: the four
+  graph parts peak at up to ~6 GB each in the 26.5 compiler, memory it never
+  frees — which is why compilation runs one part per process and why the
+  device itself never compiles the CPU path (MMF-023).
 - 1x1 convolutions are lowered to matmul (missing `RSCF_to_KNkni` layout
   kernel, MMF-021) and the 2x nearest upsample is spelled
   reshape→broadcast→reshape (`resize_nearest` diverges from torch semantics,

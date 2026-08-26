@@ -419,13 +419,17 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Template(s):** `mojo/camera-feed-yolo` · **MAX 26.5.0, arm64 CPU (Docker VM, 16 vcpu)** — **2026-08-26**
 - **Category:** bug · **Severity:** major (locks 8 GB edge devices out of on-device compile)
 - **Detail:** compiling the hand-built YOLOv8n as one graph exceeds 7.2 GB and OOMs; split into
-  backbone / PAN+detect / DFL-decode the parts peak at 5.7 / 7.2 / 1.4 GB. The footprint is
-  **independent of imgsz** (640 vs 320 identical) — it scales with op count, i.e. it's
-  per-kernel codegen, not activation planning. Compiler memory is **never released** after
-  `session.load()`: compiling the three parts sequentially in one process OOMs where each part
-  alone succeeds. Two aggravators: (a) weights inlined as `ops.constant` blow up the
-  constant-fold pass (an 8 GB container dies even though the weights total 12 MB) — use
-  `ops.constant_external` + `weights_registry`; (b) `OMP_NUM_THREADS`/cpuset made no difference.
+  backbone / PAN+detect / DFL-decode the parts peak at 5.7 / 7.2 / 1.4 GB (our template splits
+  further into backbone / PAN / detect / decode = 5.7 / 3.1 / 6.0 / 1.4 GB so a marginal 8 GB
+  builder VM survives). The footprint is **independent of imgsz** (640 vs 320 identical) — it
+  scales with op count, i.e. it's per-kernel codegen, not activation planning. Compiler memory
+  is **never released** after `session.load()`: compiling the parts sequentially in one process
+  OOMs where each part alone succeeds. Two aggravators: (a) weights inlined as `ops.constant`
+  blow up the constant-fold pass (an 8 GB container dies even though the weights total 12 MB) —
+  use `ops.constant_external` + `weights_registry`; (b) `OMP_NUM_THREADS`/cpuset made no
+  difference. Silver lining: a **local compiler cache** (surviving in image layers) makes
+  recompiling an already-seen graph near-free — backbone drops from 5.7 GB / 45 s cold to
+  0.4 GB / seconds warm — consistent with MMF-018's 400 s→19 s warm-start observation.
 - **Consequence for edge:** an Orin Nano (8 GB shared) cannot compile this CV model on-device
   with anything else resident. Our template precompiles CPU MEFs in the Docker build (one part
   per process) and defers GPU MEFs to a one-time first-boot compile — measured on-device numbers

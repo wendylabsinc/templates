@@ -6,7 +6,7 @@
 # Per frame: MJPEG passes through to clients untouched; at most YOLO_MAX_FPS
 # times a second the frame is also TurboJPEG-decoded, letterboxed into a
 # Mojo-owned fp32 buffer that numpy wraps as a zero-copy view, run through
-# the three MEF-precompiled graphs, and reduced to boxes here (confidence
+# the four MEF-precompiled graphs, and reduced to boxes here (confidence
 # filter + NMS + unletterboxing) for the meta JSON that precedes every frame.
 from std.ffi import external_call, c_int
 from std.os import getenv

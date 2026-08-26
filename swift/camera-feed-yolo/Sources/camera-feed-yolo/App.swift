@@ -493,7 +493,10 @@ actor MJPEGCamera {
         }
 
         process.terminate()
-        await process.waitUntilExit()
+
+        // We want to wait even if cancelled; an unstructured Task does not inherit
+        // cancellation.
+        await Task { await process.waitUntilExit() }.value
     }
 }
 

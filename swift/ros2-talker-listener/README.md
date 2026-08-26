@@ -1,48 +1,76 @@
-# ros2-talker-listener (Swift)
+# {{.APP_ID}}
 
-The canonical ROS 2 `talker` / `listener` demo, in Swift. A two-service app
-group built on [swift-ros2](https://github.com/youtalk/swift-ros2) — a pure-Swift
-ROS 2 client (no `rclcpp`, no C++ interop) that speaks the ROS 2 wire format
-directly over CycloneDDS.
+A Swift ROS 2 talker/listener example for WendyOS. One service publishes
+`std_msgs/msg/String` messages on `/chatter` at 1 Hz and another service logs
+each message it receives.
 
-- **talker** publishes `std_msgs/String` (`"Hello World: N"`) on `/chatter` at 1 Hz.
-- **listener** subscribes to `/chatter` and logs every message it receives.
+## Requirements
 
-Both nodes use the **Humble** wire format over **CycloneDDS multicast**, so they
-join the same ROS 2 graph as the other Humble-based Wendy templates.
+- A reachable WendyOS device and Wendy CLI access
+- Network access during the first build to fetch Swift packages and build
+  CycloneDDS
+- Multicast-capable networking for discovery between containers and any
+  external ROS 2 peers
 
-## Deploy
+No robot or sensor hardware is required. The code uses the ROS 2 Humble wire
+format through `swift-ros2` and CycloneDDS; it does not require `rclcpp` in the
+containers.
+
+## Run and verify
 
 ```sh
-wendy run --device <device> -y --detach
+wendy run --detach
+wendy device logs {{.APP_ID}} --tail 30
 ```
 
-## See it work
+The `talker` logs a published `Hello World: N` message each second. The
+`listener` logs the same body after DDS delivery. Filter one service with
+`--service talker` or `--service listener`.
 
-```sh
-wendy device logs --device <device>
-```
+## Configuration
 
-You should see the talker's `Publishing: 'Hello World: N'` and the listener's
-`I heard: 'Hello World: N'` interleaved — two separate containers discovering
-each other over real DDS multicast.
+| Variable | Default | Purpose |
+|---|---:|---|
+| `APP_ID` | required | App-group identifier and log label prefix |
+| `ROS_DOMAIN_ID` | `0` | DDS discovery domain shared by both services and any peer |
+
+Both services use host-network entitlements so CycloneDDS multicast reaches the
+device network.
+
+## How it works
+
+- `wendy.json` defines the `talker` and `listener` services and starts the
+  listener after the talker.
+- `talker/Sources/talker/main.swift` creates a publisher and sends one message
+  per second.
+- `listener/Sources/listener/main.swift` creates a subscription and logs its
+  asynchronous message stream.
+- Each Dockerfile builds CycloneDDS 0.10.5 and the corresponding Swift package.
 
 ## Interoperate with ROS 2
 
-Because the wire format is Humble + CycloneDDS, a ROS 2 Humble node on the same
-LAN and `ROS_DOMAIN_ID` can talk to these nodes directly:
+On a ROS 2 Humble host on the same network:
 
 ```sh
 source /opt/ros/humble/setup.bash
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export ROS_DOMAIN_ID=0
-ros2 topic echo /chatter std_msgs/msg/String   # sees the Swift talker
-ros2 run demo_nodes_cpp talker                  # the Swift listener hears it
+export ROS_DOMAIN_ID={{.ROS_DOMAIN_ID}}
+ros2 topic echo /chatter std_msgs/msg/String
 ```
 
-## Configuration
+## Extend it
 
-| Variable        | Default | Purpose                                                        |
-|-----------------|---------|----------------------------------------------------------------|
-| `APP_ID`        | —       | Application identifier.                                         |
-| `ROS_DOMAIN_ID` | `0`     | CycloneDDS discovery domain. Both services (and any ROS 2 peer) must share it. |
+Change the topic, rate, or message construction in the talker and update the
+listener to match. Add another service directory and `wendy.json` service entry
+for another node. Message definitions and QoS behavior are configured through
+the `SwiftROS2` APIs in each source file.
+
+## Operations and troubleshooting
+
+```sh
+wendy device apps stop {{.APP_ID}}
+```
+
+If only publish logs appear, confirm both services use the same domain and that
+multicast is allowed. External peers must use the same ROS distribution wire
+format, domain ID, and compatible QoS.

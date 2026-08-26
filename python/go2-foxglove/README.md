@@ -1,67 +1,104 @@
-# go2-foxglove
+# {{.APP_ID}}
 
-Stream a **Unitree Go2**'s live data into **Foxglove** over a single WebSocket —
-LiDAR point cloud, pose + TF, body state (IMU / battery / foot forces) and UWB,
-plus the front camera. A lighter cousin of `go2-watchtower` (no vision/mic/audio).
+A Unitree Go2 data bridge for Foxglove. It converts native Go2 DDS messages into
+Foxglove point-cloud, pose, transform, image, and JSON channels and serves them
+through one WebSocket connection with a prepared layout.
 
+## When to use this template
+
+`wendy device foxglove serve` is the shorter path for exposing a normal ROS 2
+graph through an authenticated tunnel. Use this project when you need its
+Go2-specific message conversion, WebRTC camera injection, direct LAN WebSocket,
+prepared layout, or source code to extend.
+
+## Requirements
+
+- A Unitree Go2 EDU and a WendyOS computer on its `192.168.123.0/24` network
+- The WendyOS computer's own address on that network for DDS binding
+- Foxglove Studio or the Foxglove web app on a computer that can reach the
+  WendyOS device
+- Network access during the first build for Python, CycloneDDS, Unitree, and
+  Foxglove dependencies
+
+The Go2 camera permits one WebRTC client. Disconnect the Unitree mobile app or
+another camera client before expecting `/go2/camera`.
+
+## Run and verify
+
+```sh
+wendy run
 ```
-Go2 controller ──DDS──┐
-  192.168.123.161      │   ┌──────────────────────────────┐
-                       ├──▶│ bridge  (DDS → Foxglove WS)    │──▶ ws://<device>:8765 ──▶ Foxglove
-  Jetson .123.18  ─────┘   │   /go2/points /go2/pose /tf    │
-                           │   /go2/state /go2/uwb          │
-        front cam ──WebRTC─▶│ camera ──localhost JPEG──▶ /go2/camera
-                           └──────────────────────────────┘
+
+In Foxglove, open a **Foxglove WebSocket** connection to:
+
+```text
+ws://<go2-hostname>:{{.FOXGLOVE_PORT}}
 ```
 
-**Two containers, one connection.** The `camera` service does the heavy WebRTC
-decode in isolation and forwards JPEG frames to the `bridge` over localhost, so the
-camera appears on the *same* Foxglove connection — but if WebRTC fails, the 3D/LiDAR
-view stays up.
+Import `foxglove-layout.json` to configure the 3D, camera, state, and UWB
+panels. The bridge publishes:
 
-## Deploy
+| Channel | Source |
+|---|---|
+| `/go2/points` | `rt/utlidar/cloud_deskewed` by default |
+| `/go2/pose` and `/tf` | `rt/sportmodestate` |
+| `/go2/state` | Low-state and sport-mode values as JSON |
+| `/go2/uwb` | `rt/uwbstate` as JSON |
+| `/go2/camera` | Go2 WebRTC frames forwarded by the camera service |
 
-```bash
-wendy init --template go2-foxglove --language python --app-id go2viz
-cd go2viz
-wendy run --device <go2>.local
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `APP_ID` | required | App-group identifier |
+| `FOXGLOVE_PORT` | `8765` | Public Foxglove WebSocket port |
+| `GO2_IP` | `192.168.123.161` | Robot controller address for WebRTC |
+| `GO2_DDS_ADDRESS` | `192.168.123.18` | This WendyOS host's address on the robot network |
+
+`GO2_DDS_ADDRESS` is not the robot controller address. Binding to the host
+address prevents a multi-homed device from advertising the wrong DDS subnet.
+
+## How it works
+
+```text
+┌──────────────────┐  DDS   ┌──────────────────────────┐  WS  ┌──────────┐
+│ Go2 state/LiDAR  │ ─────▶ │ bridge                   │ ───▶ │ Foxglove │
+└──────────────────┘        │ channels + camera ingest │      └──────────┘
+                            └────────────┴─────────────┘
+                                         ▲
+                                         │ JPEG HTTP :8766
+┌──────────────────┐ WebRTC ┌────────────┴─────────────┐
+│ Go2 front camera │ ─────▶ │ camera                   │
+└──────────────────┘        └──────────────────────────┘
 ```
 
-Variables (`wendy init` prompts, or pass `--var`):
-- **GO2_IP** — the robot controller IP for the camera (default `192.168.123.161`).
-- **GO2_DDS_ADDRESS** — *this device's* IP on the robot LAN (default `192.168.123.18`).
-  See **Where does this run?** below.
-- **FOXGLOVE_PORT** — the WebSocket port (default `8765`).
+- `bridge/app.py` reads Unitree DDS topics, converts schemas, and owns the
+  Foxglove server on `{{.FOXGLOVE_PORT}}`.
+- `camera/app.py` receives WebRTC video and posts JPEG frames to the bridge's
+  local ingest port `8766`.
+- `wendy.json` defines both host-networked services and starts camera after the
+  bridge.
 
-## View in Foxglove
+The bridge remains useful when the camera service cannot connect; camera
+failure does not remove the DDS channels.
 
-1. Open Foxglove (desktop app or <https://app.foxglove.dev>).
-2. **Open connection → Foxglove WebSocket** → `ws://<device>:8765`.
-3. **Layout → Import from file…** → `foxglove-layout.json` (in this template) to get
-   the 3D + camera + plots + UWB panels pre-arranged.
+## Extend it
 
-You should see the point cloud under the moving robot, the camera image, battery/IMU
-and pose/foot-force plots, and the raw UWB message.
+- Add a DDS reader and Foxglove channel in `bridge/app.py`.
+- Add or change Unitree message conversion in `bridge/pointcloud2.py` or the
+  state callbacks.
+- Change camera rate or JPEG quality in `camera/app.py`.
+- Update `foxglove-layout.json` after adding or renaming channels.
 
-## Where does this run? (matters for GO2_DDS_ADDRESS)
+## Operations and troubleshooting
 
-DDS binds to **this machine's** IP on the robot LAN — set `GO2_DDS_ADDRESS` to it:
-- **On the Go2's onboard Jetson:** usually `192.168.123.18` (the default).
-- **On an external Jetson** bridged to the robot LAN: that machine's `192.168.123.x`.
+```sh
+wendy device logs {{.APP_ID}} --tail 200
+wendy device logs {{.APP_ID}} --service bridge --tail 150
+wendy device apps stop {{.APP_ID}}
+```
 
-Binding by **address** (not interface name) is deliberate — the Go2 Orin is
-multi-homed (`eth1` carries two subnets), so a name is ambiguous and DDS can
-advertise the wrong subnet.
-
-## Notes / caveats (unverified on a live EDU+ — verify on the robot)
-
-- **foxglove-sdk API**: the bridge uses the `foxglove-sdk` channel/schema classes;
-  pin the version you validate (`bridge/requirements.txt`).
-- **LiDAR**: assumes `rt/utlidar/cloud_deskewed` (override with `LIDAR_TOPIC`). The
-  EDU+ ships the **Livox MID-360**; confirm that topic is published on your firmware.
-- **Camera**: the Go2 allows **one** WebRTC client — if the Unitree phone app is
-  connected, the camera can't connect until it disconnects.
-- **arm64**: the Go2's Orin is arm64. Build with `--platform linux/arm64` if building
-  the images from an x86 host.
-- **Frames**: the 3D panel's *Display frame* is `base_link`; if the cloud or pose
-  looks off, switch the display frame in the panel settings.
+An empty DDS view usually means `GO2_DDS_ADDRESS` is not an address assigned to
+the WendyOS host or the expected topics are absent. A missing camera channel
+usually means the WebRTC slot is occupied or `GO2_IP` is wrong. In Foxglove, use
+`base_link` as the display frame for the supplied layout.

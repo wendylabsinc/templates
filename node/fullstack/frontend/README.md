@@ -1,73 +1,35 @@
-# React + TypeScript + Vite
+# Frontend development
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This React frontend is built into the Node fullstack application. The production
+Dockerfile runs `npm run build`; Express serves the compiled files and `/api/*`
+from the same origin.
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Before committing frontend changes, run:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm run lint
+npm run build
 ```
+
+The current ESLint config uses `tseslint.configs.recommended`, which does not
+perform type-aware linting. For stricter production checks, use a type-checked
+typescript-eslint config and point its parser options at the existing TypeScript
+project files.
+
+The development server can display the UI shell, but `vite.config.ts` has no API
+proxy. Add a local proxy for `/api` when working against a separately running
+backend on port `{{.PORT}}`.
+
+Pages live in `src/pages/`, navigation and routes in `src/App.tsx`, shared API
+and storage helpers in `src/lib/`, and reusable controls in `src/components/`.
+To add a feature, create the backend route first, add the page and API call, then
+register its route and navigation entry.
+
+This directory is based on `common/shadcn-vite-frontend`, with intentional
+camera/audio device adaptations. Do not replace it wholesale with the common
+tree.

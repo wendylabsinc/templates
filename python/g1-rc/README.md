@@ -1,121 +1,115 @@
-# g1-rc — browser remote control for the Unitree G1
+# {{.APP_ID}}
 
-Drive a Unitree G1 humanoid from any browser: live camera view full-bleed
-behind a touch joystick, posture and gesture buttons, arm presets, and a
-big STOP. One `wendy run` deploys all three services to the G1's onboard
-computer.
+A browser remote control for the Unitree G1. It combines a motion API, a camera
+stream, and a teleoperation UI with driving, posture, gesture, arm-preset,
+diagnostic, and stop controls.
 
+## Requirements
+
+- A Unitree G1 with the supported locomotion service and 29-DOF arm layout
+- A WendyOS computer connected to the G1 `192.168.123.0/24` robot network
+- A color camera reachable through V4L2, RTSP/HTTP MJPEG, or GStreamer; the G1
+  RealSense D435i color node is commonly `/dev/video4`
+- A clear test area, the G1 support gantry or hoist for initial testing, and
+  immediate access to the robot's hardware stop
+- Network access during the first build for Python and Unitree SDK dependencies
+
+## Run and verify
+
+Start with the robot supported and the area clear:
+
+```sh
+wendy run
 ```
-┌─────────────┐   HTTP :{{.RC_PORT}}   ┌────────┐  :3201  ┌─────────┐  DDS   ┌───────┐
-│   browser   │ ─────────────────────▶ │   rc   │ ──────▶ │ motion  │ ─────▶ │  G1   │
-│ (phone/mac) │                        │ (proxy)│  :8000  ├─────────┤        └───────┘
-└─────────────┘                        └────────┘ ──────▶ │ camera  │ ◀─ V4L2 (D435i)
-                                                          └─────────┘
+
+Open `http://<g1-hostname>:{{.RC_PORT}}`. Open **Diagnostics** before enabling
+motion. It checks the RC proxy, SDK connection, DDS interface, low-state and
+battery topics, locomotion state, camera device, and frame freshness.
+
+The safe initial sequence is **stand**, then **ready-to-walk**, then a small
+joystick or keyboard input. Press **STOP** and confirm motion stops before
+testing further controls.
+
+```text
+stand:
+┌──────────┐    ┌───────────┐    ┌──────────┐    ┌────────────────┐
+│ StopMove │ ─▶ │ "ai" mode │ ─▶ │ DAMP (1) │ ─▶ │ LOCK STAND (4) │
+└──────────┘    └───────────┘    └──────────┘    └────────────────┘
+
+ready-to-walk:
+┌────────────────┐    ┌───────────────┐
+│ LOCK STAND (4) │ ─▶ │ RUNNING (801) │
+└────────────────┘    └───────────────┘
 ```
 
-## Services
+## Configuration
 
-| Service | Port | What it does |
+| Variable | Default | Purpose |
 |---|---|---|
-| `motion` | 3201 | FastAPI wrapper around `unitree_sdk2_python`'s G1 `LocoClient`: velocity, posture (balance/stand/squat/sit/damp), gestures (wave/shake), and low-level arm presets over `rt/arm_sdk`. Velocity capped at 0.6/0.4/1.0 (vx/vy/vyaw) with a 1 s watchdog. |
-| `camera` | 8000 | OpenCV capture → MJPEG at `/stream/color`. Works with V4L2 indices/paths, RTSP/HTTP URLs, or a GStreamer pipeline. |
-| `rc` | `{{.RC_PORT}}` | Serves the teleop UI and proxies to the two services above; degrades cleanly if either is down. |
+| `APP_ID` | required | App-group identifier |
+| `RC_PORT` | `3500` | Browser UI and app readiness port |
+| `NETWORK_INTERFACE` | `auto` | Interface carrying a `192.168.123.x` address; set a name only if detection fails |
+| `CAMERA_SOURCE` | `4` | V4L2 index/path, RTSP or HTTP MJPEG URL, or GStreamer pipeline ending in `appsink` |
 
-## Deploy
+## How it works
 
-```bash
-wendy run --device <g1-hostname>
+```text
+┌─────────┐ HTTP ┌──────────┐ HTTP :3201 ┌────────┐ DDS  ┌────┐
+│ browser │ ◀──▶ │ rc proxy │ ─────────▶ │ motion │ ───▶ │ G1 │
+└─────────┘      └────┬─────┘            └────────┘      └────┘
+                      │ HTTP :8000
+                      ▼
+                  ┌────────┐ V4L2 ┌───────┐
+                  │ camera │ ◀─── │ D435i │
+                  └────────┘      └───────┘
 ```
 
-Then open `http://<g1-hostname>:{{.RC_PORT}}`. (The postStart hook tries to
-open it for you.)
+| Service | Port | Role |
+|---|---:|---|
+| `motion` | `3201` | Unitree SDK/DDS control, locomotion state, gestures, arm presets, limits, watchdog, and diagnostics |
+| `camera` | `8000` | OpenCV capture and MJPEG at `/stream/color` |
+| `rc` | `{{.RC_PORT}}` | Browser UI and proxy for both services |
 
-## If something is not working
+All services use host networking. The camera service also receives camera and
+USB access. The RC service starts after motion and camera; app readiness waits
+for its port.
 
-Open **Diagnostics** in the top status bar. The panel checks the RC proxy,
-Unitree SDK connection, DDS interface, low-state and battery topics, FSM
-readback, camera device, and frame freshness. A failed check includes the
-underlying error and a concrete next step. Browser request failures also stay
-visible in the panel instead of disappearing silently.
+## Extend it
 
-For the complete service traceback, run:
+- Add motion operations and safety checks in `motion/main.py` and
+  `motion/g1_controller.py`.
+- Add or adjust arm poses and joint limits in `motion/g1_arm.py`.
+- Change camera input handling in `camera/main.py`.
+- Add controls in `rc/web/index.html` and matching proxy routes in `rc/main.py`.
+- Keep the controller tests and static UI tests current when changing motion or
+  browser behavior.
 
-```bash
-wendy device logs {{.APP_ID}} --device <g1-hostname> --tail 200
+## Operations and troubleshooting
+
+```sh
+wendy device logs {{.APP_ID}} --tail 200
+wendy device logs {{.APP_ID}} --service motion --tail 200
+wendy device apps stop {{.APP_ID}}
 ```
 
-To narrow that output to one container, add `--service motion`,
-`--service camera`, or `--service rc`. Start with the first error in the
-failing service; later connection errors are often just a consequence of it.
-
-Common first-run failures:
-
-| UI check | Usually means | What to check |
-|---|---|---|
-| `motion · failed` | PC2 cannot reach the G1 robot bus or the Unitree SDK did not load | The robot is fully powered on; `NETWORK_INTERFACE` has a `192.168.123.x` address; the first motion traceback |
-| `lowstate_received: false` | DDS started but no G1 state samples arrived | Robot power, the robot-bus interface, and competing DDS configuration |
-| `fsm_fresh: false` | Unitree's locomotion service is not answering | Put the G1 in its normal powered-on control mode and inspect the motion events |
-| `camera · failed` | The selected V4L2 node is missing, busy, or not the color stream | Stop other camera apps and try the D435i color node, commonly `/dev/video4` |
-
-The motion service deliberately keeps its diagnostics API alive when SDK/DDS
-startup fails. Motion endpoints still return `503` and the browser stays
-fail-closed until the connection is healthy.
-
-## Driving
-
-Locomotion uses the G1's **native stand-up FSM** — the sequence verified on
-real hardware (`Start()`/`BalanceStand()` do not work on the firmware this
-template targets):
-
-```
-stand  = StopMove → "ai" mode → DAMP (FSM 1) → LOCK STAND (FSM 4)
-ready-to-walk = LOCK STAND (4) → RUNNING (FSM 801)
-```
-
-With the robot suspended or well clear of obstacles:
-
-1. `🧍 stand` → the robot stands (from an unexpected FSM state the UI asks
-   you to confirm crane support first, because the path passes through DAMP)
-2. `🚶 ready-to-walk` → enters the RUNNING policy; the fsm pill turns green
-3. Drive with the joystick / WASD (Q/E turn, shift to run, space = STOP).
-   Velocity commands are ignored (with an explicit message) outside RUNNING.
-   Opening the page does not send a movement command; input stays disabled until
-   the FSM pill reports `801 (walk-ready)`.
-
-`💤 damp` is the soft-stop: joints go compliant — the robot collapses if
-unsupported, so the UI always asks first. Use it whenever you're done or
-unsure.
+If motion is unavailable, verify the selected interface has a
+`192.168.123.x` address and inspect the first SDK or DDS error. If the camera is
+black or shows depth/infrared, select another D435i capture node. The motion API
+stays available for diagnostics and returns `503` while hardware initialization
+is unhealthy.
 
 ## Safety
 
-- **🛑 E-STOP latches**: it halts walking, fades the arms back to the
-  balance controller, and every motion endpoint returns 409 until you
-  press `clear e-stop`. It is deliberately *soft* (no torque cut — that
-  would drop the robot); the wireless remote's E-stop remains the
-  primary hardware stop.
-- Velocity commands stop automatically 1 s after the last input
-  (watchdog on the motion service).
-- Arm presets command only arm joints (15–28); legs and waist stay with
-  the robot's balance controller, blended in and out with a weight ramp.
-- First sessions: keep the robot on its gantry/hoist.
-
-## Known limitations (v1)
-
-- `unitree_sdk2_python` installs from `master` (the pinned SHA used by
-  go2-rc predates the G1 modules). Pin a SHA in `motion/Dockerfile` once
-  your build is verified.
-- Arm-preset joint indices assume the 29-DOF G1 with 7-DOF arms; verify
-  against `/state` on your firmware. If arm init fails, presets return
-  errors and the rest of the app keeps working.
-- Dex3 hands, audio, and lidar are not wired up.
-- `CAMERA_SOURCE` varies by unit: the RealSense D435i colour node is
-  typically `4`, but firmware/year differ. If the view is black or shows
-  a depth/IR stream, try other indices.
-
-## Variables
-
-| Variable | Default | Meaning |
-|---|---|---|
-| `RC_PORT` | 3500 | Teleop UI port |
-| `NETWORK_INTERFACE` | `auto` | Auto-detects the NIC with the robot's `192.168.123.0/24` address. Set the interface name only if detection fails. |
-| `CAMERA_SOURCE` | `4` | V4L2 index, `/dev/videoN`, `rtsp://`/`http://` URL, or GStreamer pipeline ending in `appsink` |
+- Keep the robot supported for first tests and clear people and obstacles from
+  its range of motion.
+- Use the wireless remote's hardware stop as the primary emergency stop.
+- The UI E-stop is a latched soft stop; it stops walking and releases arm
+  control, but it does not cut torque.
+- While the E-stop is latched, motion-causing endpoints return `409`. Press
+  **Clear E-stop** to release the latch. **Stop** and **Damp joints** stay
+  available while the latch is set because they make the robot safer.
+- Velocity is limited to ±0.6 m/s forward, ±0.4 m/s lateral, and ±1.0 rad/s yaw.
+  A one-second watchdog calls `StopMove` if commands stop.
+- **Damp** makes joints compliant and can cause an unsupported robot to fall.
+- Arm presets assume the 29-DOF G1 joint layout. Verify the layout before using
+  them on other hardware or firmware.

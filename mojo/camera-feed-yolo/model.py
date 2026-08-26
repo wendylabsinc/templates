@@ -5,10 +5,13 @@
 # artifacts precompiled one graph per process because a single compile peaks
 # at 5.7-7.2 GB that the 26.5 compiler never frees (MMF-023).
 #
-# Three graphs, chained at execute time:
-#   backbone:   (1, S, S, 3)            -> P3, P4, P5 feature maps
-#   pan_detect: P3, P4, P5              -> (1, NA, 144) raw head output
-#   decode:     (1, NA, 144)            -> (1, 84, NA) xywh(px) + class scores
+# Four graphs, chained at execute time (split keeps every part's compile
+# peak comfortably inside an 8 GB Docker VM — a combined PAN+detect part
+# peaked at 7.2 GB and got OOM-killed on marginal builders):
+#   backbone: (1, S, S, 3)   -> P3, P4, P5 feature maps
+#   pan:      P3, P4, P5     -> H15, H18, H21 (FPN/PAN feature maps)
+#   detect:   H15, H18, H21  -> (1, NA, 144) raw head output
+#   decode:   (1, NA, 144)   -> (1, 84, NA) xywh(px) + class scores
 # Postprocessing (confidence filter, NMS, unletterboxing) stays in Mojo.
 import os
 import subprocess
@@ -22,7 +25,7 @@ WEIGHTS_PATH = os.path.join(APP_DIR, "weights.npz")
 NC = 80
 REG_MAX = 16
 STRIDES = (8, 16, 32)
-PARTS = ("backbone", "pan_detect", "decode")
+PARTS = ("backbone", "pan", "detect", "decode")
 
 
 def num_anchors(imgsz: int) -> int:
@@ -232,9 +235,9 @@ class _GraphFactory:
                 p5 = self._sppf(x, "model.9")
                 g.output(p3, p4, p5)
             return g
-        if part == "pan_detect":
+        if part == "pan":
             with Graph(
-                "yolov8n_pan_detect",
+                "yolov8n_pan",
                 input_types=[
                     TensorType(DType.float32, (1, s // 8, s // 8, 64), device=self.dev),
                     TensorType(DType.float32, (1, s // 16, s // 16, 128), device=self.dev),
@@ -250,6 +253,18 @@ class _GraphFactory:
                 h18 = self._c2f(ops.concat([d, h12], axis=3), "model.18", 1, False)
                 d = self._conv(h18, "model.19", stride=2)
                 h21 = self._c2f(ops.concat([d, p5], axis=3), "model.21", 1, False)
+                g.output(h15, h18, h21)
+            return g
+        if part == "detect":
+            with Graph(
+                "yolov8n_detect",
+                input_types=[
+                    TensorType(DType.float32, (1, s // 8, s // 8, 64), device=self.dev),
+                    TensorType(DType.float32, (1, s // 16, s // 16, 128), device=self.dev),
+                    TensorType(DType.float32, (1, s // 32, s // 32, 256), device=self.dev),
+                ],
+            ) as g:
+                h15, h18, h21 = g.inputs
                 feats = ops.concat(
                     [
                         self._detect_level(h15, "model.22", 0),
@@ -351,8 +366,9 @@ class Session:
 
     def infer(self) -> None:
         p3, p4, p5 = self.models[0].execute(self.inp)
-        feats = self.models[1].execute(p3, p4, p5)[0]
-        result = self.models[2].execute(feats)[0].to_numpy()
+        h15, h18, h21 = self.models[1].execute(p3, p4, p5)
+        feats = self.models[2].execute(h15, h18, h21)[0]
+        result = self.models[3].execute(feats)[0].to_numpy()
         np.copyto(self.out, result[0])
 
 

@@ -7,7 +7,7 @@ substitute for the `realsense` HTTP server when the consumer (go2-RC)
 just wants `${URL}/stream/color`.
 
 Why a separate project from go2-Watchtower:
-- watchtower is a 3.3 GB ROS2/Cyclone/Foxglove image; this is a pure
+- watchtower is a 3.3 GB ROS2/Cyclone/Foxglove image; this is a focused
   FastAPI shim (~300 MB), so wendy run is fast enough to iterate on.
 - go2-RC reads MJPEG over HTTP, not DDS, so the watchtower output
   format wouldn't help it anyway.
@@ -29,8 +29,6 @@ WebRTC quirks (same scar tissue as watchtower's go2_video_bridge):
 """
 
 import asyncio
-import dataclasses
-import json
 import logging
 import os
 import queue
@@ -47,8 +45,6 @@ from unitree_webrtc_connect import (
     WebRTCConnectionMethod,
 )
 
-from audio import AudioOutPublisher
-from perception import LidarSubscriber, PerceptionState
 from webrtc_audio import OutboundPCMTrack, attach_outbound_audio
 
 GO2_IP = os.environ.get("GO2_IP", "192.168.123.161")
@@ -117,9 +113,6 @@ class CameraState:
 
 
 state = CameraState()
-perception_state = PerceptionState()
-lidar_sub = LidarSubscriber(perception_state)
-audio_out = AudioOutPublisher()
 # Set when WebRTC connects + audiohub enters megaphone mode. Used by
 # the /api/test_beep diagnostic to verify upload/play works without
 # fighting the WebRTC slot held by the running connection.
@@ -194,15 +187,6 @@ outbound_audio = OutboundPCMTrack()
 # Reference to the active aiortc PeerConnection — set after connect.
 # The /api/webrtc_info diagnostic introspects it for codec/SDP info.
 _pc_ref = None
-
-# WebSocket clients streaming perception JSON. Each client is a
-# (websocket, asyncio.Queue) pair — we push snapshots into every
-# client's queue from a single ticker, and each WS handler drains
-# its own queue. This keeps fan-out cheap and back-pressure local
-# (a slow client doesn't block the others).
-_ws_clients: "list[tuple[WebSocket, asyncio.Queue]]" = []
-_ws_clients_lock = threading.Lock()
-
 
 # -------------------------- WebRTC worker --------------------------
 
@@ -331,45 +315,6 @@ app = FastAPI(title="go2-camera", version="0.1.0")
 @app.on_event("startup")
 async def _startup() -> None:
     threading.Thread(target=_run_webrtc_thread, daemon=True).start()
-    lidar_sub.start()
-    asyncio.create_task(_perception_broadcaster())
-
-
-async def _perception_broadcaster() -> None:
-    """Push the latest perception snapshot to every connected WS client at 10 Hz.
-
-    We sample on a fixed cadence rather than reacting to every lidar
-    sample because the lidar runs at 10 Hz already; oversampling wastes
-    work, undersampling loses freshness. Snapshot dataclass → dict via
-    `dataclasses.asdict` → JSON once, reused for all clients.
-    """
-    period_s = 1.0 / 10.0
-    last_stamp = 0
-    while True:
-        await asyncio.sleep(period_s)
-        snap = perception_state.latest()
-        if not snap.have_data or snap.stamp_ns == last_stamp:
-            continue
-        last_stamp = snap.stamp_ns
-        payload = json.dumps(
-            dataclasses.asdict(snap), separators=(",", ":")
-        )
-        with _ws_clients_lock:
-            clients = list(_ws_clients)
-        for _, q in clients:
-            # Drop the oldest if a client is slow — perception is
-            # latest-frame-wins, no value in queuing stale frames.
-            try:
-                q.put_nowait(payload)
-            except asyncio.QueueFull:
-                try:
-                    q.get_nowait()
-                except asyncio.QueueEmpty:
-                    pass
-                try:
-                    q.put_nowait(payload)
-                except asyncio.QueueFull:
-                    pass
 
 
 @app.get("/health")
@@ -686,34 +631,6 @@ async def ws_talk(ws: WebSocket) -> None:
             n_frames / dt if dt > 0 else 0,
             (n_bytes / 1024) / dt if dt > 0 else 0,
         )
-
-
-@app.websocket("/ws/perception")
-async def ws_perception(ws: WebSocket) -> None:
-    """Stream perception snapshots (free_space + scan_xy) at 10 Hz.
-
-    Browser opens this WS, draws the lidar canvas + tints the vignette
-    based on `free_space_min_m`. On disconnect we reap the client from
-    the broadcast list.
-    """
-    await ws.accept()
-    q: asyncio.Queue = asyncio.Queue(maxsize=2)
-    with _ws_clients_lock:
-        _ws_clients.append((ws, q))
-    try:
-        while True:
-            payload = await q.get()
-            await ws.send_text(payload)
-    except (WebSocketDisconnect, RuntimeError):
-        # RuntimeError covers "Cannot call send once a close message
-        # has been sent" if the client closes between send + queue get.
-        pass
-    finally:
-        with _ws_clients_lock:
-            try:
-                _ws_clients.remove((ws, q))
-            except ValueError:
-                pass
 
 
 if __name__ == "__main__":

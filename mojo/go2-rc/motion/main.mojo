@@ -86,6 +86,14 @@ def handle_request(
             + "}",
         )
         return
+    if request_path == "/perception":
+        var perception = client.perception_json()
+        respond_json(
+            connection,
+            "200 OK",
+            perception if perception != "{}" else '{"have_data":false}',
+        )
+        return
     if request_method != "POST":
         respond_json(
             connection,

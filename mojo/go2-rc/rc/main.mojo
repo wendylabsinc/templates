@@ -1,8 +1,8 @@
 # Browser-facing control surface for the Unitree Go2 template.
 #
-# Mojo owns the static UI, MAX accelerator report, and Unitree motion service.
-# The camera remains Python because Mojo 1.0 has no WebRTC stack. The browser
-# talks to both host-network services through this same-origin proxy.
+# Mojo owns the static UI, health/routing surface, MAX accelerator report,
+# Unitree motion service, and lidar perception transport. Python is a narrow
+# media sidecar until the native GStreamer WebRTC bridge lands.
 from std.ffi import external_call, c_int, c_ssize_t
 from std.os import getenv
 from std.pathlib import Path
@@ -120,6 +120,8 @@ def motion_path(path: String) -> String:
         return String("/health")
     if path == "/api/state":
         return String("/state")
+    if path == "/api/perception":
+        return String("/perception")
     if path == "/api/velocity":
         return String("/velocity")
     if path == "/api/move":
@@ -178,6 +180,8 @@ def main() raises:
                 respond_json(connection, "200 OK", report)
             elif request.path == "/api/bark":
                 proxy_http(connection, 8000, request.method, "/api/bark", request.body)
+            elif request.path == "/api/camera-health":
+                proxy_http(connection, 8000, request.method, "/health", request.body)
             elif motion_path(request.path) != "":
                 proxy_http(
                     connection,

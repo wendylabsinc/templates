@@ -23,13 +23,17 @@ def test_mojo_variant_does_not_open_robot_apis_with_wildcard_cors():
     assert "Access-Control-Allow-Origin" not in motion
 
 
-def test_python_robot_services_stay_in_sync_between_variants():
-    for source in (PYTHON / "camera").iterdir():
-        if not source.is_file():
-            continue
-        copy = MOJO / "camera" / source.name
-        assert copy.is_file(), f"{copy} is missing"
-        assert copy.read_bytes() == source.read_bytes(), f"{copy} drifted from {source}"
+def test_mojo_camera_is_a_media_only_python_sidecar():
+    camera = MOJO / "camera"
+    assert not (camera / "audio.py").exists()
+    assert not (camera / "perception.py").exists()
+    assert not (camera / "cyclonedds.xml").exists()
+    requirements = (camera / "requirements.txt").read_text()
+    assert "cyclonedds" not in requirements
+    assert "numpy" not in requirements
+    source = (camera / "main.py").read_text()
+    assert "LidarSubscriber" not in source
+    assert 'websocket("/ws/perception")' not in source
 
 
 def test_mojo_motion_service_uses_native_unitree_bindings():
@@ -37,7 +41,8 @@ def test_mojo_motion_service_uses_native_unitree_bindings():
     dockerfile = (MOJO / "motion" / "Dockerfile").read_text()
     assert "from unitree_mojo import Go2Client" in source
     assert "https://github.com/wendylabsinc/unitree-mojo.git" in dockerfile
-    assert "ARG UNITREE_MOJO_REF=v0.1.0" in dockerfile
+    assert "ARG UNITREE_MOJO_REF=v0.2.0" in dockerfile
+    assert 'request_path == "/perception"' in source
     assert "-I /opt/unitree-mojo" in dockerfile
     assert "modular==26.5.0" in dockerfile
     assert "unitree_sdk2_python" not in dockerfile

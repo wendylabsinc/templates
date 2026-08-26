@@ -885,6 +885,14 @@
           null;
         batteryLabel.textContent =
           soc != null ? `Battery: ${Math.round(soc)}%` : "Battery: —";
+        const cameraHealth = await getJSON("/api/camera-health");
+        if (cameraHealth && cameraHealth.status === "ok") {
+          camDot.className = "dot ok";
+          camLabel.textContent = `Camera: live · ${cameraHealth.fps || 0} fps`;
+        } else if (!cameraHealth) {
+          camDot.className = "dot bad";
+          camLabel.textContent = "Camera: down";
+        }
       }
       pollStatus();
       setInterval(pollStatus, 2000);
@@ -1068,8 +1076,8 @@
       });
 
       // === Lidar radar ====================================================
-      // Connects to /api/perception/ws (proxied to go2-camera). Each
-      // message is a snapshot: { free_space[36], free_space_min_m,
+      // Polls the Mojo perception endpoint at the lidar's 10 Hz cadence. Each
+      // response is a snapshot: { free_space[36], free_space_min_m,
       // free_space_min_bearing_deg, scan_xy: [[x,y],...], ... }.
       //
       // Each scan is in the dog's CURRENT body frame at capture time.
@@ -1182,7 +1190,7 @@
       }
 
       // Animation: redraw every frame so the latest scan fades smoothly
-      // between WS messages. Cheap (≤500 points × 1 scan).
+      // between snapshots. Cheap (≤500 points × 1 scan).
       function loop() {
         applyStaleness();
         drawRadar();
@@ -1190,17 +1198,14 @@
       }
       requestAnimationFrame(loop);
 
-      // WebSocket with auto-reconnect. Same-origin, scheme follows the page.
-      function connectPerception() {
-        const url = `${CAMERA_WS_ORIGIN}/ws/perception`;
-        const sock = new WebSocket(url);
-        sock.addEventListener("message", (e) => {
-          try { applySnap(JSON.parse(e.data)); } catch { /* malformed — drop */ }
-        });
-        sock.addEventListener("close", () => setTimeout(connectPerception, 1500));
-        sock.addEventListener("error", () => sock.close());
+      // Latest-frame polling avoids a long-lived connection blocking the
+      // small Mojo HTTP service while preserving the prior 10 Hz update rate.
+      async function pollPerception() {
+        const snap = await getJSON("/api/perception");
+        if (snap && snap.have_data) applySnap(snap);
       }
-      connectPerception();
+      pollPerception();
+      setInterval(pollPerception, 100);
     </script>
   </body>
 </html>

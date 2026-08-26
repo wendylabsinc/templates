@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir modular==26.5.0
 
 ARG UNITREE_SDK2_REF=9754cd153af3da471b0fe5f3aa535e426fb11db3
-ARG UNITREE_MOJO_REF=v0.1.0
+ARG UNITREE_MOJO_REF=v0.2.0
 RUN git clone https://github.com/unitreerobotics/unitree_sdk2.git /opt/unitree_sdk2 \
     && git -C /opt/unitree_sdk2 checkout "${UNITREE_SDK2_REF}"
 RUN git clone --depth 1 --branch "${UNITREE_MOJO_REF}" \

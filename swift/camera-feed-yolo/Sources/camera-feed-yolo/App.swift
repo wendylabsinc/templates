@@ -493,7 +493,7 @@ actor MJPEGCamera {
         }
 
         process.terminate()
-        process.waitUntilExit()
+        await process.waitUntilExit()
     }
 }
 

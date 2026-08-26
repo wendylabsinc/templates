@@ -398,6 +398,12 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   compile fine, so the KNkni packing path is only reached — and only broken — for 1×1.
 - **Workaround (verified, exact):** lower 1×1/stride-1 convs to
   `reshape (1,H,W,C)→(H·W,C)` → `matmul` → bias `add` → `reshape` back; 0.0 output diff.
+- **GPU flip side (Jetson Orin, 2026-08-26):** the matmul lowering must NOT be used on GPU —
+  model setup dies with `kernel "transpose_mogg_8": CUDA call failed: CUDA_ERROR_ILLEGAL_ADDRESS`
+  while repacking a `[512,256] KN → [256,512] NK` matmul weight on the iGPU (likely the same
+  integrated-GPU assumption family as MMF-004; VMM already disabled). 1×1 `conv2d` itself
+  compiles and sets up fine on GPU. Net: the same graph needs per-device lowering — conv2d on
+  GPU, matmul on CPU — which also means CPU and GPU MEFs cannot share a graph definition.
 - **Upstream:** not yet filed.
 
 ## MMF-022: `resize_nearest` cannot reproduce torch/ONNX nearest-2× upsampling <a name="mmf-022"></a>

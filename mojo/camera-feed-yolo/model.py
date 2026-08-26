@@ -351,6 +351,12 @@ class Session:
         import ctypes
 
         ensure_compiled(imgsz, device)
+        self.device = device
+        self._accel = None
+        if device == "gpu":
+            from max.driver import Accelerator
+
+            self._accel = Accelerator()
         self.imgsz = imgsz
         self.na = num_anchors(imgsz)
         self.inp = np.ctypeslib.as_array(
@@ -368,10 +374,22 @@ class Session:
         self.infer()
 
     def infer(self) -> None:
-        p3, p4, p5 = self.models[0].execute(self.inp)
-        h15, h18, h21 = self.models[1].execute(p3, p4, p5)
-        feats = self.models[2].execute(h15, h18, h21)[0]
-        result = self.models[3].execute(feats)[0].to_numpy()
+        # execute() does not move host arrays to the GPU itself: the input
+        # must arrive as a device Buffer, and intermediates stay on-device
+        # through the chain; only the final decode output returns to host.
+        if self._accel is not None:
+            from max.driver import CPU, Buffer
+
+            x = Buffer.from_numpy(self.inp).to(self._accel)
+            p3, p4, p5 = self.models[0].execute(x)
+            h15, h18, h21 = self.models[1].execute(p3, p4, p5)
+            feats = self.models[2].execute(h15, h18, h21)[0]
+            result = self.models[3].execute(feats)[0].to(CPU()).to_numpy()
+        else:
+            p3, p4, p5 = self.models[0].execute(self.inp)
+            h15, h18, h21 = self.models[1].execute(p3, p4, p5)
+            feats = self.models[2].execute(h15, h18, h21)[0]
+            result = self.models[3].execute(feats)[0].to_numpy()
         np.copyto(self.out, result[0])
 
 

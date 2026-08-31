@@ -72,7 +72,8 @@
             "name": "voice-ai-pipecat",
             "description": "Voice AI assistant: Pipecat + Gemini 2.5 Flash + local faster-whisper STT + Piper TTS",
             "languages": [
-                "python"
+                "python",
+                "mojo"
             ]
         },
         {

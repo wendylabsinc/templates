@@ -19,7 +19,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 |---|---|---|---|---|
 | [MMF-001](#mmf-001) | No object-detection / classical-CV architectures in MAX | blocker | missing-feature | open |
 | [MMF-002](#mmf-002) | ONNX + TorchScript ingestion removed with no edge migration path | blocker | missing-feature | open |
-| [MMF-003](#mmf-003) | No speech modality; Whisper pipeline in-tree but unpublished | blocker | missing-feature | open |
+| [MMF-003](#mmf-003) | No speech modality; Whisper pipeline in-tree but unpublished | blocker | missing-feature | open — experiment done: no serving task to register against |
 | [MMF-004](#mmf-004) | iGPU VMM graph-capture failure (upstream #6961) **confirmed on Jetson Orin** | major | bug | workaround — verified |
 | [MMF-005](#mmf-005) | Driver ≥580 / CUDA 13 floor vs JetPack 6 (sm_87 ptxas escape hatch unconfirmed) | major | packaging | open — Spike 0 will confirm |
 | [MMF-006](#mmf-006) | Serving auto-tuner unsafe on unified-memory devices (hard-freeze class) | major | bug | workaround |
@@ -29,7 +29,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-010](#mmf-010) | No ESP32 / Xtensa / bare-metal Mojo target | blocker | missing-feature | open |
 | [MMF-011](#mmf-011) | No stdlib networking / HTTP / WebSocket | major | missing-feature | open |
 | [MMF-012](#mmf-012) | MAX Graph API is Python-only; Mojo-native graph building deprecated | major | missing-feature | open |
-| [MMF-013](#mmf-013) | Apple-GPU (Metal) serving coverage is a moving subset | minor | missing-feature | open — spike planned |
+| [MMF-013](#mmf-013) | Apple-GPU (Metal) serving coverage is a moving subset | minor | missing-feature | open — spiked 2026-08-31: serving works on Apple GPU |
 | [MMF-014](#mmf-014) | Calling Mojo from Python is beta (≤6 `PythonObject` args) | minor | missing-feature | open |
 | [MMF-015](#mmf-015) | No WebRTC / DDS / ROS 2 ecosystem reachable from Mojo | major | missing-feature | open |
 | [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified |
@@ -97,9 +97,23 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Detail:** the supported-models table lists no speech-to-text or text-to-speech modality. Yet
   `max/python/max/pipelines/architectures/whisper/` exists in the 26.5 tree (encoder.py, graph.py,
   model.py, weight_adapters.py, 2026 copyright) — unpublished and undocumented.
-- **Plan:** timeboxed experiment serving the in-tree Whisper via
-  `max serve --custom-architectures`; result (either way) recorded here.
-- **Upstream:** not yet filed. Ask: what is the status/roadmap of the in-tree whisper pipeline?
+- **Experiment (2026-08-31, MAX 26.5.0 wheel):** serving the in-tree Whisper via
+  `max serve --custom-architectures` is **not possible**, and the gap is structural, not a
+  missing registration:
+  - The in-tree module is a partial graph implementation only — `encoder.py`, `graph.py`,
+    `model.py`, `weight_adapters.py`. No `arch.py`/`__init__.py`, no tokenizer, no config, no
+    batch processor, and no context type (`model.py` carries a literal
+    `TODO: Need specific Context type`).
+  - `--custom-architectures` registers modules exposing an `ARCHITECTURES` list of
+    `SupportedArchitecture`, and every `SupportedArchitecture` must name a
+    `task: PipelineTask`. `PipelineTask` in 26.5 is exactly {`TEXT_GENERATION`,
+    `EMBEDDINGS_GENERATION`, `PIXEL_GENERATION`, `UNDEFINED`} — **there is no speech task**,
+    and `max/serve` has no `/v1/audio/*` route to expose one through.
+  - Conclusion: a speech leg on MAX needs upstream serving-layer work (a transcription task +
+    endpoint), not an out-of-tree architecture shim. The voice template's STT/TTS therefore
+    stay on faster-whisper/Piper (see `mojo/voice-ai-pipecat`).
+- **Upstream:** not yet filed. Ask: what is the status/roadmap of the in-tree whisper pipeline,
+  and is a speech `PipelineTask` + `/v1/audio/transcriptions` route planned?
 
 ## MMF-004: iGPU VMM allocator crash (upstream #6961) expected on Jetson <a name="mmf-004"></a>
 
@@ -264,8 +278,22 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Detail:** per Modular: Apple silicon GPU support (M1–M5) is "actively developing"; Llama,
   Gemma, Nemotron, FLUX.2 families manually run; not in nightly CI; unexercised architectures
   "fail during graph compilation rather than at inference time".
-- **Plan:** verification spike on the Mac decides whether an honest `mojo/mac-llm` ships;
-  outcome recorded here.
+- **Spike (2026-08-31, Apple Silicon Mac, macOS 26.6.2, Python 3.14.3):** MAX serving on the
+  Apple GPU **works**. `pip install modular` (26.5.0) is clean on macOS arm64;
+  `max.driver.accelerator_count()` = 1 and `Accelerator()` enumerates the Metal GPU.
+  `max serve` picks `gpu[0]` by default and served both models tried, full OpenAI surface
+  verified (`/v1/models`, `/v1/chat/completions` incl. streaming + usage):
+  - `HuggingFaceTB/SmolLM2-135M-Instruct` (bf16): compile 46 s cold, **~107 tok/s decode**,
+    TTFT 0.09–0.5 s, coherent greedy output. (High-temperature gibberish observed is the
+    135M model, not a Metal numerics issue — greedy output is clean.)
+  - `Qwen/Qwen2.5-1.5B-Instruct` (bf16): compile ~39 s, **~24.3 tok/s decode**, TTFT 0.20 s,
+    coherent.
+- **Outcome:** the MAX side of a `mojo/mac-llm` port is ready. What blocks the template is
+  Wendy-side, not Modular-side: darwin apps currently support only Xcode-scheme run targets
+  (`swift/mac-llm`'s shape) — there is no plain-process/pip runtime for a `max serve`
+  service on macOS (Appendix W, item 7). Port parked until that lands; the coverage caveat
+  above (families outside the manually-run set fail at graph compile) remains the risk to
+  re-test per model.
 
 ## MMF-014: Calling Mojo from Python is beta (≤6 args) <a name="mmf-014"></a>
 
@@ -526,14 +554,14 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mojo/camera-feed-yolo` | partial — **verified on Orin** (CPU 57 ms@224; GPU works but MMF-026-slow, opt-in) | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024/025; GPU perf → MMF-026 |
 | `mojo/fullstack` | portable w/ workarounds — **verified on Orin** (CRUD + system + camera/audio WS + in-process Mojo GPU kernel route, 122 GFLOPS) | React frontend (JS in every variant, not a gap); hand-rolled HTTP → MMF-011; SQLite via `wendydb` dlopen (no stdlib DB layer, same no-batteries class as MMF-011) |
 | `mojo/ros2-talker-listener` | portable w/ workarounds — **container-verified interop with real ROS 2 (both rmw vendors, both directions)** | libddsc FFI + hand-packed topic descriptor → MMF-015 (no hand CDR needed after all: descriptor-based topics let CycloneDDS serialize; no C shim either) |
-| `mojo/voice-ai` | partial (v1 = LLM leg only) | pipecat/STT/TTS stay Python → MMF-002/003 |
+| `mojo/voice-ai-pipecat` | partial — **v1 shipped: LLM leg on local `max serve`** (Qwen2.5-1.5B validated on Apple GPU; Orin group verification pending bench access) | pipecat/STT/TTS/wake-word stay Python → MMF-002/003 (Whisper experiment: no serving speech task to register against) |
 | `mojo/go2-initial-test` | partial, deferred (no robot) | hardware services → MMF-015 |
 | `mojo/go2-rc`, `mojo/g1-rc` | partial, deferred (no robot) | WebRTC camera, unitree SDK → MMF-015 |
 | `mojo/go2-foxglove` | partial, deferred (no robot) | DDS deserialization → MMF-015 |
 | `mojo/realsense-camera` | partial (needs D415) | librealsense FFI effort |
 | `mojo/rc-car` | partial, deferred (no car) | proprietary Angstrong SDK service |
 | `go2-rosbag` | not ported | ROS 2 tooling orchestration → MMF-015 |
-| `mac-llm` | pending spike | → MMF-013 |
+| `mac-llm` | MAX-ready (spike 2026-08-31: Apple-GPU serving verified) — parked on Wendy darwin runtime, Appendix W#7 | → MMF-013 |
 | `blink-led`, `hello-world` | **blocked** | → MMF-010 |
 
 ## Appendix W: WendyOS platform issues hit during porting (NOT for Modular)
@@ -578,6 +606,11 @@ CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
    scaffolded Mojo sources and the build fails on a parse error. Until the CLI fix ships,
    the Mojo templates read `PORT` from the environment (set via `ENV PORT={{.PORT}}` in
    the Dockerfile, which *is* substituted); one-line CLI fix proposed in WendyAgent.
+7. **(new, found 2026-08-31)** darwin (`platform: "darwin"`) apps support only Xcode-scheme
+   run targets (`"xcode": { "scheme": … }` + `run.args`, per `swift/mac-llm`) — there is no
+   plain-process or container run mode on the Mac agent. This is the only thing blocking a
+   `mojo/mac-llm` template: `max serve` on Apple Silicon itself works (MMF-013 spike) but
+   needs a way to run a pip-installed server process as a Wendy app on macOS.
 
 ## Appendix B: device validation log
 
@@ -747,6 +780,22 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     group's **per-service** `network: host` entitlements worked on a fresh create with
     agent 2026.08.22 (new data point for Appendix W#1, which had only app-level placement
     working on 2026.08.18).
+
+- **2026-08-31 · Apple Silicon Mac · macOS 26.6.2 · MAX 26.5.0 (pip, Python 3.14.3 venv) ·
+  mac-llm spike (MMF-013) + `mojo/voice-ai-pipecat` default-model validation:**
+  - `pip install modular` clean on macOS arm64; `max.driver` enumerates the Metal GPU
+    (`accelerator_count()=1`); `max serve` defaults to `gpu[0]`.
+  - `HuggingFaceTB/SmolLM2-135M-Instruct` (bf16, GPU): compile 46 s cold, ~107 tok/s decode,
+    TTFT 0.09–0.5 s. Default-temperature output from the 135M model is incoherent but greedy
+    (`temperature=0`) output is clean — model quality, not Metal numerics.
+  - `Qwen/Qwen2.5-1.5B-Instruct` (bf16, GPU): weights 4.3 min download, compile ~39 s,
+    ~24.3 tok/s decode, TTFT 0.20 s, coherent output. `/v1/models` +
+    `/v1/chat/completions` (streaming, usage) verified — the exact surface the voice
+    template's health watcher and LLM leg use, with the same explicit
+    batch/length/memory-utilization flags the templates bake in.
+  - Whisper `--custom-architectures` experiment (MMF-003): decided by wheel inspection, no
+    server run needed — no speech `PipelineTask`, no `/v1/audio/*` route, in-tree module is
+    graph-only with no arch/tokenizer/context. Structural serving-layer gap.
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

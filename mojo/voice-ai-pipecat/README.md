@@ -60,9 +60,19 @@ finishes compiling (watch `/api/status` — the health banner clears).
 
 ## Status
 
-Template assembled 2026-08-31; container-level verification on Apple Silicon
-(MAX 26.5.0): `Qwen/Qwen2.5-1.5B-Instruct` bf16 serves on the Apple GPU via
-`max serve`, coherent greedy output, ~107 tok/s decode for the 135M model class
-(see findings doc MMF-013 for the Mac serving spike). On-device group
-verification on the Orin Nano is pending bench access — the port follows the
-verified `mojo/llm` group shape exactly.
+Container-verified 2026-08-31 (Apple Silicon host, MAX 26.5.0):
+
+- both service images build (frontend npm build, full pip stack, model seeds);
+- `voice-app` boots to HTTPS with no audio hardware attached, `/api/settings`
+  shows the env-hook defaults (`llm_provider=ollama`,
+  `llm_model=Qwen/Qwen2.5-1.5B-Instruct`, MAX model first in the local picker);
+- the health watcher polls `:9012/v1/models` — red banner with the server down,
+  clears against a live OpenAI-compatible server;
+- the vendored `max-serve` container serves chat completions on `:9012`
+  (`modularai/SmolLM-135M-Instruct-FP32` on container CPU);
+- the default model `Qwen/Qwen2.5-1.5B-Instruct` (bf16) validated under
+  `max serve` on the Apple GPU: ~24 tok/s decode, TTFT 0.2 s, coherent output
+  (findings doc MMF-013).
+
+On-device group verification on the Orin Nano is pending bench access — the
+port follows the Orin-verified `mojo/llm` group shape exactly.

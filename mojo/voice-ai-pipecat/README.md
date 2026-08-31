@@ -74,5 +74,12 @@ Container-verified 2026-08-31 (Apple Silicon host, MAX 26.5.0):
   `max serve` on the Apple GPU: ~24 tok/s decode, TTFT 0.2 s, coherent output
   (findings doc MMF-013).
 
-On-device group verification on the Orin Nano is pending bench access — the
-port follows the Orin-verified `mojo/llm` group shape exactly.
+On-device (Orin Nano, WendyOS 0.18.2, 2026-08-31): the group deploys via
+`wendy init --branch` → `wendy run`; **voice-app verified over the LAN**
+(HTTPS on :9007, correct local-LLM defaults in `/api/settings`, health watcher
+correctly red while the LLM leg is down — which also proves the group's shared
+host networking). **max-serve is blocked by a WendyOS agent regression, not by
+this template**: the device's `dev` agent build re-introduces the ~256 MiB
+group-service memory cap (findings doc Appendix W#2) that agent 2026.08.22 had
+lifted — the identical serving image + model booted fine there as the
+`mojo/llm` group. Re-verify max-serve once the device runs a fixed agent.

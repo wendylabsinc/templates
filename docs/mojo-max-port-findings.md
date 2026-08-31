@@ -582,12 +582,19 @@ CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
    time. Per-service placement of the same entitlement did not work on 2026.08.18 (not
    re-tested since). Consequence: `python/llm`'s group (Ollama pull at runtime) cannot work
    as shipped on these agents either.
-2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22**: on
-   2026.08.18 MAX's estimator saw 254 MiB ("Model size exceeds available memory
-   (256.60 MiB > 76.25 MiB)") and Open WebUI never finished booting; on 2026.08.22 the same
-   group compiles and serves the model (no estimator complaint) and Open WebUI boots fully.
-   No memory/resources knob exists in wendy.json to have caused this; agent-side change
-   presumed.
+2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22,
+   REGRESSED on agent "dev" (observed 2026-08-31)**: on 2026.08.18 MAX's estimator saw
+   254 MiB ("Model size exceeds available memory (256.60 MiB > 76.25 MiB)") and Open WebUI
+   never finished booting; on 2026.08.22 the same group compiles and serves the model (no
+   estimator complaint) and Open WebUI boots fully. No memory/resources knob exists in
+   wendy.json to have caused this; agent-side change presumed. **2026-08-31, same Orin now
+   running agentVersion "dev"** (CLI 2026.08.22-053704): the `mojo/voice-ai-pipecat` group's
+   max-serve — same serving image lineage and same SmolLM2-135M that served fine on
+   2026.08.22 — crash-loops with "The model 256.60 MiB, activations 0.00 KiB, and signal
+   buffers 0.00 KiB don't leave room for KV cache", i.e. the container is again capped at a
+   few hundred MiB. The sibling voice-app service in the same group runs uncapped enough
+   (425 MB resident) to serve, and host networking still works (W#1 entitlement honored) —
+   the cap appears specific to whatever cgroup limit the dev agent assigns.
 3. Entitlement changes on an existing app group are not applied by `wendy run` redeploy —
    a full `apps remove` + fresh deploy is required. (Not re-tested on 2026.08.22; the
    workaround in W1 was applied via remove + fresh create.)

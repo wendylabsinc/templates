@@ -15,6 +15,11 @@
 #     (MMF-004 / upstream #6961) on Orin and Thor.
 #   - The serving auto-tuner double-counts unified memory; explicit
 #     batch/length/memory flags are mandatory on Jetson (MMF-006).
+#     The utilization fraction applies to FREE memory at boot: 0.6 (not
+#     mojo/llm's 0.3) because this group's default model is ~3.1 GB bf16
+#     and 0.3×free can never fit it on an 8 GB Orin — and co-resident
+#     GPU apps shrink the budget further (MMF-006 addendum: a 1.7 GB
+#     CUDA neighbor made even a 256 MiB model fail its memory plan).
 #   - XDG_CACHE_HOME must live on the persist volume: graph compile is
 #     ~400 s cold vs ~19 s warm on an Orin Nano (MMF-018).
 FROM python:3.12-slim-bookworm
@@ -36,7 +41,7 @@ ENV HF_HOME=/models/hf \
     MAX_MODEL="{{.MAX_MODEL}}" \
     MAX_LENGTH=2048 \
     MAX_BATCH_SIZE=1 \
-    MAX_DEVICE_MEMORY_UTILIZATION=0.3 \
+    MAX_DEVICE_MEMORY_UTILIZATION=0.6 \
     MAX_PORT=9012
 
 RUN mkdir -p /models

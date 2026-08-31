@@ -178,8 +178,22 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Workaround:** always pass explicit `--max-batch-size`, `--max-length`, and a *much smaller
   than intuitive* `--device-memory-utilization` on unified-memory devices. Our Pattern C
   templates hard-require these flags.
+- **Addendum (2026-08-31, Orin Nano 8GB, `mojo/voice-ai-pipecat`): the utilization fraction is
+  relative to FREE memory at boot, so co-tenancy makes startup order-dependent.** With a
+  co-resident CUDA app holding 1.7 GB (`mojo/gpu-hello` demo), max-serve failed its memory
+  plan for a **256 MiB** model ("The model 256.60 MiB, activations 0.00 KiB, and signal
+  buffers 0.00 KiB don't leave room for KV cache") at `--device-memory-utilization 0.3` and
+  crash-looped identically across agent/container recreations; stopping the co-resident app
+  let the same configuration boot and serve (~30 tok/s incl. prefill). The error message
+  nowhere states the computed budget or that it derives from *free* unified memory — it
+  reads like a model-size problem and sent us chasing a container-memory cap. Sizing corollary
+  (same math): at 0.3×free, an 8 GB Orin can never plan a 3.1 GB bf16 model like
+  Qwen2.5-1.5B-Instruct even on an idle device — larger-model templates must raise the
+  fraction (the voice template ships 0.6 for its LLM-centric group).
 - **Upstream:** discussed in Modular forum (DGX Spark thread, 2026-03). Ask: can the tuner detect
-  unified memory (`CU_DEVICE_ATTRIBUTE_INTEGRATED`) and default conservatively?
+  unified memory (`CU_DEVICE_ATTRIBUTE_INTEGRATED`) and default conservatively? And can the
+  estimator error state the computed budget, the free-memory basis, and the utilization
+  fraction, so co-tenancy failures are diagnosable from the message?
 
 ## MMF-007: "ARM64 Neoverse N1 or newer" vs Jetson Orin's Cortex-A78AE <a name="mmf-007"></a>
 
@@ -582,19 +596,22 @@ CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
    time. Per-service placement of the same entitlement did not work on 2026.08.18 (not
    re-tested since). Consequence: `python/llm`'s group (Ollama pull at runtime) cannot work
    as shipped on these agents either.
-2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22,
-   REGRESSED on agent "dev" (observed 2026-08-31)**: on 2026.08.18 MAX's estimator saw
-   254 MiB ("Model size exceeds available memory (256.60 MiB > 76.25 MiB)") and Open WebUI
-   never finished booting; on 2026.08.22 the same group compiles and serves the model (no
-   estimator complaint) and Open WebUI boots fully. No memory/resources knob exists in
-   wendy.json to have caused this; agent-side change presumed. **2026-08-31, same Orin now
-   running agentVersion "dev"** (CLI 2026.08.22-053704): the `mojo/voice-ai-pipecat` group's
-   max-serve — same serving image lineage and same SmolLM2-135M that served fine on
-   2026.08.22 — crash-loops with "The model 256.60 MiB, activations 0.00 KiB, and signal
-   buffers 0.00 KiB don't leave room for KV cache", i.e. the container is again capped at a
-   few hundred MiB. The sibling voice-app service in the same group runs uncapped enough
-   (425 MB resident) to serve, and host networking still works (W#1 entitlement honored) —
-   the cap appears specific to whatever cgroup limit the dev agent assigns.
+2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22; a
+   suspected 2026-08-31 regression was DISPROVEN (it was memory pressure, see MMF-006
+   addendum)**: on 2026.08.18 MAX's estimator saw 254 MiB ("Model size exceeds available
+   memory (256.60 MiB > 76.25 MiB)") and Open WebUI never finished booting; on 2026.08.22
+   the same group compiles and serves the model (no estimator complaint) and Open WebUI
+   boots fully. No memory/resources knob exists in wendy.json to have caused this;
+   agent-side change presumed. **2026-08-31 postscript:** the `mojo/voice-ai-pipecat`
+   group's max-serve crash-looped with a cap-like estimator error ("model 256.60 MiB …
+   don't leave room for KV cache") on fresh creates under three agent builds ("dev",
+   2026.08.25-111847, 2026.08.22-032001) — initially recorded here as a cap regression.
+   Root cause was co-tenancy, not a cgroup cap: a co-resident CUDA app (`gpu-hello-test`)
+   held 1.7 GB of the Orin's unified memory, and MAX budgets
+   `--device-memory-utilization × FREE memory` at boot; stopping that app let the same
+   fresh create boot and serve with no agent change. No cap reproduced on any of the three
+   agent builds. (The device ended up on 2026.08.22-032001, the current "Latest" release —
+   every newer agent build is a GitHub pre-release.)
 3. Entitlement changes on an existing app group are not applied by `wendy run` redeploy —
    a full `apps remove` + fresh deploy is required. (Not re-tested on 2026.08.22; the
    workaround in W1 was applied via remove + fresh create.)

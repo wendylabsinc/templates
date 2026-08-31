@@ -74,12 +74,15 @@ Container-verified 2026-08-31 (Apple Silicon host, MAX 26.5.0):
   `max serve` on the Apple GPU: ~24 tok/s decode, TTFT 0.2 s, coherent output
   (findings doc MMF-013).
 
-On-device (Orin Nano, WendyOS 0.18.2, 2026-08-31): the group deploys via
-`wendy init --branch` → `wendy run`; **voice-app verified over the LAN**
-(HTTPS on :9007, correct local-LLM defaults in `/api/settings`, health watcher
-correctly red while the LLM leg is down — which also proves the group's shared
-host networking). **max-serve is blocked by a WendyOS agent regression, not by
-this template**: the device's `dev` agent build re-introduces the ~256 MiB
-group-service memory cap (findings doc Appendix W#2) that agent 2026.08.22 had
-lifted — the identical serving image + model booted fine there as the
-`mojo/llm` group. Re-verify max-serve once the device runs a fixed agent.
+On-device (Orin Nano 8 GB, WendyOS 0.18.2, agent 2026.08.22-032001,
+2026-08-31): the group deploys via `wendy init --branch` → `wendy run` and
+**both services verified over the LAN** — voice-app on :9007 (correct
+local-LLM defaults in `/api/settings`, health watcher green against the live
+LLM leg, proving the group's shared host networking), max-serve serving
+coherent completions on :9012 from the Orin GPU (~30 tok/s incl. prefill,
+SmolLM2-135M). One hard-won sizing lesson (MMF-006 addendum):
+`--device-memory-utilization` is a fraction of **free** unified memory at
+boot, so a co-resident CUDA app holding 1.7 GB made even the 256 MiB model
+fail its memory plan — stop heavy GPU neighbors before first boot. That same
+math is why this template ships utilization 0.6 (a 3.1 GB default model can
+never fit in 0.3×free on an 8 GB Orin).

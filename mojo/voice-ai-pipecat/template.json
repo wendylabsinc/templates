@@ -19,9 +19,9 @@
         },
         {
             "name": "MAX_MODEL",
-            "description": "Hugging Face model repo served by MAX as the local LLM (bf16 safetensors for GPU hosts; FP32-native models for CPU-only hosts)",
+            "description": "Hugging Face model repo served by MAX as the local LLM (bf16 safetensors for GPU hosts; FP32-native models for CPU-only hosts). Default fits an 8 GB Orin alongside the voice pipeline; use Qwen2.5-1.5B+ on 16 GB+ devices.",
             "type": "string",
-            "default": "Qwen/Qwen2.5-1.5B-Instruct",
+            "default": "Qwen/Qwen2.5-0.5B-Instruct",
             "prompt": "Local LLM model (HF repo)"
         },
         {

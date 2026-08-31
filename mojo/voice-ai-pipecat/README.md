@@ -39,8 +39,8 @@ the point of this port — each leg that stays Python maps to a filed finding in
 
 | Device | Suggested MAX_MODEL |
 | --- | --- |
-| Jetson Orin Nano 8 GB | `Qwen/Qwen2.5-1.5B-Instruct` (default) or `HuggingFaceTB/SmolLM2-135M-Instruct` (fastest, toy-grade answers) |
-| Jetson AGX Orin / Thor | `Qwen/Qwen2.5-7B-Instruct`-class bf16 models |
+| Jetson Orin Nano 8 GB | `Qwen/Qwen2.5-0.5B-Instruct` (default, verified) or `HuggingFaceTB/SmolLM2-135M-Instruct` (fastest, toy-grade answers). **Not 1.5B**: 2.88 GiB bf16 fails its memory plan at 0.6×free with the voice app resident (MMF-006 addendum) |
+| Jetson AGX Orin / Thor (16 GB+) | `Qwen/Qwen2.5-1.5B-Instruct` up to `Qwen2.5-7B`-class bf16 models |
 | CPU-only (RPi 5 etc.) | `modularai/SmolLM-135M-Instruct-FP32` — bf16 repos cannot serve on CPU in MAX 26.5 (MMF-016) |
 
 A voice loop wants time-to-first-token more than throughput: the app streams LLM
@@ -76,13 +76,15 @@ Container-verified 2026-08-31 (Apple Silicon host, MAX 26.5.0):
 
 On-device (Orin Nano 8 GB, WendyOS 0.18.2, agent 2026.08.22-032001,
 2026-08-31): the group deploys via `wendy init --branch` → `wendy run` and
-**both services verified over the LAN** — voice-app on :9007 (correct
-local-LLM defaults in `/api/settings`, health watcher green against the live
-LLM leg, proving the group's shared host networking), max-serve serving
-coherent completions on :9012 from the Orin GPU (~30 tok/s incl. prefill,
-SmolLM2-135M). One hard-won sizing lesson (MMF-006 addendum):
+**both services verified over the LAN with the shipped defaults** — voice-app
+on :9007 (correct local-LLM defaults in `/api/settings`, health watcher green
+against the live LLM leg, proving the group's shared host networking), and
+max-serve serving `Qwen/Qwen2.5-0.5B-Instruct` on :9012 from the Orin GPU:
+first boot ~450 s (1 GB download + graph compile), coherent completions at
+**~35 tok/s incl. prefill** (SmolLM2-135M measured ~30 tok/s the same way).
+Two hard-won sizing lessons (MMF-006 addendum):
 `--device-memory-utilization` is a fraction of **free** unified memory at
-boot, so a co-resident CUDA app holding 1.7 GB made even the 256 MiB model
-fail its memory plan — stop heavy GPU neighbors before first boot. That same
-math is why this template ships utilization 0.6 (a 3.1 GB default model can
-never fit in 0.3×free on an 8 GB Orin).
+boot — a co-resident CUDA app holding 1.7 GB made even a 256 MiB model fail
+its memory plan (stop heavy GPU neighbors before first boot), and
+Qwen2.5-1.5B (2.88 GiB bf16) does not plan at 0.6×free with the voice app
+resident, which is why the default is the 0.5B.

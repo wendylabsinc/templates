@@ -1,0 +1,41 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        { "type": "network", "mode": "host" }
+    ],
+    "services": {
+        "voice-app": {
+            "context": "./voice-app",
+            "entitlements": [
+                { "type": "audio" },
+                {
+                    "type": "persist",
+                    "name": "{{.APP_ID}}-models",
+                    "path": "/models"
+                }
+            ]
+        },
+        "max-serve": {
+            "context": "./max-serve",
+            "entitlements": [
+                { "type": "gpu" },
+                {
+                    "type": "persist",
+                    "name": "{{.APP_ID}}-llm-models",
+                    "path": "/models"
+                }
+            ]
+        }
+    },
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 300
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser https://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

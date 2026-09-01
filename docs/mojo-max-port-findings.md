@@ -6,7 +6,7 @@ Issues and limitations encountered (or identified up front) while porting WendyT
 - **Stack versions:** MAX 26.5.0 / Mojo 1.0.0 (2026-08-11 release), nightlies noted per finding
 - **Research/report date:** 2026-08-23 (living document — updated as ports land)
 - **Device matrix:** Jetson Orin Nano (sm_87), Jetson AGX Thor (sm_110, JetPack 7.x),
-  Raspberry Pi 5 (aarch64 CPU), Apple Silicon Mac (Metal)
+  Raspberry Pi 5 (aarch64 CPU), Apple Silicon Mac (Metal) — **all four validated** (Appendix B)
 - **Ports:** `mojo/` directories in this repo
 
 Severity: **blocker** (prevents a port), **major** (forces a workaround or non-Mojo fallback),
@@ -19,7 +19,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 |---|---|---|---|---|
 | [MMF-001](#mmf-001) | No object-detection / classical-CV architectures in MAX | blocker | missing-feature | open |
 | [MMF-002](#mmf-002) | ONNX + TorchScript ingestion removed with no edge migration path | blocker | missing-feature | open |
-| [MMF-003](#mmf-003) | No speech modality; Whisper pipeline in-tree but unpublished | blocker | missing-feature | open |
+| [MMF-003](#mmf-003) | No speech modality; Whisper pipeline in-tree but unpublished | blocker | missing-feature | open — experiment done: no serving task to register against |
 | [MMF-004](#mmf-004) | iGPU VMM graph-capture failure (upstream #6961) **confirmed on Jetson Orin** | major | bug | workaround — verified |
 | [MMF-005](#mmf-005) | Driver ≥580 / CUDA 13 floor vs JetPack 6 (sm_87 ptxas escape hatch unconfirmed) | major | packaging | open — Spike 0 will confirm |
 | [MMF-006](#mmf-006) | Serving auto-tuner unsafe on unified-memory devices (hard-freeze class) | major | bug | workaround |
@@ -29,10 +29,10 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-010](#mmf-010) | No ESP32 / Xtensa / bare-metal Mojo target | blocker | missing-feature | open |
 | [MMF-011](#mmf-011) | No stdlib networking / HTTP / WebSocket | major | missing-feature | open |
 | [MMF-012](#mmf-012) | MAX Graph API is Python-only; Mojo-native graph building deprecated | major | missing-feature | open |
-| [MMF-013](#mmf-013) | Apple-GPU (Metal) serving coverage is a moving subset | minor | missing-feature | open — spike planned |
+| [MMF-013](#mmf-013) | Apple-GPU (Metal) serving coverage is a moving subset | minor | missing-feature | open — spiked 2026-08-31: serving works on Apple GPU |
 | [MMF-014](#mmf-014) | Calling Mojo from Python is beta (≤6 `PythonObject` args) | minor | missing-feature | open |
 | [MMF-015](#mmf-015) | No WebRTC / DDS / ROS 2 ecosystem reachable from Mojo | major | missing-feature | open |
-| [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified |
+| [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified; FP32-model workaround hardware-verified on RPi 5 |
 | [MMF-017](#mmf-017) | `max serve` JIT-compiles Mojo at runtime → undocumented C-toolchain requirement, opaque failure | minor | docs | open — verified |
 | [MMF-018](#mmf-018) | Cold-start graph compile is minutes on edge CPUs; no precompiled-cache distribution | minor | missing-feature | open — verified |
 | [MMF-019](#mmf-019) | `max serve` requires network access to start a fully-cached model (offline crash-loop) | major | bug | open — verified |
@@ -42,7 +42,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-023](#mmf-023) | Graph compilation needs 5.7–7.2 GB per YOLOv8n sub-graph, never freed; inline weight constants OOM the folder | major | bug | workaround — verified |
 | [MMF-024](#mmf-024) | MEF store is positional per-session; non-default `InferenceSession` options conflict with the implicit global context | minor | bug/docs | workaround — verified |
 | [MMF-025](#mmf-025) | `weights_registry` weights fault iGPU kernels with `CUDA_ERROR_ILLEGAL_ADDRESS` | major | bug | workaround — verified |
-| [MMF-026](#mmf-026) | GPU conv kernels ~10-40× below par on Jetson Orin (522 ms YOLOv8n@320 vs 57 ms on the same device's CPU) | major | performance | open — verified |
+| [MMF-026](#mmf-026) | GPU conv kernels far below par on Jetson iGPUs — Orin 522 ms & Thor 325–366 ms YOLOv8n@320 vs ~57 ms on the same devices' CPUs | major | performance | open — verified on sm_87 + sm_110 |
 
 ---
 
@@ -97,9 +97,23 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Detail:** the supported-models table lists no speech-to-text or text-to-speech modality. Yet
   `max/python/max/pipelines/architectures/whisper/` exists in the 26.5 tree (encoder.py, graph.py,
   model.py, weight_adapters.py, 2026 copyright) — unpublished and undocumented.
-- **Plan:** timeboxed experiment serving the in-tree Whisper via
-  `max serve --custom-architectures`; result (either way) recorded here.
-- **Upstream:** not yet filed. Ask: what is the status/roadmap of the in-tree whisper pipeline?
+- **Experiment (2026-08-31, MAX 26.5.0 wheel):** serving the in-tree Whisper via
+  `max serve --custom-architectures` is **not possible**, and the gap is structural, not a
+  missing registration:
+  - The in-tree module is a partial graph implementation only — `encoder.py`, `graph.py`,
+    `model.py`, `weight_adapters.py`. No `arch.py`/`__init__.py`, no tokenizer, no config, no
+    batch processor, and no context type (`model.py` carries a literal
+    `TODO: Need specific Context type`).
+  - `--custom-architectures` registers modules exposing an `ARCHITECTURES` list of
+    `SupportedArchitecture`, and every `SupportedArchitecture` must name a
+    `task: PipelineTask`. `PipelineTask` in 26.5 is exactly {`TEXT_GENERATION`,
+    `EMBEDDINGS_GENERATION`, `PIXEL_GENERATION`, `UNDEFINED`} — **there is no speech task**,
+    and `max/serve` has no `/v1/audio/*` route to expose one through.
+  - Conclusion: a speech leg on MAX needs upstream serving-layer work (a transcription task +
+    endpoint), not an out-of-tree architecture shim. The voice template's STT/TTS therefore
+    stay on faster-whisper/Piper (see `mojo/voice-ai-pipecat`).
+- **Upstream:** not yet filed. Ask: what is the status/roadmap of the in-tree whisper pipeline,
+  and is a speech `PipelineTask` + `/v1/audio/transcriptions` route planned?
 
 ## MMF-004: iGPU VMM allocator crash (upstream #6961) expected on Jetson <a name="mmf-004"></a>
 
@@ -164,8 +178,22 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Workaround:** always pass explicit `--max-batch-size`, `--max-length`, and a *much smaller
   than intuitive* `--device-memory-utilization` on unified-memory devices. Our Pattern C
   templates hard-require these flags.
+- **Addendum (2026-08-31, Orin Nano 8GB, `mojo/voice-ai-pipecat`): the utilization fraction is
+  relative to FREE memory at boot, so co-tenancy makes startup order-dependent.** With a
+  co-resident CUDA app holding 1.7 GB (`mojo/gpu-hello` demo), max-serve failed its memory
+  plan for a **256 MiB** model ("The model 256.60 MiB, activations 0.00 KiB, and signal
+  buffers 0.00 KiB don't leave room for KV cache") at `--device-memory-utilization 0.3` and
+  crash-looped identically across agent/container recreations; stopping the co-resident app
+  let the same configuration boot and serve (~30 tok/s incl. prefill). The error message
+  nowhere states the computed budget or that it derives from *free* unified memory — it
+  reads like a model-size problem and sent us chasing a container-memory cap. Sizing corollary
+  (same math): at 0.3×free, an 8 GB Orin can never plan a 3.1 GB bf16 model like
+  Qwen2.5-1.5B-Instruct even on an idle device — larger-model templates must raise the
+  fraction (the voice template ships 0.6 for its LLM-centric group).
 - **Upstream:** discussed in Modular forum (DGX Spark thread, 2026-03). Ask: can the tuner detect
-  unified memory (`CU_DEVICE_ATTRIBUTE_INTEGRATED`) and default conservatively?
+  unified memory (`CU_DEVICE_ATTRIBUTE_INTEGRATED`) and default conservatively? And can the
+  estimator error state the computed budget, the free-memory basis, and the utilization
+  fraction, so co-tenancy failures are diagnosable from the message?
 
 ## MMF-007: "ARM64 Neoverse N1 or newer" vs Jetson Orin's Cortex-A78AE <a name="mmf-007"></a>
 
@@ -264,8 +292,22 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 - **Detail:** per Modular: Apple silicon GPU support (M1–M5) is "actively developing"; Llama,
   Gemma, Nemotron, FLUX.2 families manually run; not in nightly CI; unexercised architectures
   "fail during graph compilation rather than at inference time".
-- **Plan:** verification spike on the Mac decides whether an honest `mojo/mac-llm` ships;
-  outcome recorded here.
+- **Spike (2026-08-31, Apple Silicon Mac, macOS 26.6.2, Python 3.14.3):** MAX serving on the
+  Apple GPU **works**. `pip install modular` (26.5.0) is clean on macOS arm64;
+  `max.driver.accelerator_count()` = 1 and `Accelerator()` enumerates the Metal GPU.
+  `max serve` picks `gpu[0]` by default and served both models tried, full OpenAI surface
+  verified (`/v1/models`, `/v1/chat/completions` incl. streaming + usage):
+  - `HuggingFaceTB/SmolLM2-135M-Instruct` (bf16): compile 46 s cold, **~107 tok/s decode**,
+    TTFT 0.09–0.5 s, coherent greedy output. (High-temperature gibberish observed is the
+    135M model, not a Metal numerics issue — greedy output is clean.)
+  - `Qwen/Qwen2.5-1.5B-Instruct` (bf16): compile ~39 s, **~24.3 tok/s decode**, TTFT 0.20 s,
+    coherent.
+- **Outcome:** the MAX side of a `mojo/mac-llm` port is ready. What blocks the template is
+  Wendy-side, not Modular-side: darwin apps currently support only Xcode-scheme run targets
+  (`swift/mac-llm`'s shape) — there is no plain-process/pip runtime for a `max serve`
+  service on macOS (Appendix W, item 7). Port parked until that lands; the coverage caveat
+  above (families outside the manually-run set fail at graph compile) remains the risk to
+  re-test per model.
 
 ## MMF-014: Calling Mojo from Python is beta (≤6 args) <a name="mmf-014"></a>
 
@@ -290,7 +332,9 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 
 - **Template(s):** `mojo/llm` CPU path (RPi 5, Jetson CPU fallback) · **Devices:** linux/arm64
   (verified in Docker on Apple Silicon; CPU-only config-validation code paths, device-agnostic)
-- **Category:** bug · **Severity:** major — **verified 2026-08-23 on MAX 26.5.0**
+- **Category:** bug · **Severity:** major — **verified 2026-08-23 on MAX 26.5.0**; workaround
+  (serve an FP32-native repo, e.g. `modularai/SmolLM-135M-Instruct-FP32`) **hardware-verified
+  on a Raspberry Pi 5 2026-09-01** — 3.0–3.6 tok/s end-to-end through the `mojo/llm` template
 - **Detail:** serving a standard bf16-safetensors LLM repo on an aarch64 CPU fails in every
   encoding configuration. Repro (`HuggingFaceTB/SmolLM2-135M-Instruct`, Llama arch, bf16
   safetensors only):
@@ -479,7 +523,8 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 
 ## MMF-025: `weights_registry` weights fault iGPU kernels (`CUDA_ERROR_ILLEGAL_ADDRESS`) <a name="mmf-025"></a>
 
-- **Template(s):** `mojo/camera-feed-yolo` · **Jetson Orin Nano (sm_87), MAX 26.5.0, JP7.2** — **2026-08-26**
+- **Template(s):** `mojo/camera-feed-yolo` · **Jetson Orin Nano (sm_87) 2026-08-26 + Jetson AGX
+  Thor (sm_110) 2026-09-01, MAX 26.5.0, JP7.2 both**
 - **Category:** bug · **Severity:** major (silently poisons any GPU graph fed by a registry)
 - **Repro:** build the YOLOv8n graph for GPU with every weight as
   `ops.constant_external` + `weights_registry` at `session.load()`; execute on the Orin.
@@ -496,9 +541,10 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   opposites per device.)
 - **Upstream:** not yet filed.
 
-## MMF-026: GPU conv kernels ~10-40× below par on Jetson Orin <a name="mmf-026"></a>
+## MMF-026: GPU conv kernels far below par on Jetson iGPUs (Orin sm_87 + Thor sm_110) <a name="mmf-026"></a>
 
-- **Template(s):** `mojo/camera-feed-yolo` · **Jetson Orin Nano (sm_87), MAX 26.5.0, JP7.2** — **2026-08-26**
+- **Template(s):** `mojo/camera-feed-yolo` · **Jetson Orin Nano (sm_87) 2026-08-26 + Jetson AGX
+  Thor (sm_110) 2026-09-01, MAX 26.5.0, JP7.2 both**
 - **Category:** performance · **Severity:** major (GPU CV is slower than the same device's CPU)
 - **Detail:** with MMF-025 worked around, the hand-built YOLOv8n runs end-to-end on the Orin
   GPU but at **522 ms/frame (imgsz 320)** — per-stage (forced syncs): backbone 194 ms, PAN
@@ -508,6 +554,12 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   workloads — `mojo/llm` serving — perform fine on this device). The **same model on the same
   device's CPU runs 57 ms at imgsz 224**, so our template defaults to CPU and leaves
   `YOLO_DEVICE=gpu` opt-in.
+- **CONFIRMED on Thor sm_110, 2026-09-01:** same graph, compiled on-device for sm_110, runs
+  at **325–366 ms/frame (imgsz 320)** with the GPU at 97–98 % utilization but only ~5 W —
+  busy yet doing little math — while the same device's CPU runs 58 ms at imgsz 224. Two
+  different iGPU generations (Ampere and Blackwell-class), same order-of-magnitude gap, and
+  matmul serving workloads are fast on both (198–239 tok/s `max serve` on the same Thor GPU)
+  — this is a conv-path issue, not a general-iGPU issue.
 - **Expected:** GPU convolution comfortably ahead of CPU on a 1024-core Ampere iGPU.
 - **Upstream:** not yet filed. Ask: is there a tuned conv path for sm_8x, and is the
   fallback-kernel selection observable/loggable?
@@ -523,17 +575,17 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mojo/simple-api` | portable w/ workarounds | hand-rolled HTTP → MMF-011 |
 | `mojo/camera-feed` | portable w/ workarounds | → MMF-011 |
 | `mojo/audio` | portable w/ workarounds | → MMF-011 |
-| `mojo/camera-feed-yolo` | partial — **verified on Orin** (CPU 57 ms@224; GPU works but MMF-026-slow, opt-in) | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024/025; GPU perf → MMF-026 |
-| `mojo/fullstack` | portable w/ workarounds — **verified on Orin** (CRUD + system + camera/audio WS + in-process Mojo GPU kernel route, 122 GFLOPS) | React frontend (JS in every variant, not a gap); hand-rolled HTTP → MMF-011; SQLite via `wendydb` dlopen (no stdlib DB layer, same no-batteries class as MMF-011) |
-| `mojo/ros2-talker-listener` | portable w/ workarounds — **container-verified interop with real ROS 2 (both rmw vendors, both directions)** | libddsc FFI + hand-packed topic descriptor → MMF-015 (no hand CDR needed after all: descriptor-based topics let CycloneDDS serialize; no C shim either) |
-| `mojo/voice-ai` | partial (v1 = LLM leg only) | pipecat/STT/TTS stay Python → MMF-002/003 |
+| `mojo/camera-feed-yolo` | partial — **verified on Orin + Thor + RPi 5** (CPU 57–58 ms@224 Jetsons, 136–265 ms Pi — clears the ≥3 FPS bar; GPU works but MMF-026-slow on both Jetsons, opt-in) | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024/025; GPU perf → MMF-026 |
+| `mojo/fullstack` | portable w/ workarounds — **verified on Orin + Thor + RPi 5** (CRUD + system + camera/audio WS + in-process Mojo GPU kernel route, 122/114 GFLOPS) | React frontend (JS in every variant, not a gap); hand-rolled HTTP → MMF-011; SQLite via `wendydb` dlopen (no stdlib DB layer, same no-batteries class as MMF-011) |
+| `mojo/ros2-talker-listener` | portable w/ workarounds — **container-verified interop with real ROS 2 (both rmw vendors, both directions); device-verified on Orin + Thor + RPi 5 (1 Hz, zero drops; Pi↔Thor cross-device DDS observed)** | libddsc FFI + hand-packed topic descriptor → MMF-015 (no hand CDR needed after all: descriptor-based topics let CycloneDDS serialize; no C shim either) |
+| `mojo/voice-ai-pipecat` | partial — **v1 shipped: LLM leg on local `max serve`, e2e-verified on Orin (~35 tok/s) + Thor (151–182 tok/s) with the shipped 0.5B default, and on RPi 5 CPU with the FP32 SmolLM** (1.5B validated on Apple GPU) | pipecat/STT/TTS/wake-word stay Python → MMF-002/003 (Whisper experiment: no serving speech task to register against) |
 | `mojo/go2-initial-test` | partial, deferred (no robot) | hardware services → MMF-015 |
 | `mojo/go2-rc`, `mojo/g1-rc` | partial, deferred (no robot) | WebRTC camera, unitree SDK → MMF-015 |
 | `mojo/go2-foxglove` | partial, deferred (no robot) | DDS deserialization → MMF-015 |
 | `mojo/realsense-camera` | partial (needs D415) | librealsense FFI effort |
 | `mojo/rc-car` | partial, deferred (no car) | proprietary Angstrong SDK service |
 | `go2-rosbag` | not ported | ROS 2 tooling orchestration → MMF-015 |
-| `mac-llm` | pending spike | → MMF-013 |
+| `mac-llm` | MAX-ready (spike 2026-08-31: Apple-GPU serving verified) — parked on Wendy darwin runtime, Appendix W#7 | → MMF-013 |
 | `blink-led`, `hello-world` | **blocked** | → MMF-010 |
 
 ## Appendix W: WendyOS platform issues hit during porting (NOT for Modular)
@@ -554,12 +606,22 @@ CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
    time. Per-service placement of the same entitlement did not work on 2026.08.18 (not
    re-tested since). Consequence: `python/llm`'s group (Ollama pull at runtime) cannot work
    as shipped on these agents either.
-2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22**: on
-   2026.08.18 MAX's estimator saw 254 MiB ("Model size exceeds available memory
-   (256.60 MiB > 76.25 MiB)") and Open WebUI never finished booting; on 2026.08.22 the same
-   group compiles and serves the model (no estimator complaint) and Open WebUI boots fully.
-   No memory/resources knob exists in wendy.json to have caused this; agent-side change
-   presumed.
+2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22; a
+   suspected 2026-08-31 regression was DISPROVEN (it was memory pressure, see MMF-006
+   addendum)**: on 2026.08.18 MAX's estimator saw 254 MiB ("Model size exceeds available
+   memory (256.60 MiB > 76.25 MiB)") and Open WebUI never finished booting; on 2026.08.22
+   the same group compiles and serves the model (no estimator complaint) and Open WebUI
+   boots fully. No memory/resources knob exists in wendy.json to have caused this;
+   agent-side change presumed. **2026-08-31 postscript:** the `mojo/voice-ai-pipecat`
+   group's max-serve crash-looped with a cap-like estimator error ("model 256.60 MiB …
+   don't leave room for KV cache") on fresh creates under three agent builds ("dev",
+   2026.08.25-111847, 2026.08.22-032001) — initially recorded here as a cap regression.
+   Root cause was co-tenancy, not a cgroup cap: a co-resident CUDA app (`gpu-hello-test`)
+   held 1.7 GB of the Orin's unified memory, and MAX budgets
+   `--device-memory-utilization × FREE memory` at boot; stopping that app let the same
+   fresh create boot and serve with no agent change. No cap reproduced on any of the three
+   agent builds. (The device ended up on 2026.08.22-032001, the current "Latest" release —
+   every newer agent build is a GitHub pre-release.)
 3. Entitlement changes on an existing app group are not applied by `wendy run` redeploy —
    a full `apps remove` + fresh deploy is required. (Not re-tested on 2026.08.22; the
    workaround in W1 was applied via remove + fresh create.)
@@ -578,6 +640,19 @@ CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
    scaffolded Mojo sources and the build fails on a parse error. Until the CLI fix ships,
    the Mojo templates read `PORT` from the environment (set via `ENV PORT={{.PORT}}` in
    the Dockerfile, which *is* substituted); one-line CLI fix proposed in WendyAgent.
+7. **(new, found 2026-08-31)** darwin (`platform: "darwin"`) apps support only Xcode-scheme
+   run targets (`"xcode": { "scheme": … }` + `run.args`, per `swift/mac-llm`) — there is no
+   plain-process or container run mode on the Mac agent. This is the only thing blocking a
+   `mojo/mac-llm` template: `max serve` on Apple Silicon itself works (MMF-013 spike) but
+   needs a way to run a pip-installed server process as a Wendy app on macOS.
+8. **(new, found 2026-09-01)** `wendy device info` reports the read-only rootfs A/B slot as
+   the device's disk. On a freshly flashed Jetson AGX Thor (WendyOS 0.19.1, agent
+   2026.08.25-111847, CLI 2026.08.31-061402) it shows `diskTotalBytes` 11.1 GiB /
+   `diskUsedBytes` 5.96 GiB — exactly `/dev/nvme0n1p1` (slot A) — while the containerd
+   overlay where images and volumes actually live is **912 GB with 862 GB free** (`df` run
+   via `wendy device attach <app> -- df -h` inside a running app container). A 1 TB device
+   reads as 57 % full and nearly out of space. The MCP `device_info` presumably surfaces the
+   same field. Fix: report the container-storage / data partition (ideally both).
 
 ## Appendix B: device validation log
 
@@ -747,6 +822,151 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     group's **per-service** `network: host` entitlements worked on a fresh create with
     agent 2026.08.22 (new data point for Appendix W#1, which had only app-level placement
     working on 2026.08.18).
+
+- **2026-08-31 · Apple Silicon Mac · macOS 26.6.2 · MAX 26.5.0 (pip, Python 3.14.3 venv) ·
+  mac-llm spike (MMF-013) + `mojo/voice-ai-pipecat` default-model validation:**
+  - `pip install modular` clean on macOS arm64; `max.driver` enumerates the Metal GPU
+    (`accelerator_count()=1`); `max serve` defaults to `gpu[0]`.
+  - `HuggingFaceTB/SmolLM2-135M-Instruct` (bf16, GPU): compile 46 s cold, ~107 tok/s decode,
+    TTFT 0.09–0.5 s. Default-temperature output from the 135M model is incoherent but greedy
+    (`temperature=0`) output is clean — model quality, not Metal numerics.
+  - `Qwen/Qwen2.5-1.5B-Instruct` (bf16, GPU): weights 4.3 min download, compile ~39 s,
+    ~24.3 tok/s decode, TTFT 0.20 s, coherent output. `/v1/models` +
+    `/v1/chat/completions` (streaming, usage) verified — the exact surface the voice
+    template's health watcher and LLM leg use, with the same explicit
+    batch/length/memory-utilization flags the templates bake in.
+  - Whisper `--custom-architectures` experiment (MMF-003): decided by wheel inspection, no
+    server run needed — no speech `PipelineTask`, no `/v1/audio/*` route, in-tree module is
+    graph-only with no arch/tokenizer/context. Structural serving-layer gap.
+
+- **2026-09-01 · Jetson AGX Thor (sm_110) "witty-swift" · WendyOS 0.19.1 (blacksail) ·
+  JetPack 7.2 / L4T r39.2 (kernel 6.8.12-l4t-r39.2.0) · CUDA 13.2 · 122.8 GiB unified ·
+  agent 2026.08.25-111847 / CLI 2026.08.31-061402 · MAX 26.5.0 / Mojo 1.0.0 ·
+  `mojo/gpu-hello` (first Thor validation; template unchanged from the stack tip):**
+  - **Mojo GPU kernel WORKS on sm_110.** The CLI injected `WENDY_PLATFORM=nvidia-jetson` /
+    `WENDY_DEVICE_TYPE=jetson-agx-thor`, the Dockerfile case selected
+    `--target-accelerator sm_110`, AOT cross-compile on the arm64 Mac build host took 2.4 s,
+    and the unmodified binary ran on-device: device "NVIDIA Thor", api cuda ·
+    `vector_add n=1048576 errors=0 first_launch_us=22257 steady_us=325` ·
+    `matmul n=512 errors=0 time_s=0.00231 gflops=116.4` · status OK.
+  - vs Orin Nano (2026-08-23): first launch 22 ms vs 62 ms (faster context init); steady
+    launch+sync 325 µs vs 239 µs; naive fp32 matmul 116 vs 146 GFLOPS. The naive kernel is
+    a smoke test, not a throughput benchmark, and the Thor's power mode / clock governor was
+    not checked — not filed as a finding.
+  - MMF-005: JetPack 7.2 ships driver ≥580 / CUDA 13.2 natively, so MAX's bundled ptxas path
+    applies on Thor exactly as on the JP7.2 Orin; the JP6 escape-hatch question stays
+    untested (no JP6 device on the bench).
+  - Deploy path: `wendy init --branch ed/mojo-voice-ai-pipecat --language mojo` →
+    `wendy run --device wendyos-witty-swift.local --detach`; built + pushed in 1m50 (103 MB
+    via chunk-diff), readiness on :9020. `wendy device shell` is "not supported by this
+    agent version" on the Thor; `wendy device attach <app> -- <cmd>` works for exec.
+  - `mojo/simple-api` (:9001): GET `/` → `{"message": "hello-world"}`, `/health` ok,
+    POST `/items` echoes with correct JSON string escaping — full endpoint parity.
+  - `mojo/camera-feed` (:9003) · Brio 101: `/cameras` exact (`/dev/video0` "Brio 101"); WS
+    `/stream` delivered **282 complete JPEGs in 10.0 s = 28.2 fps at 1280×720** (~36
+    KB/frame, SOI/EOI verified), first frame 0.63 s after connect, and `/debug
+    frames_sent=282` — zero drops; camera released when the last client disconnects.
+    Image build on the Mac took 5 s (layer cache from the Orin-era builds held).
+  - `mojo/audio` (:9004) · Brio 101 mic: `/microphones` enumerates the Thor's 8 APE PCMs
+    (hw:1,0–7) + the Brio (hw:2,0) and the app lands on the Brio. First connect produced
+    audio only after ~3.4 s — consistent with the APE preroll walk the template does on
+    Orin — then streamed real-time; a second connect started in 0.15 s and held **19.7
+    chunks/s = 31.8 KB/s ≈ 16.0 kHz S16LE** over 15 s. Thor's APE exposes 8 clockless
+    PCMs vs Orin's layout, and the wendyaudio preroll check handles them unchanged.
+  - `mojo/fullstack` (:9006): dashboard served; CRUD **exact sibling status-code parity**
+    (POST valid → 201 with row, GET → 200, missing id → 404 `{"detail":"Car not found"}`,
+    missing field → 422, DELETE → 204); `/api/gpu` ran the in-process AOT **sm_110** matmul
+    first call in 0.63 s — `"NVIDIA Thor" · cuda / Mojo DeviceContext · matmul 512x512
+    verified, 114 GFLOPS` (vs 122 GFLOPS on Orin, same naive-kernel caveat as gpu-hello).
+    Camera WS `/api/camera/stream` 27.9 fps 1280×720 and audio `/api/audio/stream`
+    real-time ≈16.2 kHz after the same first-connect preroll walk — parity with the
+    standalone apps while they are co-resident on the device. `/api/system` reports the
+    true container-storage disk (911 GB / 843 GB free) — corroborates Appendix W#8.
+  - `mojo/ros2-talker-listener` (device group, `network` per-service): talker → listener
+    exchange live on `/chatter` at 1 Hz with **~18 ms** publish→heard latency and zero
+    sequence gaps (`wendy device logs`, service-tagged) — Orin showed 1 Hz / ~25 ms.
+    Second data point for per-service network entitlements (Appendix W#1) on agent
+    2026.08.25.
+  - `mojo/llm` two-service group (:9010 Open WebUI / :9011 max-serve) — **`max serve`
+    WORKS on Thor sm_110 via the shipped template, unmodified**: cold boot (fresh volume:
+    SmolLM2-135M download over wlan0 + compile) ~3.5 min to ready; then
+    `/v1/chat/completions` at **198 tok/s** warm (128-tok requests: 96 → 168 → 198 incl
+    prefill) and **239 tok/s** on a 512-token completion — GPU confirmed at 82–97 %
+    utilization / 7–11 W during decode (idle 0 % / 2 W). Open WebUI up on :9010. Baked
+    `MODULAR_DEVICE_CONTEXT_MEMORY_MANAGER_VMM=0` + `--no-device-graph-capture` (MMF-004)
+    did not need touching. vs Orin group-form ~15 tok/s (same model/template) and the
+    2026-07-31 manual MAX-nightly Thor run at ~140 tok/s. Group networking fine on agent
+    2026.08.25 (W#1 third data point: egress to HF + LAN ingress with app-level host mode).
+    Bigger-model datapoint: **Qwen2.5-1.5B-Instruct bf16 serves at 57–66 tok/s** on the Thor
+    GPU (106-token completions incl prefill; Mac Metal: ~24 — and it cannot fit the 8 GB
+    Orin at all). Deploy lore confirmed: `wendy run --env MAX_MODEL=…` on the multi-service
+    group left max-serve on the old model (warm-started the cached one in ~20 s); the
+    working model-change path is re-scaffold via `wendy init --var MAX_MODEL=…` after
+    `wendy device apps remove` — same conclusion as the 2026-08-31 Orin session.
+  - `mojo/camera-feed-yolo` (:9005) — **CPU (shipped default)**: 28.6 fps 1280×720 stream,
+    inference **58.5 ms @ imgsz 224** (29 inferences during a 12 s stream; Orin CPU: 57 ms —
+    the 14-core Thor CPU is no faster per-inference on this graph), detections JSON flowing
+    (0 objects in the empty bench scene). **GPU (`wendy run --env YOLO_DEVICE=gpu`)**: the
+    baked MEF is sm_87, so first boot did the designed one-time on-device sm_110 compile —
+    ~10.5 min from container start to serving. Then: inference **325–366 ms @ imgsz 320**
+    with GPU at 97–98 % util but only ~5 W (kernels busy, not doing math), stream degraded
+    to 19.4 fps. **MMF-026 REPRODUCES on sm_110** — GPU ~6× slower than the same device's
+    CPU (at larger imgsz); the conv underperformance is general Jetson-iGPU, not
+    Orin-specific. CPU default vindicated on both boards. MMF-004 note: all Thor MAX runs
+    used the baked VMM=0 + no-graph-capture workarounds (no crash-path isolation attempted
+    on Thor; the workaround plus everything-works is the data point).
+  - `mojo/voice-ai-pipecat` two-service group (:9007 app HTTPS / :9012 vendored max-serve):
+    scoped-v1 seam verified with shipped defaults — `/api/settings` correct,
+    Qwen2.5-0.5B-Instruct served on the Thor GPU at **151–182 tok/s** (256-token runs, incl
+    prefill; Orin: ~35, Mac Metal 1.5B: ~24). `/api/status` reports the graceful
+    `device_missing` idle state (PyAudio finds no `default` device in-container) — the full
+    wake-word→STT→LLM→TTS turn stays bench-untested here too (no speaker attached), same as
+    the Orin session.
+
+- **2026-09-01 · Raspberry Pi 5 (4-core aarch64, 8 GB, no CUDA) "precise-tulip" · WendyOS
+  0.19.1 (blacksail) · 100 GB SD container storage · MAX 26.5.0 / Mojo 1.0.0 · CPU-only
+  validation of the full template set (unmodified stack tip; Brio 101 moved to the Pi):**
+  - Deploys were near-instant for the Pattern-A set (3–10 s build+push each — full Mac
+    layer cache from the Jetson-era builds; the aarch64 images are device-agnostic).
+    `wendy device info` reports `hasGpu: true / gpuVendor: None` on a Pi (VideoCore
+    presumably) — worth a look alongside Appendix W#8's disk fix.
+  - `mojo/gpu-hello`: the designed CPU-only path — `wendy init` build args selected no
+    `--target-accelerator`, report serves `gpu: not available (built without accelerator
+    support)` + deploy-to-GPU hint, `/health` 200. The `gpu` entitlement does not block
+    creation on a GPU-less device.
+  - `mojo/simple-api`: full endpoint parity (GET `/`, `/health`, POST `/items`).
+  - `mojo/camera-feed` · Brio 101: 27.8 fps 1280×720, complete JPEGs, first frame 0.40 s.
+  - `mojo/audio` · Brio 101 mic: real-time ≈16.0 kHz S16LE; **no preroll walk on the Pi**
+    (no clockless APE PCMs — `/microphones` is just the Brio) so first audio in 0.65 s.
+  - `mojo/fullstack`: CRUD status parity (201/404/422/204); `/api/gpu` returns the
+    **designed thermal-fallback** `{"available":true,"name":"ARM GPU","temperature":…}` on
+    a non-CUDA host (per `gpudiag.mojo` + its unit test) — no kernel run, graceful; camera
+    stream 28.4 fps, audio stream real-time ≈16.1 kHz; `/api/system` correct (8 GB, 99 GB
+    disk).
+  - `mojo/camera-feed-yolo` (baked CPU MEF, imgsz 224): stream 26.8 fps 1280×720 with
+    inference **136–265 ms** on the 4-core Pi CPU (vs 57–58 ms on Orin/Thor CPUs) —
+    **clears the plan's ≥3 FPS@224 RPi5 bar** (3.8–7.3 inferences/s at that latency; the
+    app's ~2/s inference cadence is the same by-design throttle as on the Jetsons).
+  - `mojo/ros2-talker-listener`: local exchange verified at 1 Hz via service-tagged logs —
+    **and the Pi's listener also heard the Thor's talker across the LAN** (sequence numbers
+    from both streams interleaved; default DDS domain, CycloneDDS multicast, `network` per
+    service) — first cross-device wendydds↔wendydds interop datapoint, for free.
+  - `mojo/llm` two-service group — **`max serve --devices=cpu` WORKS on the Pi** with the
+    README's CPU model (`modularai/SmolLM-135M-Instruct-FP32`, the MMF-016 route, selected
+    via `wendy init --var MAX_MODEL=…`): cold start ~17 min (weights + CPU graph compile,
+    MMF-018 class), then `/v1/chat/completions` at **3.0–3.6 tok/s** (128-token runs) and
+    Open WebUI up on :9010. Device auto-pick chose CPU (`max.driver` probe). The bf16
+    default was not re-run here — MMF-016 stands as documented.
+  - `mojo/voice-ai-pipecat` two-service group: scoped-v1 seam verified on CPU —
+    `/api/settings` correct, vendored max-serve serving the FP32 SmolLM (selected via
+    `--var MAX_MODEL=…` per the MMF-016 CPU rule) with completions flowing (~1.3 tok/s on a
+    short run with the llm group co-resident; both CPU servers fit in 8 GB, compile peak
+    6.7 GiB). `/api/status` graceful `device_missing` (dummy audio output on the Pi bench);
+    full voice turn untested, as on every bench so far.
+  - `wendy device ros2` sidecar tooling cannot see these apps — neither the Swift nor the
+    Mojo ros2 template declares `frameworks.ros2` in wendy.json (shared nice-to-have, not a
+    port gap). Log-stream note: `wendy device logs` never self-terminates; bound it with a
+    kill-watchdog when scripting.
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

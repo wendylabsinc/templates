@@ -32,6 +32,7 @@ A minimal HTTP API with JSON endpoints (`GET /`, `GET /health`, `POST /items`), 
 | Rust | Axum 0.8.8 | 4001 | `rust/simple-api/` |
 | Node | TypeScript + Express | 5001 | `node/simple-api/` |
 | C++ | Drogon 1.9.12 | 7001 | `cpp/simple-api/` |
+| Mojo | Pure Mojo — `wendynet` HTTP on libc sockets | 9001 | `mojo/simple-api/` |
 
 Each template includes:
 - `wendy.json` — network entitlement, TCP readiness probe, postStart hook
@@ -42,9 +43,19 @@ Each template includes:
 
 Fullstack app with API backend + React/shadcn dashboard-01 frontend. Multi-stage Dockerfile builds the React frontend then serves it alongside a CRUD API for cars.
 
+The Mojo variant (`mojo/fullstack/`, default port 9006) rebuilds the backend in pure Mojo — `wendynet` HTTP/WS, SQLite via `wendydb`, camera/audio streams via `wendycam`/`wendyaudio`, plus a Mojo GPU kernel route — with the React frontend unchanged.
+
 ### camera-feed
 
 Live webcam streaming via GStreamer MJPEG over WebSocket. Entitlements: network (host), camera, gpu.
+
+The Mojo variant (`mojo/camera-feed/`, default port 9003) captures V4L2 MJPEG in pure Mojo via `wendycam` — no GStreamer.
+
+### camera-feed-yolo
+
+Live camera feed with YOLOv8 COCO object detection overlay (GPU on Jetson, CPU elsewhere), available in every language directory.
+
+The Mojo variant (`mojo/camera-feed-yolo/`, default port 9005) runs YOLOv8n as a hand-built MAX graph — no ONNX runtime or PyTorch on-device; Mojo does capture, pre/post-processing (via `wendyvision`), and serving.
 
 ### realsense-camera
 
@@ -59,21 +70,26 @@ The shared viewer frontend source lives at `common/realsense-camera-frontend/` a
 
 ### ros2-talker-listener
 
-The canonical ROS 2 `talker` / `listener` demo in Swift, built on
-[swift-ros2](https://github.com/youtalk/swift-ros2) — a pure-Swift ROS 2 client
-that speaks the ROS 2 (Humble) wire format directly over CycloneDDS, with no
-`rclcpp` or C++ interop. A two-service app group: a `std_msgs/String` publisher
-on `/chatter` and a subscriber that logs what it hears.
+The canonical ROS 2 `talker` / `listener` demo, speaking the ROS 2 (Humble) wire
+format directly over CycloneDDS with no `rclcpp` or C++ interop. A two-service
+app group: a `std_msgs/String` publisher on `/chatter` and a subscriber that
+logs what it hears. The Swift variant is built on
+[swift-ros2](https://github.com/youtalk/swift-ros2), a pure-Swift ROS 2 client.
 
 | Language | Framework | Directory |
 |----------|-----------|-----------|
 | Swift | swift-ros2 1.2.0 + CycloneDDS (ROS 2 Humble) | `swift/ros2-talker-listener/` |
+| Mojo | `wendydds` + CycloneDDS (ROS 2 Humble) | `mojo/ros2-talker-listener/` |
+
+The Mojo variant speaks the same wire format through `common/mojo/wendydds` — a pure-Mojo CycloneDDS binding with no C shim — and interops with stock `ros2` CLI nodes in both directions.
 
 Deploy with `wendy run` and watch the exchange via `wendy device logs`.
 
 ### audio
 
 Live audio waveform visualization with GStreamer mic capture. Streams raw PCM S16LE 16kHz mono over WebSocket. Includes sample .wav files for playback. Entitlements: network (host), audio.
+
+The Mojo variant (`mojo/audio/`, default port 9004) captures and plays ALSA PCM in pure Mojo via `wendyaudio` — no GStreamer.
 
 ### voice-ai-pipecat
 
@@ -82,8 +98,11 @@ Always-on voice AI assistant: local [faster-whisper](https://github.com/SYSTRAN/
 | Language | Framework | Default Port | Directory |
 |----------|-----------|-------------|-----------|
 | Python | Pipecat + FastAPI | 3005 | `python/voice-ai-pipecat/` |
+| Mojo | Pipecat + FastAPI + MAX serve | 9007 | `mojo/voice-ai-pipecat/` |
 
-The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into the Python template directory.
+The Mojo/MAX variant swaps the cloud LLM for a **local MAX-served model**: a two-service app group with the voice app on 9007 and an OpenAI-compatible `max serve` on 9012 (default model Qwen2.5-0.5B-Instruct).
+
+The shared visualizer source lives at `common/voice-ai-pipecat-frontend/` and is vendored into the template directories.
 
 ### llm
 
@@ -91,13 +110,24 @@ Local LLM chat app with Open WebUI.
 
 On WendyOS, the Python template runs Ollama and Open WebUI as a **multi-service app group**: a standard `docker-compose.yml` defines the `ollama` and `open-webui` services, while a companion `wendy.json` adds the `appId` and GPU entitlement for Ollama.
 
+The Mojo/MAX variant keeps the same two-service shape with Ollama replaced by Modular's `max serve` (OpenAI-compatible `/v1` API on 9011, GPU or CPU picked at runtime).
+
 | Target | Language | Framework | Default Port | Directory |
 |--------|----------|-----------|-------------|-----------|
 | WendyOS | Python | Ollama + Open WebUI | 8080 | `python/llm/` |
+| WendyOS | Mojo | MAX serve + Open WebUI | 9010 | `mojo/llm/` |
 
 ```bash
 wendy init --app-id llm --target wendyos --language python --template llm --assistant skip --git-init no
 ```
+
+### gpu-hello
+
+Pure-Mojo GPU diagnostics for Jetson-class devices: a verified vector-add and a naive 512³ matmul run on the device GPU via Modular's `DeviceContext`, with the GFLOPS report served over HTTP (`/` = full report, `/health` = liveness). The first template in the Mojo + MAX port series — proves the Modular stack can light up the GPU on a freshly provisioned device.
+
+| Language | Framework | Default Port | Directory |
+|----------|-----------|-------------|-----------|
+| Mojo | Mojo GPU stdlib (`DeviceContext` + `TileTensor`) | 9020 | `mojo/gpu-hello/` |
 
 ### mac-llm
 
@@ -120,6 +150,7 @@ Shared building blocks (not selectable as templates):
 - `audio-feed-html/` — Audio waveform visualizer HTML page
 - `realsense-camera-frontend/` — React + Vite viewer for the `realsense-camera` template (color + IR + depth streams)
 - `voice-ai-pipecat-frontend/` — React + Three.js visualizer for the `voice-ai-pipecat` template (blue mic lines + emerald bot lines)
+- `mojo/` — pure-Mojo packages vendored into the Mojo templates: `wendynet` (HTTP/1.1 + WebSocket + JSON over libc sockets), `wendycam` (V4L2 capture), `wendyaudio` (ALSA capture/playback), `wendydb` (SQLite), `wendydds` (CycloneDDS / ROS 2 wire format), `wendyvision` (JPEG codec + letterbox preprocessing)
 
 ---
 
@@ -159,7 +190,7 @@ Templates are plain project directories with a `template.json` manifest and Go [
 └── ...                    # Source files (rendered)
 ```
 
-Templates are organized by language at the top level (`python/`, `swift/`, `rust/`, `node/`, `cpp/`). Each template directory must contain a `template.json`.
+Templates are organized by language at the top level (`python/`, `swift/`, `rust/`, `node/`, `cpp/`, `mojo/`). Each template directory must contain a `template.json`.
 
 ### template.json
 

@@ -6,7 +6,7 @@ Issues and limitations encountered (or identified up front) while porting WendyT
 - **Stack versions:** MAX 26.5.0 / Mojo 1.0.0 (2026-08-11 release), nightlies noted per finding
 - **Research/report date:** 2026-08-23 (living document — updated as ports land)
 - **Device matrix:** Jetson Orin Nano (sm_87), Jetson AGX Thor (sm_110, JetPack 7.x),
-  Raspberry Pi 5 (aarch64 CPU), Apple Silicon Mac (Metal)
+  Raspberry Pi 5 (aarch64 CPU), Apple Silicon Mac (Metal) — **all four validated** (Appendix B)
 - **Ports:** `mojo/` directories in this repo
 
 Severity: **blocker** (prevents a port), **major** (forces a workaround or non-Mojo fallback),
@@ -32,7 +32,7 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | [MMF-013](#mmf-013) | Apple-GPU (Metal) serving coverage is a moving subset | minor | missing-feature | open — spiked 2026-08-31: serving works on Apple GPU |
 | [MMF-014](#mmf-014) | Calling Mojo from Python is beta (≤6 `PythonObject` args) | minor | missing-feature | open |
 | [MMF-015](#mmf-015) | No WebRTC / DDS / ROS 2 ecosystem reachable from Mojo | major | missing-feature | open |
-| [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified |
+| [MMF-016](#mmf-016) | CPU encoding resolution broken for bf16-safetensors models on aarch64 | major | bug | open — verified; FP32-model workaround hardware-verified on RPi 5 |
 | [MMF-017](#mmf-017) | `max serve` JIT-compiles Mojo at runtime → undocumented C-toolchain requirement, opaque failure | minor | docs | open — verified |
 | [MMF-018](#mmf-018) | Cold-start graph compile is minutes on edge CPUs; no precompiled-cache distribution | minor | missing-feature | open — verified |
 | [MMF-019](#mmf-019) | `max serve` requires network access to start a fully-cached model (offline crash-loop) | major | bug | open — verified |
@@ -332,7 +332,9 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 
 - **Template(s):** `mojo/llm` CPU path (RPi 5, Jetson CPU fallback) · **Devices:** linux/arm64
   (verified in Docker on Apple Silicon; CPU-only config-validation code paths, device-agnostic)
-- **Category:** bug · **Severity:** major — **verified 2026-08-23 on MAX 26.5.0**
+- **Category:** bug · **Severity:** major — **verified 2026-08-23 on MAX 26.5.0**; workaround
+  (serve an FP32-native repo, e.g. `modularai/SmolLM-135M-Instruct-FP32`) **hardware-verified
+  on a Raspberry Pi 5 2026-09-01** — 3.0–3.6 tok/s end-to-end through the `mojo/llm` template
 - **Detail:** serving a standard bf16-safetensors LLM repo on an aarch64 CPU fails in every
   encoding configuration. Repro (`HuggingFaceTB/SmolLM2-135M-Instruct`, Llama arch, bf16
   safetensors only):
@@ -573,10 +575,10 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mojo/simple-api` | portable w/ workarounds | hand-rolled HTTP → MMF-011 |
 | `mojo/camera-feed` | portable w/ workarounds | → MMF-011 |
 | `mojo/audio` | portable w/ workarounds | → MMF-011 |
-| `mojo/camera-feed-yolo` | partial — **verified on Orin + Thor** (CPU 57–58 ms@224 on both; GPU works but MMF-026-slow on both, opt-in) | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024/025; GPU perf → MMF-026 |
-| `mojo/fullstack` | portable w/ workarounds — **verified on Orin + Thor** (CRUD + system + camera/audio WS + in-process Mojo GPU kernel route, 122/114 GFLOPS) | React frontend (JS in every variant, not a gap); hand-rolled HTTP → MMF-011; SQLite via `wendydb` dlopen (no stdlib DB layer, same no-batteries class as MMF-011) |
-| `mojo/ros2-talker-listener` | portable w/ workarounds — **container-verified interop with real ROS 2 (both rmw vendors, both directions); device-verified on Orin + Thor (1 Hz, ~25/~18 ms, zero drops)** | libddsc FFI + hand-packed topic descriptor → MMF-015 (no hand CDR needed after all: descriptor-based topics let CycloneDDS serialize; no C shim either) |
-| `mojo/voice-ai-pipecat` | partial — **v1 shipped: LLM leg on local `max serve`, e2e-verified on Orin (~35 tok/s) + Thor (151–182 tok/s) with the shipped 0.5B default** (1.5B validated on Apple GPU) | pipecat/STT/TTS/wake-word stay Python → MMF-002/003 (Whisper experiment: no serving speech task to register against) |
+| `mojo/camera-feed-yolo` | partial — **verified on Orin + Thor + RPi 5** (CPU 57–58 ms@224 Jetsons, 136–265 ms Pi — clears the ≥3 FPS bar; GPU works but MMF-026-slow on both Jetsons, opt-in) | `model.py` graph definition → MMF-001/002/012; workarounds MMF-021/022/023/024/025; GPU perf → MMF-026 |
+| `mojo/fullstack` | portable w/ workarounds — **verified on Orin + Thor + RPi 5** (CRUD + system + camera/audio WS + in-process Mojo GPU kernel route, 122/114 GFLOPS) | React frontend (JS in every variant, not a gap); hand-rolled HTTP → MMF-011; SQLite via `wendydb` dlopen (no stdlib DB layer, same no-batteries class as MMF-011) |
+| `mojo/ros2-talker-listener` | portable w/ workarounds — **container-verified interop with real ROS 2 (both rmw vendors, both directions); device-verified on Orin + Thor + RPi 5 (1 Hz, zero drops; Pi↔Thor cross-device DDS observed)** | libddsc FFI + hand-packed topic descriptor → MMF-015 (no hand CDR needed after all: descriptor-based topics let CycloneDDS serialize; no C shim either) |
+| `mojo/voice-ai-pipecat` | partial — **v1 shipped: LLM leg on local `max serve`, e2e-verified on Orin (~35 tok/s) + Thor (151–182 tok/s) with the shipped 0.5B default, and on RPi 5 CPU with the FP32 SmolLM** (1.5B validated on Apple GPU) | pipecat/STT/TTS/wake-word stay Python → MMF-002/003 (Whisper experiment: no serving speech task to register against) |
 | `mojo/go2-initial-test` | partial, deferred (no robot) | hardware services → MMF-015 |
 | `mojo/go2-rc`, `mojo/g1-rc` | partial, deferred (no robot) | WebRTC camera, unitree SDK → MMF-015 |
 | `mojo/go2-foxglove` | partial, deferred (no robot) | DDS deserialization → MMF-015 |
@@ -920,6 +922,51 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     `device_missing` idle state (PyAudio finds no `default` device in-container) — the full
     wake-word→STT→LLM→TTS turn stays bench-untested here too (no speaker attached), same as
     the Orin session.
+
+- **2026-09-01 · Raspberry Pi 5 (4-core aarch64, 8 GB, no CUDA) "precise-tulip" · WendyOS
+  0.19.1 (blacksail) · 100 GB SD container storage · MAX 26.5.0 / Mojo 1.0.0 · CPU-only
+  validation of the full template set (unmodified stack tip; Brio 101 moved to the Pi):**
+  - Deploys were near-instant for the Pattern-A set (3–10 s build+push each — full Mac
+    layer cache from the Jetson-era builds; the aarch64 images are device-agnostic).
+    `wendy device info` reports `hasGpu: true / gpuVendor: None` on a Pi (VideoCore
+    presumably) — worth a look alongside Appendix W#8's disk fix.
+  - `mojo/gpu-hello`: the designed CPU-only path — `wendy init` build args selected no
+    `--target-accelerator`, report serves `gpu: not available (built without accelerator
+    support)` + deploy-to-GPU hint, `/health` 200. The `gpu` entitlement does not block
+    creation on a GPU-less device.
+  - `mojo/simple-api`: full endpoint parity (GET `/`, `/health`, POST `/items`).
+  - `mojo/camera-feed` · Brio 101: 27.8 fps 1280×720, complete JPEGs, first frame 0.40 s.
+  - `mojo/audio` · Brio 101 mic: real-time ≈16.0 kHz S16LE; **no preroll walk on the Pi**
+    (no clockless APE PCMs — `/microphones` is just the Brio) so first audio in 0.65 s.
+  - `mojo/fullstack`: CRUD status parity (201/404/422/204); `/api/gpu` returns the
+    **designed thermal-fallback** `{"available":true,"name":"ARM GPU","temperature":…}` on
+    a non-CUDA host (per `gpudiag.mojo` + its unit test) — no kernel run, graceful; camera
+    stream 28.4 fps, audio stream real-time ≈16.1 kHz; `/api/system` correct (8 GB, 99 GB
+    disk).
+  - `mojo/camera-feed-yolo` (baked CPU MEF, imgsz 224): stream 26.8 fps 1280×720 with
+    inference **136–265 ms** on the 4-core Pi CPU (vs 57–58 ms on Orin/Thor CPUs) —
+    **clears the plan's ≥3 FPS@224 RPi5 bar** (3.8–7.3 inferences/s at that latency; the
+    app's ~2/s inference cadence is the same by-design throttle as on the Jetsons).
+  - `mojo/ros2-talker-listener`: local exchange verified at 1 Hz via service-tagged logs —
+    **and the Pi's listener also heard the Thor's talker across the LAN** (sequence numbers
+    from both streams interleaved; default DDS domain, CycloneDDS multicast, `network` per
+    service) — first cross-device wendydds↔wendydds interop datapoint, for free.
+  - `mojo/llm` two-service group — **`max serve --devices=cpu` WORKS on the Pi** with the
+    README's CPU model (`modularai/SmolLM-135M-Instruct-FP32`, the MMF-016 route, selected
+    via `wendy init --var MAX_MODEL=…`): cold start ~17 min (weights + CPU graph compile,
+    MMF-018 class), then `/v1/chat/completions` at **3.0–3.6 tok/s** (128-token runs) and
+    Open WebUI up on :9010. Device auto-pick chose CPU (`max.driver` probe). The bf16
+    default was not re-run here — MMF-016 stands as documented.
+  - `mojo/voice-ai-pipecat` two-service group: scoped-v1 seam verified on CPU —
+    `/api/settings` correct, vendored max-serve serving the FP32 SmolLM (selected via
+    `--var MAX_MODEL=…` per the MMF-016 CPU rule) with completions flowing (~1.3 tok/s on a
+    short run with the llm group co-resident; both CPU servers fit in 8 GB, compile peak
+    6.7 GiB). `/api/status` graceful `device_missing` (dummy audio output on the Pi bench);
+    full voice turn untested, as on every bench so far.
+  - `wendy device ros2` sidecar tooling cannot see these apps — neither the Swift nor the
+    Mojo ros2 template declares `frameworks.ros2` in wendy.json (shared nice-to-have, not a
+    port gap). Log-stream note: `wendy device logs` never self-terminates; bound it with a
+    kill-watchdog when scripting.
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

@@ -40,8 +40,8 @@ def main() raises:
     if hostname == "":
         hostname = "localhost"
 
-    # PORT flows through the Dockerfile's ENV: the wendy CLI's template
-    # substitution does not yet cover .mojo files (findings doc, Appendix W).
+    # PORT flows through the Dockerfile's ENV so the scaffold value reaches the
+    # binary without a template token in Mojo source.
     var port = 9001
     var port_env = getenv("PORT")
     if port_env != "":

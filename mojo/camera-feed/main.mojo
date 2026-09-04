@@ -35,8 +35,7 @@ from wendynet.ws import (
 from wendycam.camera import Camera, list_cameras
 
 # PORT comes from the environment (set by the Dockerfile from the scaffold
-# variable): the wendy CLI's template substitution does not yet cover .mojo
-# files (Appendix W in docs/mojo-max-port-findings.md).
+# variable) so no template token has to live in Mojo source.
 comptime DEFAULT_PORT = 9003
 comptime FRAME_WIDTH = 1280
 comptime FRAME_HEIGHT = 720

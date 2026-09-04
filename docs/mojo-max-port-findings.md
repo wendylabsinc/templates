@@ -303,11 +303,11 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
   - `Qwen/Qwen2.5-1.5B-Instruct` (bf16): compile ~39 s, **~24.3 tok/s decode**, TTFT 0.20 s,
     coherent.
 - **Outcome:** the MAX side of a `mojo/mac-llm` port is ready. What blocks the template is
-  Wendy-side, not Modular-side: darwin apps currently support only Xcode-scheme run targets
-  (`swift/mac-llm`'s shape) — there is no plain-process/pip runtime for a `max serve`
-  service on macOS (Appendix W, item 7). Port parked until that lands; the coverage caveat
-  above (families outside the manually-run set fail at graph compile) remains the risk to
-  re-test per model.
+  Wendy-side, not Modular-side: wendy.json cannot name an arbitrary process for a darwin
+  app (only SwiftPM/Xcode build products run natively), so a pip-installed `max serve`
+  service cannot be declared on macOS (Appendix W, item 7 / WDY-2911). Port parked until
+  that lands; the coverage caveat above (families outside the manually-run set fail at
+  graph compile) remains the risk to re-test per model.
 
 ## MMF-014: Calling Mojo from Python is beta (≤6 args) <a name="mmf-014"></a>
 
@@ -585,74 +585,115 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 | `mojo/realsense-camera` | partial (needs D415) | librealsense FFI effort |
 | `mojo/rc-car` | partial, deferred (no car) | proprietary Angstrong SDK service |
 | `go2-rosbag` | not ported | ROS 2 tooling orchestration → MMF-015 |
-| `mac-llm` | MAX-ready (spike 2026-08-31: Apple-GPU serving verified) — parked on Wendy darwin runtime, Appendix W#7 | → MMF-013 |
+| `mac-llm` | MAX-ready (spike 2026-08-31: Apple-GPU serving verified) — parked on Wendy darwin process run mode, Appendix W#7 / WDY-2911 | → MMF-013 |
 | `blink-led`, `hello-world` | **blocked** | → MMF-010 |
 
 ## Appendix W: WendyOS platform issues hit during porting (NOT for Modular)
 
-Found while deploying `mojo/llm` as a two-service group on WendyOS 0.18.2. First hit with
-CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
-2026.08.22-032001** (matrix results inline):
+Found while deploying the Mojo templates as two-service groups on WendyOS 0.18.2 / 0.19.1
+with CLI/agent builds 2026.08.18 through 2026.08.31. **Re-verified against WendyAgent `main`
+(5e4812e8d) on 2026-09-04** and tracked in Linear. Entries carry the verified state, not the
+original observation; numbering is kept stable because Appendix B cites items by number, so
+items that turned out to be wrong or already fixed are retracted in place rather than
+renumbered, and two observations first logged in Appendix B are promoted to W9/W10.
 
-1. **Group-service containers get an empty network namespace by default** — re-tested on
-   2026.08.22: a group deployed with *no* network entitlement (the exact shape of the
-   shipped `python/llm`) gets containers whose netns holds **only `lo`** (`ip -brief addr`
-   from inside), i.e. **no egress and no ingress** — published ports unreachable from the
-   LAN while a single-service app on the same device serves fine. Rewriting
-   `/etc/resolv.conf` can't help; there is no interface. **Workaround (verified 2026-08-24):**
-   an **app-level** `{ "type": "network", "mode": "host" }` entitlement on a **fresh create**
-   attaches host networking — egress (HF download) and LAN ingress both work, and an
-   in-place redeploy *keeps* networking if the entitlement was already present at create
-   time. Per-service placement of the same entitlement did not work on 2026.08.18 (not
-   re-tested since). Consequence: `python/llm`'s group (Ollama pull at runtime) cannot work
-   as shipped on these agents either.
-2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22; a
-   suspected 2026-08-31 regression was DISPROVEN (it was memory pressure, see MMF-006
-   addendum)**: on 2026.08.18 MAX's estimator saw 254 MiB ("Model size exceeds available
-   memory (256.60 MiB > 76.25 MiB)") and Open WebUI never finished booting; on 2026.08.22
-   the same group compiles and serves the model (no estimator complaint) and Open WebUI
-   boots fully. No memory/resources knob exists in wendy.json to have caused this;
-   agent-side change presumed. **2026-08-31 postscript:** the `mojo/voice-ai-pipecat`
-   group's max-serve crash-looped with a cap-like estimator error ("model 256.60 MiB …
-   don't leave room for KV cache") on fresh creates under three agent builds ("dev",
-   2026.08.25-111847, 2026.08.22-032001) — initially recorded here as a cap regression.
-   Root cause was co-tenancy, not a cgroup cap: a co-resident CUDA app (`gpu-hello-test`)
-   held 1.7 GB of the Orin's unified memory, and MAX budgets
-   `--device-memory-utilization × FREE memory` at boot; stopping that app let the same
-   fresh create boot and serve with no agent change. No cap reproduced on any of the three
-   agent builds. (The device ended up on 2026.08.22-032001, the current "Latest" release —
-   every newer agent build is a GitHub pre-release.)
-3. Entitlement changes on an existing app group are not applied by `wendy run` redeploy —
-   a full `apps remove` + fresh deploy is required. (Not re-tested on 2026.08.22; the
-   workaround in W1 was applied via remove + fresh create.)
-4. `wendy device logs` streaming connections drop after ~2 minutes of quiet (WiFi device;
-   still observed with 2026.08.22 — "keepalive ping failed" during a long graph compile).
-   `wendy device shell`: unsupported by agent with CLI 2026.08.18; with CLI 2026.08.22 it
-   connects (interactive TTY only — no one-shot `-- command` use over a pipe).
-5. **(new, found 2026-08-24)** `wendy run`'s readiness probe window starts before image
-   transfer completes and spans service cold-start; a first-boot graph compile (~4 min) plus
-   Open WebUI's first-boot downloads exceeded the template's 300 s `timeoutSeconds`, so
-   `wendy run` reports a readiness timeout for a deploy that comes up healthy a minute
-   later. Cosmetic, but users will read it as a failed deploy.
-6. **(new, found 2026-08-24)** `wendy init` template substitution skips `.mojo` files:
-   `isTextFile()` in `go/internal/cli/commands/template.go` (WendyAgent) allowlists
-   `.py/.rs/.swift/...` but not `.mojo`, so `{{.PORT}}`-style tokens survive into
-   scaffolded Mojo sources and the build fails on a parse error. Until the CLI fix ships,
-   the Mojo templates read `PORT` from the environment (set via `ENV PORT={{.PORT}}` in
-   the Dockerfile, which *is* substituted); one-line CLI fix proposed in WendyAgent.
-7. **(new, found 2026-08-31)** darwin (`platform: "darwin"`) apps support only Xcode-scheme
-   run targets (`"xcode": { "scheme": … }` + `run.args`, per `swift/mac-llm`) — there is no
-   plain-process or container run mode on the Mac agent. This is the only thing blocking a
-   `mojo/mac-llm` template: `max serve` on Apple Silicon itself works (MMF-013 spike) but
-   needs a way to run a pip-installed server process as a Wendy app on macOS.
-8. **(new, found 2026-09-01)** `wendy device info` reports the read-only rootfs A/B slot as
-   the device's disk. On a freshly flashed Jetson AGX Thor (WendyOS 0.19.1, agent
-   2026.08.25-111847, CLI 2026.08.31-061402) it shows `diskTotalBytes` 11.1 GiB /
-   `diskUsedBytes` 5.96 GiB — exactly `/dev/nvme0n1p1` (slot A) — while the containerd
-   overlay where images and volumes actually live is **912 GB with 862 GB free** (`df` run
-   via `wendy device attach <app> -- df -h` inside a running app container). A 1 TB device
-   reads as 57 % full and nearly out of space. The MCP `device_info` presumably surfaces the
-   same field. Fix: report the container-storage / data partition (ideally both).
+| # | Finding | Verified state (2026-09-04) | Tracking |
+|---|---|---|---|
+| W1 | Group services with no `network` entitlement get an empty netns | valid, by construction | WDY-2906 |
+| W2 | ~256 MiB group memory cap | **retracted** — never existed | — |
+| W3 | Entitlement changes not applied on redeploy | mostly fixed (WendyAgent PR #1821); residual `isolation`-removal bug | WDY-2913 |
+| W4 | `device logs` drops on quiet WiFi; `device shell` gaps | keepalive drop open; shell one-shot fixed; "unsupported" is a transport diagnostic | WDY-2912, WDY-2042, WDY-2043 |
+| W5 | Readiness timeout reads as a failed deploy | valid as UX; timing claim corrected | WDY-2910 |
+| W6 | `wendy init` skips `.mojo` files | **fixed** — WendyAgent PR #1782, CLI ≥ 2026.08.25 | — |
+| W7 | No process run mode for darwin apps | valid; narrower than first described | WDY-2911 |
+| W8 | `device info` disk fields report the rootfs slot | valid; `partitions[]` exists, container-storage field missing | WDY-2908 |
+| W9 | `wendy run --env` ignored for multi-service apps | confirmed bug | WDY-2907 |
+| W10 | `device info` reports `hasGpu: true` on a Raspberry Pi 5 | valid | WDY-2909 |
+
+1. **Group-service containers get an empty network namespace when no `network` entitlement
+   is declared** — a `services`-map app with no network entitlement gets containers whose
+   netns holds only `lo` (`ip -brief addr` from inside): no egress, no ingress, published
+   ports unreachable from the LAN. Seen on agents 2026.08.18, 2026.08.22 and 2026.08.25.
+   This is how the agent is built: every container starts with a private network namespace
+   and only a `network` entitlement removes it or wires a CNI bridge (`oci/spec.go`,
+   `oci/entitlements.go`; `containerd/bridge_wiring.go` gates group bridge wiring on
+   `isolation: "isolated"`). Single-service apps behave the same in the agent; they work
+   because `wendy init` always scaffolds a network entitlement, whereas nothing does so for
+   a services map. **Workaround (shipped in every Mojo group template):**
+   `{ "type": "network", "mode": "host" }` — app-level (verified 2026-08-24) or per-service
+   (verified 2026-08-25 on `mojo/ros2-talker-listener`; the CLI merges the two). Not the
+   `python/llm` shape after all: that template is Compose-based and the CLI synthesises a
+   network entitlement from each service's `ports:` mapping, so it works as shipped. Ask: a
+   default network policy (or at least a validation warning) for services apps.
+2. **Retracted — ~256 MiB group memory cap.** The agent has never applied a default memory
+   limit to any container (`oci/resources.go`: memory and CPU stay unbounded unless
+   `resources.memory` is declared in wendy.json, opt-in since 2026-06-25), and no agent
+   commit in the window touched cgroup resources. The "Model size exceeds available memory
+   (256.60 MiB > 76.25 MiB)" line that started this is MAX's estimator reporting the model
+   size against *free* unified memory, i.e. host memory pressure — the mechanism diagnosed
+   in the MMF-006 addendum. The 2026-08-18 → 2026-08-22 difference was co-tenancy, not an
+   agent fix.
+3. **Entitlement changes on an existing app are not applied by a `wendy run` redeploy** —
+   confirmed for the single-service `--detach` fast path at CLI 2026.08.18/22, which
+   fingerprinted only build inputs and skipped the deploy for an entitlement-only change;
+   fixed in WendyAgent PR #1821 (`fc6181b78`, CLI ≥ 2026.08.31). For groups the CLI always
+   re-creates every service and the agent always replaces the container, so the original
+   group observation (never re-tested) is not reproducible from code; the likely explanation
+   is a shared-namespace group where secondaries join the primary's netns. One real residual
+   bug: removing `isolation` from wendy.json is not applied until the agent restarts (stale
+   in-process cache). Tracked with a re-test in WDY-2913.
+4. **`wendy device logs` / `wendy device shell`.** (a) Log streams dropped after ~2 minutes
+   of quiet on a WiFi device with "keepalive ping failed" (CLI 2026.08.18/22). The
+   configured direct-path keepalives cannot produce that message in 2 minutes; the
+   cloud-tunnel path could (30 s / 20 s before WDY-2433, fixed in CLI ≥ 2026.08.23).
+   `StreamLogs` sends no heartbeat during quiet periods and the agent's 10 s keepalive ACK
+   window is tight for WiFi; both tracked in WDY-2912. (b) `device logs` never
+   self-terminates: by design, tracked in WDY-2042. (c) `device shell -- <command>` over a
+   pipe: fixed (WDY-2435, CLI ≥ 2026.08.23). (d) "not supported by this agent version" from
+   `device shell` (Thor, agent 2026.08.25) is not a version gate: the host-shell RPC is
+   registered only on the agent's mTLS server, so the message means the CLI reached the
+   agent over a non-mTLS transport (unprovisioned device, `WENDY_AGENT_SOCKET`, or plaintext
+   fallback) and the CLI suppresses the hint that would say so. Tracked in WDY-2043;
+   `device attach <app> -- <cmd>` is the exec path that works on every transport.
+5. **`wendy run` reports a readiness timeout for a deploy that comes up healthy a minute
+   later** — a first-boot graph compile (~4 min) plus Open WebUI's first-boot downloads
+   exceeded `readiness.timeoutSeconds: 300`. Correction to the original note: the deadline is
+   armed only after the container's `Started` ack (for groups, after every service has
+   started), so it does not overlap image transfer; `timeoutSeconds` is simply the whole
+   cold-start budget and 300 s was too small. What remains is UX: on timeout the CLI prints
+   a warning, never re-probes, and never says the container is still running, so users read
+   it as a failed deploy. Tracked in WDY-2910. Templates ship 300 s (`voice-ai-pipecat`)
+   and 600 s (`llm`).
+6. **Fixed — `wendy init` template substitution skipped `.mojo` files.** `isTextFile()`
+   lacked `.mojo`; fixed in WendyAgent PR #1782 (`d2a820533`), shipped in CLI
+   2026.08.25-104401 and later. The Mojo templates keep reading `PORT` from the environment
+   (`ENV PORT=…` in the Dockerfile) because that works on every CLI version and keeps
+   template tokens out of Mojo source — a design choice now, not a workaround.
+7. **darwin apps have no declarable process run mode** — correction: the Mac agent already
+   runs native SwiftPM and Xcode products through a generic supervised-process launcher (and
+   Linux containers, which have no Metal), but wendy.json cannot name an arbitrary command:
+   `run` accepts only `args`, and a directory without a Swift/Xcode project is rejected for
+   a Mac target. That is what blocks a `mojo/mac-llm` template (`max serve` itself works,
+   MMF-013). Also found: wendy.json `env` is silently ignored for native Mac apps. Proposed
+   `run.command` / `run.cwd` design in WDY-2911; no proto change needed.
+8. **`wendy device info` reports the rootfs A/B slot as the device's disk** — on a fresh AGX
+   Thor (WendyOS 0.19.1, agent 2026.08.25, CLI 2026.08.31) `diskTotalBytes` /
+   `diskUsedBytes` are 11.1 GiB / 5.96 GiB (`/dev/nvme0n1p1`) while container storage is
+   912 GB with 862 GB free. Confirmed: the scalars are `statfs("/")` and MCP `device_info`
+   surfaces them. Partly mitigated already: since 2026-06-14 the response also carries a
+   `partitions[]` table which the CLI's human output prefers; still missing is any field
+   that identifies the container-storage partition, and the disk-full advice can point at
+   the wrong disk. Tracked in WDY-2908.
+9. **`wendy run --env KEY=VALUE` is silently dropped for every service of a multi-service
+   app** (found 2026-08-31 / 2026-09-01, Appendix B): the multi-service request builder
+   merges only wendy.json `env`, and the flag is also missing from the change-detection
+   hashes, while the docs say `--env` overrides both. Explains why `--env MAX_MODEL=…` left
+   max-serve on the old model and only re-scaffolding with `wendy init --var` worked.
+   Tracked in WDY-2907.
+10. **`wendy device info` reports `hasGpu: true` with no vendor on a Raspberry Pi 5** (found
+    2026-09-01, Appendix B): any non-empty `/dev/dri` counts as a GPU, and the
+    `WENDY_HAS_GPU=true` build arg then steers Dockerfiles toward CUDA paths on a Pi.
+    Tracked in WDY-2909.
 
 ## Appendix B: device validation log
 
@@ -729,14 +770,15 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
 
 - **2026-08-24 · same Orin Nano · CLI 2026.08.22-053704 / agent 2026.08.22-032001 ·
   `mojo/llm` two-service group (Appendix W re-test + full verification):**
-  - Default group (no network entitlement, the `python/llm` shape): containers get an
+  - Default group (no network entitlement): containers get an
     **empty netns (lo only)** — no egress, no ingress; max-serve crash-loops on HF repo
     validation *with all weights cached* → new MMF-019. Single-service app on the same
     device unaffected.
   - App-level `{"type":"network","mode":"host"}` + fresh create: egress and LAN ingress both
     work; entitlement now shipped in the template's wendy.json (Appendix W #1 workaround).
-  - ~256 MiB group memory cap (W2) not reproducible on agent 2026.08.22 — model compiles,
-    serves, and Open WebUI boots fully; appears fixed agent-side.
+  - The suspected ~256 MiB group memory cap (W2) did not reproduce — model compiles,
+    serves, and Open WebUI boots fully. Later established that no cap ever existed (W2
+    retracted; the 2026-08-18 failure was memory pressure, see the MMF-006 addendum).
   - **Group verified end-to-end**: browser/API → Open WebUI :9010 → loopback → max-serve
     :9011 → GPU; 37-token completion in 2.4 s (**~15 tok/s** incl. prefill + LAN,
     SmolLM2-135M bf16). Template bugs found + fixed along the way: open-webui ignores the
@@ -760,7 +802,8 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     camera rate), `switch_camera` round-trip, concurrent browser + scripted clients from
     a single-threaded poll(2) loop. No GStreamer, no Python, ~110 MB image.
   - Found along the way: MMF-020 (extern symbol collisions fail opaquely) and Appendix
-    W#6 (`wendy init` does not substitute `.mojo` files; CLI fix proposed in WendyAgent).
+    W#6 (`wendy init` did not substitute `.mojo` files; fixed in WendyAgent PR #1782,
+    CLI ≥ 2026.08.25).
 
 - **2026-08-24/25 · same Orin Nano · `mojo/audio` template (fifth Mojo port) · Brio 101 mic:**
   - `wendyaudio` (libasound via `OwnedDLHandle`, `snd_pcm_set_params` so no hw_params struct
@@ -858,8 +901,9 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     untested (no JP6 device on the bench).
   - Deploy path: `wendy init --branch ed/mojo-voice-ai-pipecat --language mojo` →
     `wendy run --device wendyos-witty-swift.local --detach`; built + pushed in 1m50 (103 MB
-    via chunk-diff), readiness on :9020. `wendy device shell` is "not supported by this
-    agent version" on the Thor; `wendy device attach <app> -- <cmd>` works for exec.
+    via chunk-diff), readiness on :9020. `wendy device shell` returned "not supported by
+    this agent version" on the Thor (not a version gate: the host-shell RPC is mTLS-only,
+    see Appendix W#4d / WDY-2043); `wendy device attach <app> -- <cmd>` works for exec.
   - `mojo/simple-api` (:9001): GET `/` → `{"message": "hello-world"}`, `/health` ok,
     POST `/items` echoes with correct JSON string escaping — full endpoint parity.
   - `mojo/camera-feed` (:9003) · Brio 101: `/cameras` exact (`/dev/video0` "Brio 101"); WS
@@ -902,7 +946,9 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     Orin at all). Deploy lore confirmed: `wendy run --env MAX_MODEL=…` on the multi-service
     group left max-serve on the old model (warm-started the cached one in ~20 s); the
     working model-change path is re-scaffold via `wendy init --var MAX_MODEL=…` after
-    `wendy device apps remove` — same conclusion as the 2026-08-31 Orin session.
+    `wendy device apps remove` — same conclusion as the 2026-08-31 Orin session. Root
+    cause: the CLI drops `--env` for every service of a multi-service app (Appendix W#9 /
+    WDY-2907).
   - `mojo/camera-feed-yolo` (:9005) — **CPU (shipped default)**: 28.6 fps 1280×720 stream,
     inference **58.5 ms @ imgsz 224** (29 inferences during a 12 s stream; Orin CPU: 57 ms —
     the 14-core Thor CPU is no faster per-inference on this graph), detections JSON flowing
@@ -928,8 +974,9 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
   validation of the full template set (unmodified stack tip; Brio 101 moved to the Pi):**
   - Deploys were near-instant for the Pattern-A set (3–10 s build+push each — full Mac
     layer cache from the Jetson-era builds; the aarch64 images are device-agnostic).
-    `wendy device info` reports `hasGpu: true / gpuVendor: None` on a Pi (VideoCore
-    presumably) — worth a look alongside Appendix W#8's disk fix.
+    `wendy device info` reports `hasGpu: true` with no vendor on a Pi (any `/dev/dri`
+    node counts as a GPU; VideoCore's `vc4`/`v3d` DRM nodes trip it) — Appendix W#10 /
+    WDY-2909, alongside W#8's disk fix.
   - `mojo/gpu-hello`: the designed CPU-only path — `wendy init` build args selected no
     `--target-accelerator`, report serves `gpu: not available (built without accelerator
     support)` + deploy-to-GPU hint, `/health` 200. The `gpu` entitlement does not block
@@ -965,8 +1012,8 @@ Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX 
     full voice turn untested, as on every bench so far.
   - `wendy device ros2` sidecar tooling cannot see these apps — neither the Swift nor the
     Mojo ros2 template declares `frameworks.ros2` in wendy.json (shared nice-to-have, not a
-    port gap). Log-stream note: `wendy device logs` never self-terminates; bound it with a
-    kill-watchdog when scripting.
+    port gap). Log-stream note: `wendy device logs` never self-terminates (by design,
+    WDY-2042); bound it with a kill-watchdog when scripting.
 
 Mojo 1.0 porting notes (language changes hit during the spikes, for template authors): `fn`
 removed (use `def`); stdlib now under `std.*`; `def` no longer implicitly raises (`def main()

@@ -36,7 +36,8 @@ func spaHandler<C: RequestContext>(staticDir: String) -> @Sendable (Request, C) 
     let resolvedRoot = URL(filePath: staticDir).standardized.path()
     return { request, _ in
         let reqPath = String(request.uri.path.drop(while: { $0 == "/" }))
-        let fileURL = URL(filePath: staticDir).appending(path: reqPath).standardized
+        let fileURL = URL(filePath: staticDir)
+            .appending(path: reqPath.isEmpty ? "index.html" : reqPath).standardized
 
         guard fileURL.path().hasPrefix(resolvedRoot + "/") else {
             return Response(status: .notFound, body: .init(byteBuffer: .init(string: "Not Found")))
@@ -74,6 +75,7 @@ struct App {
         let router = Router()
         router.get("/api/hello") { _, _ in ["message": "Hello from Wendy!"] }
         router.get("/health") { _, _ in ["status": "ok"] }
+        router.get("/", use: spaHandler(staticDir: "./static"))
         router.get("/**", use: spaHandler(staticDir: "./static"))
         let app = Application(
             router: router,

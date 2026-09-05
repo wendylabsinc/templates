@@ -1,0 +1,25 @@
+name: Web app starters
+
+on:
+  pull_request:
+    paths:
+      - '*/fullstack/**'
+      - 'common/react-frontend/**'
+      - 'scripts/smoke_fullstack.py'
+      - '.github/workflows/test-web-starters.yml'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, node, swift, rust, cpp, mojo]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python3 scripts/smoke_fullstack.py --language ${{ matrix.language }}

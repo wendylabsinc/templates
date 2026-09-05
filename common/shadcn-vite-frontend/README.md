@@ -1,13 +1,14 @@
-# Fullstack frontend base
+# Device dashboard frontend base
 
 This React, Vite, Tailwind, and shadcn/ui project is the maintainer base for the
-five `fullstack` frontends:
+six `device-dashboard` frontends:
 
-- `cpp/fullstack/frontend/`
-- `node/fullstack/frontend/`
-- `python/fullstack/frontend/`
-- `rust/fullstack/frontend/`
-- `swift/fullstack/frontend/`
+- `mojo/device-dashboard/frontend/`
+- `cpp/device-dashboard/frontend/`
+- `node/device-dashboard/frontend/`
+- `python/device-dashboard/frontend/`
+- `rust/device-dashboard/frontend/`
+- `swift/device-dashboard/frontend/`
 
 The generated-project copies intentionally add `src/lib/device-storage.ts` and
 adapt `src/pages/audio.tsx` and `src/pages/camera.tsx` to their backend behavior.

@@ -4,12 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.8.8", features = ["ws"] }
-tokio = { version = "1", features = ["full"] }
-serde = { version = "1", features = ["derive"] }
+axum = "0.8.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
-tower-http = { version = "0.6", features = ["fs", "trace"] }
-gstreamer = "0.23"
-gstreamer-app = "0.23"
-futures-util = "0.3"
+tower-http = { version = "0.6", features = ["fs"] }

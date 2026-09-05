@@ -1,5 +1,16 @@
 # {{.APP_ID}}
 
+```sh
+wendy run
+```
+
+With a supported camera connected, your browser opens a live camera viewer.
+Change the page title in `index.html`, run `wendy run` again, and refresh the
+page to see your change.
+
+The first build downloads dependencies; later builds reuse caches. Requirements
+and configuration are below.
+
 A TypeScript camera viewer for WendyOS. It lists available V4L2 cameras and
 streams MJPEG frames to a browser over WebSocket.
 

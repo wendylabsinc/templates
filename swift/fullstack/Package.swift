@@ -1,30 +1,15 @@
 // swift-tools-version: 6.2
-
 import PackageDescription
 
 let package = Package(
     name: "{{.APP_ID}}",
-    platforms: [
-        .macOS(.v14),
-    ],
+    platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/hummingbird-project/hummingbird.git", from: "2.21.1", traits: []),
-        .package(url: "https://github.com/hummingbird-project/hummingbird-websocket.git", from: "2.0.0"),
-        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.0.0"),
-        .package(url: "https://github.com/wendylabsinc/gstreamer-swift.git", branch: "main"),
-        .package(url: "https://github.com/apple/swift-container-plugin.git", from: "1.0.0"),
-        .package(url: "https://github.com/swift-otel/swift-otel.git", from: "1.0.0", traits: ["OTLPHTTP", "OTLPGRPC"]),
     ],
     targets: [
-        .executableTarget(
-            name: "{{.APP_ID}}",
-            dependencies: [
-                .product(name: "Hummingbird", package: "hummingbird"),
-                .product(name: "HummingbirdWebSocket", package: "hummingbird-websocket"),
-                .product(name: "GRDB", package: "GRDB.swift"),
-                .product(name: "GStreamer", package: "gstreamer-swift", condition: .when(platforms: [.linux])),
-                .product(name: "OTel", package: "swift-otel"),
-            ]
-        ),
+        .executableTarget(name: "{{.APP_ID}}", dependencies: [
+            .product(name: "Hummingbird", package: "hummingbird"),
+        ]),
     ]
 )

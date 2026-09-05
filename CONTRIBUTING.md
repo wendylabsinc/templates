@@ -18,6 +18,21 @@ Selectable templates use this layout:
 The public catalog is defined by `meta.json`. A template that is not listed
 there is not selectable through the normal catalog.
 
+Catalog entries declare `displayName`, `category` (`starter` or `example`), and
+optional `requirements`. Keep identifiers stable for `--template` scripts.
+WendyOS has four primary starters: API, Web app, Camera, and Audio. Larger
+integrations belong under examples. Regenerate the README after catalog edits:
+
+```sh
+python3 scripts/update_catalog.py
+```
+
+The Web app (`fullstack`) has one React page, one greeting endpoint, and network
+access. Keep generated projects within 15 files excluding lockfiles (18 for
+Mojo's vendored networking). The former hardware dashboard lives in
+`device-dashboard`; maintain its frontend in `common/shadcn-vite-frontend`.
+The minimal Web app frontend lives in `common/react-frontend`.
+
 ## Template manifests
 
 `template.json` declares the values collected by `wendy init`. The CLI makes
@@ -87,6 +102,17 @@ Run:
 python3 -m pytest tests/
 ```
 
+Build and smoke-test a generated Web app locally (Docker required):
+
+```sh
+python3 scripts/smoke_fullstack.py --language python
+```
+
+CI runs this against all six Web app languages on ARM64. It checks the health
+response, greeting, HTML, and compiled JS/CSS responses. The command reports
+render, build, startup, and image-size measurements separately; a cached image
+startup is not a cold deployment measurement.
+
 Tests check catalog and README coverage, template placeholders, shared-source
 drift, and CUDA compatibility blocks. Add or update a test when a new shared
 copy or catalog rule is introduced.
@@ -100,9 +126,28 @@ https://templates.wendy.dev/<branch>/<path>
 ```
 
 The deployment workflow is `.github/workflows/deploy-templates.yml`. It copies
-the repository, except `.git`, `.github`, `tests`, and `.DS_Store` files, to the
+the repository, except `.git`, `.github`, `tests`, `scripts`, and `.DS_Store` files, to the
 branch prefix in the public bucket. Deleting a branch removes its prefix. The
 CDN cache lifetime is five minutes.
+
+The same workflow builds one deterministic archive per catalog language variant
+with `scripts/build_template_bundles.py`. The branch's `template-index.json`
+contains schema version `1`, the Git revision, the catalog, and a `bundles` map
+keyed by `language/template`. Each entry has `path`, `sha256`, and compressed
+`size`. Archives contain `templates/<language>/<template>/...`, so the CLI can
+reuse its existing extraction and rendering code.
+
+Publish immutable `bundles/<sha256>.tar.gz` objects before replacing the index.
+Preserve old bundles while cached indexes can refer to them. New CLIs cache the
+index for five minutes and verify bundle checksums before caching or rendering.
+Older CLIs continue to use the repository archive and unchanged source paths.
+The CLI also falls back to that archive for branches without an index.
+
+Build the publisher output locally:
+
+```sh
+python3 scripts/build_template_bundles.py --output /tmp/template-bundles
+```
 
 Branch names containing slashes are preserved as URL path segments. Git does
 not allow a branch and another branch with that branch as a path prefix, so the

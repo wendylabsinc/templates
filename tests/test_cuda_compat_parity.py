@@ -38,7 +38,8 @@ EXTRA_DOCKERFILES = (
 
 
 def _dockerfiles_with_the_shim() -> list[pathlib.Path]:
-    paths = sorted(REPO_ROOT.glob("*/camera-feed-yolo/Dockerfile"))
+    paths = sorted(path for path in REPO_ROOT.glob("*/camera-feed-yolo/Dockerfile")
+                   if "dustynv/" in path.read_text())
     paths += [REPO_ROOT / rel for rel in EXTRA_DOCKERFILES]
     return paths
 

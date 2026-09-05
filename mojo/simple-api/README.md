@@ -1,5 +1,14 @@
 # simple-api (Mojo)
 
+```sh
+wendy run
+```
+
+Your browser opens the greeting endpoint. Change `hello-world` in `main.mojo`, run `wendy run` again, and refresh the page to see your change.
+
+The first build downloads dependencies; later builds reuse caches. Requirements
+and configuration are below.
+
 The minimal REST API template in pure Mojo — same endpoints as the other language variants
 (`GET /`, `GET /health`, `POST /items`), served by `wendynet`, the hand-rolled HTTP layer
 vendored from `common/mojo/wendynet` (Mojo 1.0 has no stdlib networking or JSON; see

@@ -1,5 +1,16 @@
 # {{.APP_ID}}
 
+```sh
+wendy run
+```
+
+With audio devices connected, your browser opens the microphone waveform.
+Change the page title in `index.html`, run `wendy run` again, and refresh the
+page to see your change.
+
+The first build downloads dependencies; later builds reuse caches. Requirements
+and configuration are below.
+
 A TypeScript audio device demo for WendyOS. It streams microphone samples to a
 browser waveform and plays bundled WAV files through a selected speaker.
 

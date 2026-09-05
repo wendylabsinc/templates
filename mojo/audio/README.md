@@ -1,5 +1,16 @@
 # audio (Mojo)
 
+```sh
+wendy run
+```
+
+With audio devices connected, your browser opens the microphone waveform.
+Change the page title in `index.html`, run `wendy run` again, and refresh the
+page to see your change.
+
+The first build downloads dependencies; later builds reuse caches. Requirements
+and configuration are below.
+
 Live microphone streaming and wav playback on WendyOS in pure Mojo:
 `wendyaudio` talks to ALSA through `libasound.so.2` loaded at runtime with
 `OwnedDLHandle` (no GStreamer, no link-time audio dependency), and `wendynet`

@@ -143,7 +143,8 @@ def test_relative_markdown_links_resolve():
     link_pattern = re.compile(r"\[[^]]*]\(([^)]+)\)")
 
     for readme in repo_markdown_files():
-        for target in link_pattern.findall(readme.read_text()):
+        text = re.sub(r"```.*?```|`[^`]*`", "", readme.read_text(), flags=re.DOTALL)
+        for target in link_pattern.findall(text):
             target = target.strip().strip("<>")
             if not target or target.startswith(("#", "http://", "https://", "mailto:")):
                 continue
@@ -180,7 +181,7 @@ def test_realsense_shared_frontend_drift():
     )
 
 
-def test_fullstack_shared_frontend_drift():
+def test_device_dashboard_shared_frontend_drift():
     source = REPO_ROOT / "common" / "shadcn-vite-frontend"
     ignored = {
         pathlib.Path("README.md"),
@@ -188,9 +189,15 @@ def test_fullstack_shared_frontend_drift():
         pathlib.Path("src/pages/camera.tsx"),
         pathlib.Path("src/lib/device-storage.ts"),
     }
-    for language in catalog_languages("fullstack"):
+    for language in catalog_languages("device-dashboard"):
         assert_common_files_match(
             source,
-            REPO_ROOT / language / "fullstack" / "frontend",
+            REPO_ROOT / language / "device-dashboard" / "frontend",
             ignored,
         )
+
+
+def test_fullstack_shared_frontend_drift():
+    source = REPO_ROOT / "common" / "react-frontend"
+    for language in catalog_languages("fullstack"):
+        assert_common_files_match(source, REPO_ROOT / language / "fullstack" / "frontend", {pathlib.Path("README.md")})

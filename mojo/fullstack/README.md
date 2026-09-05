@@ -1,34 +1,40 @@
-# fullstack (Mojo)
+# {{.APP_ID}}
 
-The fullstack template's FastAPI backend rebuilt in pure Mojo, serving the
-same React/shadcn frontend byte-identical to the python sibling. Everything
-the sibling does through frameworks goes through FFI here:
+One React page and a small mojo backend. Requires a reachable WendyOS device,
+Wendy CLI access, and network access for the first build. No special hardware.
 
-- **Cars CRUD** (`/api/cars`) — SQLite via `wendydb` (`libsqlite3.so.0`
-  dlopen; no ORM, no linked dependency), persisted on the `/data` volume.
-- **Camera** (`/api/cameras`, `/api/camera/stream`) — `wendycam` V4L2 MJPEG
-  capture fanned out over `wendynet` WebSockets, no GStreamer.
-- **Audio** (`/api/microphones`, `/api/speakers`, `/api/audio/stream`) —
-  `wendyaudio` ALSA capture (S16LE mono 16 kHz), no GStreamer.
-- **System** (`/api/system`) — `/proc` parsing plus `uname(2)`/`statvfs(2)`.
-- **GPU** (`/api/gpu`) — where the python sibling shells out to `nvidia-smi`,
-  a Jetson build runs a real Mojo matmul kernel through MAX's
-  `DeviceContext` (AOT cross-compiled, gpu-hello style) and reports the
-  device name and measured GFLOPS; CPU builds fall back to thermal-zone
-  info. The probe runs once on first request and is cached.
-- Plus `/api/logs` and `/api/debug` for headless inspection.
+```sh
+wendy run
+```
 
-The whole backend is a single-threaded `poll(2)` loop; camera and microphone
-open on the first WebSocket client and close with the last one, reopening
-with retry on unplug. The final image is slim debian: AOT binary + Mojo
-runtime `.so` set (MMF-009) + `libasound2`/`libsqlite3-0` — no Python, no
-Modular SDK at runtime.
+Your browser opens `http://<device-hostname>:{{.PORT}}` and displays
+**Hello from Wendy!**. The first build downloads dependencies; later builds reuse caches.
 
-## Notes
+## Make your first change
 
-- Backend logic lives in `main.mojo` (routing + loop), `carstore.mojo`
-  (CRUD), `sysinfo.mojo` (/api/system), `gpudiag.mojo` (/api/gpu).
-- `tests/run_tests.sh` exercises the CRUD JSON shapes, the /api/system
-  parsers, and the GPU thermal fallback against the vendored packages in a
-  local MAX container (no hardware needed).
-- Camera needs MJPEG-capable USB UVC hardware, as in `mojo/camera-feed`.
+Change `Hello from Wendy!` in `main.mojo`, then run `wendy run` again.
+Press **Refresh** to see your new message. Edit `frontend/src/main.tsx` for the
+page and `frontend/src/style.css` for its appearance.
+
+## How it works
+
+- `GET /api/hello` returns `{"message":"Hello from Wendy!"}`.
+- `GET /health` returns `{"status":"ok"}`.
+- The backend serves the built frontend from `static/`.
+- `Dockerfile` builds both parts. `wendy.json` grants network access, checks
+  readiness, and opens the browser. `PORT` defaults to `3001`.
+
+The **Device dashboard** example contains camera, audio, GPU, and persistent
+SQLite demos. Add those capabilities when your application needs them.
+
+## Local frontend development
+
+With a backend running, start the frontend with `cd frontend`, `npm ci`, and
+`npm run dev`. Set the `/api` proxy in `frontend/vite.config.ts` to your backend
+URL (the default is `http://localhost:{{.PORT}}`). Run `npm run build` to check it.
+
+## Troubleshooting
+
+Run `wendy device logs {{.APP_ID}} --tail 100` if the page cannot connect.
+Check that the device is reachable and port `{{.PORT}}` is free.
+Stop the app with `wendy device apps stop {{.APP_ID}}`.

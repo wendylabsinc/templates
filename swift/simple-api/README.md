@@ -1,5 +1,14 @@
 # {{.APP_ID}}
 
+```sh
+wendy run
+```
+
+Your browser opens the greeting endpoint. Change `hello-world` in `Sources/{{.APP_ID}}/App.swift`, run `wendy run` again, and refresh the page to see your change.
+
+The first build downloads dependencies; later builds reuse caches. Requirements
+and configuration are below.
+
 A small Swift HTTP API built with Hummingbird. It provides a greeting, a health
 check, and an example JSON endpoint for creating an item.
 

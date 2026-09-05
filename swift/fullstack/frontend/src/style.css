@@ -1,0 +1,18 @@
+:root { font-family: system-ui, sans-serif; color: #172c25; background: #f6f8f2; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 800px; margin: auto; padding: 64px 28px 32px; }
+.brand { display: block; font-size: 32px; font-weight: 800; letter-spacing: -2px; margin-bottom: 120px; }
+.dot { color: #718b48; }
+.eyebrow { font-size: 11px; font-weight: 700; letter-spacing: 2px; color: #58704a; }
+h1 { font-size: clamp(40px, 8vw, 72px); line-height: 1.1; letter-spacing: -3px; margin: 20px 0; }
+.intro { color: #637268; font-size: 18px; line-height: 1.6; }
+section { display: flex; align-items: center; gap: 14px; margin: 48px 0 120px; padding: 20px; background: white; border: 1px solid #dee5d7; border-radius: 16px; }
+section p { flex: 1; font-size: 15px; line-height: 1.5; }
+.status { width: 9px; height: 9px; flex-shrink: 0; border-radius: 50%; background: #628741; }
+.status.error { background: #ba523b; }
+button { font: inherit; color: #172c25; border: 1px solid #dee5d7; background: #f6f8f2; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+button:hover { background: #eaf0e1; }
+button:focus-visible { outline: 2px solid #58704a; outline-offset: 3px; }
+footer { color: #637268; font-size: 12px; }
+@media (max-width: 480px) { .brand { margin-bottom: 80px; } section { flex-wrap: wrap; } section p { min-width: 180px; } }

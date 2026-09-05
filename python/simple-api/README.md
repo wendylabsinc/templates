@@ -1,5 +1,14 @@
 # {{.APP_ID}}
 
+```sh
+wendy run
+```
+
+Your browser opens the greeting endpoint. Change `hello-world` in `app.py`, run `wendy run` again, and refresh the page to see your change.
+
+The first build downloads dependencies; later builds reuse caches. Requirements
+and configuration are below.
+
 A small Python HTTP API built with FastAPI. It provides a greeting, a health
 check, and an example JSON endpoint for creating an item.
 

@@ -1,5 +1,16 @@
 # camera-feed (Mojo)
 
+```sh
+wendy run
+```
+
+With a supported camera connected, your browser opens a live camera viewer.
+Change the page title in `index.html`, run `wendy run` again, and refresh the
+page to see your change.
+
+The first build downloads dependencies; later builds reuse caches. Requirements
+and configuration are below.
+
 Live webcam streaming on WendyOS in pure Mojo: `wendycam` captures MJPEG
 straight from V4L2 (libc FFI — `openat`/`ioctl`/`mmap`/`poll`, no GStreamer),
 and `wendynet` fans the JPEG frames out to browsers over hand-rolled

@@ -45,6 +45,13 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build individual template bundles
+        run: python3 scripts/build_template_bundles.py --output "$RUNNER_TEMP/template-bundles"
+
       - name: Sync repo to gs://${{ env.GCS_BUCKET }}/${{ github.ref_name }}/
         # Pass the ref through env, not inline ${{ }} interpolation, so an exotic
         # branch name (apostrophes, etc.) can't break shell quoting or inject commands.
@@ -57,8 +64,20 @@ jobs:
             --recursive \
             --delete-unmatched-destination-objects \
             --cache-control='public, max-age=300' \
-            --exclude='(^|/)\.git/|(^|/)\.github/|(^|/)\.DS_Store$|(^|/)tests/'
+            --exclude='(^|/)\.git/|(^|/)\.github/|(^|/)\.DS_Store$|(^|/)tests/|(^|/)scripts/|^bundles/|^template-index\.json$'
           echo "Published: https://templates.wendy.dev/${BRANCH}/"
+
+      # Keep old content-addressed bundles while a cached index may reference them.
+      # Publish the index last, after every archive it references is available.
+      - name: Publish bundles and index
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gcloud storage rsync "$RUNNER_TEMP/template-bundles/bundles" "gs://${GCS_BUCKET}/${BRANCH}/bundles" \
+            --recursive --cache-control='public, max-age=31536000, immutable'
+          gcloud storage cp "$RUNNER_TEMP/template-bundles/template-index.json" "gs://${GCS_BUCKET}/${BRANCH}/template-index.json" \
+            --cache-control='public, max-age=300'
 
   cleanup:
     # Remove a branch's published prefix when the branch is deleted.

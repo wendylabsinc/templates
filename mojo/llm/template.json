@@ -1,0 +1,35 @@
+{
+    "name": "llm",
+    "description": "Local LLM chat: MAX serve (OpenAI-compatible, GPU or CPU) + Open WebUI on WendyOS",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Open WebUI HTTP port",
+            "type": "integer",
+            "default": 9010,
+            "prompt": "Web UI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "MAX_MODEL",
+            "description": "Hugging Face model repo served by MAX (bf16 safetensors for GPU; FP32-native models for CPU-only hosts)",
+            "type": "string",
+            "default": "HuggingFaceTB/SmolLM2-135M-Instruct",
+            "prompt": "Model (HF repo)"
+        },
+        {
+            "name": "HF_TOKEN",
+            "description": "Optional Hugging Face token for gated models (e.g. Llama)",
+            "type": "string",
+            "default": "",
+            "prompt": "HF token (optional)"
+        }
+    ]
+}

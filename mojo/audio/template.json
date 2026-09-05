@@ -1,0 +1,21 @@
+{
+    "name": "audio",
+    "description": "Audio streaming: pure-Mojo ALSA PCM over WebSocket (no GStreamer)",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port",
+            "type": "integer",
+            "default": 9004,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

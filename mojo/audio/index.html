@@ -1,0 +1,293 @@
+<!doctype html>
+<html class="h-full bg-black overflow-hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{.APP_ID}} — Audio</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="h-full flex flex-col m-0 p-0 text-white font-sans overflow-hidden bg-black">
+    <!-- Waveform canvas fills the background -->
+    <canvas id="waveform" class="fixed inset-0 z-0 w-full h-full"></canvas>
+
+    <!-- Top bar: status left, logo right -->
+    <div class="relative z-10 p-6 flex justify-between items-start pointer-events-none">
+      <div class="pointer-events-auto">
+        <h1 class="text-xl font-bold drop-shadow-md">{{.APP_ID}}</h1>
+        <div class="flex items-center gap-2 mt-1">
+          <span id="status-dot" class="w-2 h-2 rounded-full bg-yellow-500 shadow-sm"></span>
+          <span id="status-text" class="text-xs font-medium uppercase tracking-wider drop-shadow-md">Connecting...</span>
+        </div>
+      </div>
+      <div class="flex flex-col items-end gap-3 pointer-events-auto">
+        <a href="https://wendy.sh" target="_blank" rel="noopener noreferrer">
+          <img src="/assets/wendy-logo.svg" alt="Wendy" class="h-8 w-auto drop-shadow-lg opacity-80 hover:opacity-100 transition-opacity" />
+        </a>
+        <div class="flex flex-col gap-1">
+          <label class="text-[10px] uppercase tracking-wider text-white/50">Microphone</label>
+          <select
+            id="mic-select"
+            class="bg-black/40 hover:bg-black/60 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm border border-white/10 outline-none cursor-pointer appearance-none min-w-[180px]"
+          >
+            <option value="">Loading...</option>
+          </select>
+        </div>
+        <div class="flex flex-col gap-1">
+          <label class="text-[10px] uppercase tracking-wider text-white/50">Speaker</label>
+          <select
+            id="speaker-select"
+            class="bg-black/40 hover:bg-black/60 text-white text-xs px-3 py-2 rounded-lg backdrop-blur-sm border border-white/10 outline-none cursor-pointer appearance-none min-w-[180px]"
+          >
+            <option value="">Loading...</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom bar: audio file buttons -->
+    <div class="relative z-10 mt-auto p-6 pointer-events-none">
+      <div id="audio-buttons" class="flex flex-wrap gap-3 items-center justify-center pointer-events-auto">
+        <span class="text-xs text-white/40 uppercase tracking-wider">Loading sounds...</span>
+      </div>
+    </div>
+
+    <script>
+      const canvas = document.getElementById("waveform");
+      const ctx = canvas.getContext("2d");
+      const statusDot = document.getElementById("status-dot");
+      const statusText = document.getElementById("status-text");
+      const audioButtons = document.getElementById("audio-buttons");
+      const micSelect = document.getElementById("mic-select");
+      const speakerSelect = document.getElementById("speaker-select");
+
+      let ws = null;
+      let reconnectDelay = 2000;
+      // Rolling buffer of recent samples so the waveform scrolls smoothly
+      // instead of snapping to each ~10 ms packet (~0.5 s on screen at 16 kHz).
+      const RING_SIZE = 8192;
+      let ring = new Float32Array(RING_SIZE);
+      // Eased per-bar heights (px), reused across frames for 60 fps smoothing.
+      let barHeights = null;
+
+      // Remembered device selections (persist across `wendy run`).
+      const SAVED_MIC_KEY = "wendy-audio-mic";
+      const SAVED_SPK_KEY = "wendy-audio-speaker";
+      // Mic id to switch to once the WebSocket is open (set before connect).
+      let pendingMic = null;
+
+      function resize() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      function setStatus(t, c) {
+        statusDot.className = `w-2 h-2 rounded-full bg-${c}-500`;
+        statusText.textContent = t;
+      }
+
+      // -- Waveform rendering -------------------------------------------------
+      function drawWaveform() {
+        ctx.fillStyle = "black";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Cap at RING_SIZE so step stays >= 1 even on very wide viewports
+        // (otherwise step rounds to 0 → divide-by-zero and out-of-range reads).
+        const bars = Math.min(RING_SIZE, Math.max(1, Math.floor(canvas.width / 6)));
+        if (!barHeights || barHeights.length !== bars) {
+          barHeights = new Float32Array(bars);
+        }
+        const step = Math.floor(RING_SIZE / bars);
+        const barW = Math.max(1, canvas.width / bars - 1);
+        const midY = canvas.height / 2;
+        const maxH = canvas.height * 0.8;
+        // Lower = smoother/slower response, higher = snappier (0..1).
+        const smoothing = 0.25;
+
+        ctx.fillStyle = "white";
+
+        for (let i = 0; i < bars; i++) {
+          // Average a slice of the rolling buffer.
+          let sum = 0;
+          for (let j = 0; j < step; j++) {
+            sum += Math.abs(ring[i * step + j]);
+          }
+          const target = Math.max(2, (sum / step) * maxH);
+          // Ease toward the target each frame so motion stays smooth at 60 fps
+          // even though audio packets arrive in bursts.
+          barHeights[i] += (target - barHeights[i]) * smoothing;
+          const h = barHeights[i];
+          const x = i * (canvas.width / bars);
+          ctx.fillRect(x, midY - h / 2, barW, h);
+        }
+
+        requestAnimationFrame(drawWaveform);
+      }
+      requestAnimationFrame(drawWaveform);
+
+      // -- WebSocket audio stream ---------------------------------------------
+      function connect() {
+        if (ws) ws.close();
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${proto}//${location.host}/stream`);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => {
+          setStatus("Live", "green");
+          // Apply a remembered mic that differs from the server default.
+          if (pendingMic) {
+            setStatus("Switching...", "yellow");
+            ws.send(JSON.stringify({ switch_microphone: pendingMic }));
+            pendingMic = null;
+          }
+        };
+
+        ws.onmessage = (e) => {
+          if (e.data instanceof ArrayBuffer) {
+            // PCM 16-bit signed LE → append to the rolling buffer (scrolling).
+            const pcm = new Int16Array(e.data);
+            const n = pcm.length;
+            if (n >= RING_SIZE) {
+              for (let i = 0; i < RING_SIZE; i++) ring[i] = pcm[n - RING_SIZE + i] / 32768;
+            } else {
+              ring.copyWithin(0, n); // shift older samples left
+              const off = RING_SIZE - n;
+              for (let i = 0; i < n; i++) ring[off + i] = pcm[i] / 32768;
+            }
+            reconnectDelay = 2000;
+            // Audio resumed → a pending switch has completed (fallback if the
+            // server ack is missed).
+            if (statusText.textContent === "Switching...") setStatus("Live", "green");
+            return;
+          }
+          // JSON control message (e.g. mic switch acknowledgement).
+          try {
+            const m = JSON.parse(e.data);
+            if (m.type === "mic_switched") setStatus("Live", "green");
+            else if (m.type === "mic_switch_failed") setStatus("Switch failed", "red");
+          } catch {}
+        };
+
+        ws.onclose = () => {
+          setStatus("Disconnected", "red");
+          ring.fill(0);
+          setTimeout(connect, reconnectDelay);
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 10000);
+        };
+      }
+
+      // -- Load audio file list and create buttons ----------------------------
+      async function loadSounds() {
+        try {
+          const res = await fetch("/sounds");
+          const sounds = await res.json();
+          if (!sounds.length) {
+            audioButtons.innerHTML = '<span class="text-xs text-white/40">No sound files in /assets</span>';
+            return;
+          }
+          audioButtons.innerHTML = "";
+          sounds.forEach((s) => {
+            const btn = document.createElement("button");
+            btn.textContent = s.name;
+            btn.className =
+              "rounded-lg bg-white/10 hover:bg-white/20 backdrop-blur-sm px-4 py-2 text-sm font-medium text-white cursor-pointer border border-white/10 transition-colors";
+            btn.onclick = async () => {
+              btn.disabled = true;
+              btn.classList.add("opacity-50");
+              try {
+                await fetch(`/play/${s.file}`, { method: "POST" });
+              } catch {}
+              setTimeout(() => { btn.disabled = false; btn.classList.remove("opacity-50"); }, 500);
+            };
+            audioButtons.appendChild(btn);
+          });
+        } catch {
+          audioButtons.innerHTML = '<span class="text-xs text-white/40">Failed to load sounds</span>';
+        }
+      }
+
+      // -- Load microphone list -------------------------------------------------
+      async function loadMicrophones() {
+        try {
+          const res = await fetch("/microphones");
+          const mics = await res.json();
+          micSelect.innerHTML = "";
+          if (!mics.length) {
+            micSelect.innerHTML = '<option>No microphones</option>';
+            return;
+          }
+          mics.forEach((m, i) => {
+            const o = document.createElement("option");
+            o.value = m.id;
+            o.textContent = m.name || `Microphone ${i}`;
+            micSelect.appendChild(o);
+          });
+          // Restore the previously selected mic if it's still present.
+          const saved = localStorage.getItem(SAVED_MIC_KEY);
+          if (saved && mics.some((m) => m.id === saved)) {
+            micSelect.value = saved;
+            // The server starts on mics[0]; only switch if we want a different one.
+            if (saved !== mics[0].id) switchMicrophone(saved);
+          }
+        } catch {
+          micSelect.innerHTML = '<option>Failed to load</option>';
+        }
+      }
+
+      // Switch the mic now if the socket is open, otherwise once it opens.
+      function switchMicrophone(id) {
+        if (ws?.readyState === WebSocket.OPEN) {
+          setStatus("Switching...", "yellow");
+          ws.send(JSON.stringify({ switch_microphone: id }));
+        } else {
+          pendingMic = id;
+        }
+      }
+
+      micSelect.addEventListener("change", () => {
+        if (!micSelect.value) return;
+        localStorage.setItem(SAVED_MIC_KEY, micSelect.value);
+        switchMicrophone(micSelect.value);
+      });
+
+      // -- Load speakers --------------------------------------------------------
+      async function loadSpeakers() {
+        try {
+          const res = await fetch("/speakers");
+          const speakers = await res.json();
+          speakerSelect.innerHTML = "";
+          if (!speakers.length) {
+            speakerSelect.innerHTML = '<option>No speakers</option>';
+            return;
+          }
+          speakers.forEach((s, i) => {
+            const o = document.createElement("option");
+            o.value = s.id;
+            o.textContent = s.name || `Speaker ${i}`;
+            speakerSelect.appendChild(o);
+          });
+          // Restore the previously selected speaker, else default to the first.
+          const saved = localStorage.getItem(SAVED_SPK_KEY);
+          const chosen =
+            saved && speakers.some((s) => s.id === saved) ? saved : speakers[0].id;
+          speakerSelect.value = chosen;
+          fetch(`/speaker/${chosen}`, { method: "POST" });
+        } catch {
+          speakerSelect.innerHTML = '<option>Failed to load</option>';
+        }
+      }
+
+      speakerSelect.addEventListener("change", () => {
+        if (!speakerSelect.value) return;
+        localStorage.setItem(SAVED_SPK_KEY, speakerSelect.value);
+        fetch(`/speaker/${speakerSelect.value}`, { method: "POST" });
+      });
+
+      loadMicrophones();
+      loadSpeakers();
+      loadSounds();
+      connect();
+    </script>
+  </body>
+</html>

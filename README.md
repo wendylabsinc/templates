@@ -71,3 +71,15 @@ it is not selectable through `wendy init`.
 
 The audio templates include sample WAV files from
 [pdx-cs-sound/wavs](https://github.com/pdx-cs-sound/wavs).
+
+
+### GPU build capabilities
+
+CUDA-selecting templates consume `WENDY_HAS_CUDA`, injected by the Wendy CLI
+from the agent's `gpu_capabilities.compute_backends`. `WENDY_HAS_GPU` continues
+to mean hardware presence: a Broadcom, ARM, or Metal GPU does not imply CUDA.
+Update CLI and agent together before deploying these templates. An older agent
+without capability metadata gets a CUDA hint only for an explicit NVIDIA vendor.
+Custom Dockerfiles that used `WENDY_HAS_GPU` to choose CUDA should migrate to
+`WENDY_HAS_CUDA` too. Ollama uses its generic image for every vendor, with a
+JetPack 6 backend hint only for NVIDIA on JetPack 6.

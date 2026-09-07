@@ -47,7 +47,7 @@ function isRpi(): boolean {
   }
 }
 
-const USE_GPU = envTruthy("WENDY_HAS_GPU");
+const USE_GPU = envTruthy("WENDY_HAS_CUDA");
 const IS_RPI = isRpi();
 const USE_PASSTHROUGH = !USE_GPU || IS_RPI;
 const MIN_INTERVAL_MS = 1000 / (USE_GPU ? 15 : 3);

@@ -69,9 +69,9 @@ COPY model.py /app/
 # Surface the device capabilities the CLI passed in (informational; the app
 # probes the MAX driver at runtime for the actual GPU decision).
 ARG WENDY_PLATFORM=generic
-ARG WENDY_HAS_GPU=""
+ARG WENDY_HAS_CUDA=""
 ENV WENDY_PLATFORM=${WENDY_PLATFORM} \
-    WENDY_HAS_GPU=${WENDY_HAS_GPU}
+    WENDY_HAS_CUDA=${WENDY_HAS_CUDA}
 
 # MMF-004: the VMM defragmenting allocator crashes on integrated GPUs
 # (Jetson); harmless on CPU-only devices.

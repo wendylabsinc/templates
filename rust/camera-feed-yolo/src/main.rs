@@ -677,7 +677,7 @@ fn is_rpi() -> bool {
 async fn main() {
     gstreamer::init().expect("Failed to initialize GStreamer");
 
-    let use_gpu = env_truthy("WENDY_HAS_GPU");
+    let use_gpu = env_truthy("WENDY_HAS_CUDA");
     let rpi = is_rpi();
     let use_passthrough = !use_gpu || rpi;
 

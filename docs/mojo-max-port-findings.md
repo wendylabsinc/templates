@@ -553,7 +553,7 @@ current limit.
 | WDY-2908 | Root disk scalars retained; optional container-storage filesystem reported from mount/device identity, including binds. Prune advice requires confirmed storage pressure. | Injectable mount and v1/v2 metadata fixtures pass. Thor `df` comparison pending. |
 | WDY-2909 | Hardware presence is separate from cuda/rocm/metal capabilities. Broadcom/ARM/Qualcomm/Vivante and PCI vendors identified; CUDA templates use WENDY_HAS_CUDA. Ollama accepts arbitrary vendors. | Vendor/backend fixtures and real Mac Metal metadata pass. Linux hardware acceptance pending. |
 | WDY-2910 | Attached runs keep checking a running service every 5 seconds after the initial deadline. Browser/hooks await readiness once; cancellation and replacement stop obsolete probes. | Deterministic lifecycle fixtures pass. Real Mac: timeout 1 s, readiness 11 s, one hook. |
-| WDY-2911 | Native command/cwd/env/file sync, capability negotiation, persisted launch configuration and PID birth identity; Mojo/MAX Mac browser chat added. | Swift path/identity/reconciliation tests pass. MAX and WebUI on Apple Silicon serve browser-chat requests; cold model and warm runtime tested. Release pending. |
+| WDY-2911 | Native command/cwd/env/file sync, capability negotiation, persisted launch configuration and PID birth identity; Mojo/MAX Mac browser chat added. | Swift path/identity/reconciliation tests pass. MAX and WebUI on Apple Silicon serve browser-chat requests; fresh runtime reaches browser readiness in about 465.5 s, warm runtime and restart recovery pass. Release pending. |
 | WDY-2912 | Empty log heartbeats every 15 seconds; serialized writers and cancellation cleanup. CLI/MCP omit heartbeat data; Go keepalive ACK timeout 20 seconds. | Go/Swift fixtures pass. One real Mac loopback subscription survived 625 s and received its new log, with one output line. Direct WiFi and cloud ten-minute acceptance pending; original WiFi cause remains unconfirmed. |
 | WDY-2913 | Explicit empty isolation remains authoritative during cache hydration. Replacement still cleans up CNI using old persisted configuration. | Linux race fixtures pass. Full deployed-group namespace/entitlement/CNI acceptance pending. |
 
@@ -575,6 +575,16 @@ and the builder fallback version plus both architecture checksums remain gates.
     83.8 s. Warm redeploy: compile 0.6 s, MAX healthy after 9.1 s; both Python
     environments reused. The first package-install run found the host-flag
     mismatch above; the corrected model-cold run completed successfully.
+  - Final uninterrupted deployment used a new app ID with no runtime directory:
+    both environments, model/cache, and WebUI data were created afresh. Browser
+    readiness took approximately 465.5 s, within the 600 s budget; MAX became
+    healthy after 109.6 s. The default browser hook opened exactly once after
+    readiness and WebUI answered a chat request. uv was already installed on
+    this Mac. Both child listeners closed after the app was stopped, and the
+    development agent was stopped using `make agent-stop`.
+  - Final CLI scaffold passed with `--target darwin --language mojo --template
+    mac-llm --branch ed/wdy-2906-2913`; the new catalog and Darwin selection flow
+    produced the native launcher and configuration.
   - Open WebUI's browser-chat route lists the model and returns **"Hello!"**
     through MAX. Account data, secret, install stamps, and runtime marker
     survive redeploy and agent restart. The launcher PID changes and its birth

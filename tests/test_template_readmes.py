@@ -143,7 +143,9 @@ def test_relative_markdown_links_resolve():
     link_pattern = re.compile(r"\[[^]]*]\(([^)]+)\)")
 
     for readme in repo_markdown_files():
-        for target in link_pattern.findall(readme.read_text()):
+        # Code examples such as `fn[Type](ptr, flags)` aren't Markdown links.
+        prose = re.sub(r"```.*?```|`[^`]*`", "", readme.read_text(), flags=re.S)
+        for target in link_pattern.findall(prose):
             target = target.strip().strip("<>")
             if not target or target.startswith(("#", "http://", "https://", "mailto:")):
                 continue

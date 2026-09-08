@@ -48,7 +48,7 @@ generated project README contains the setup details.
 | `ip-camera-feed` | [Python](python/ip-camera-feed/) | WendyOS with a registered IP camera and loopback support | View a platform-managed IP camera through its V4L2 node |
 | `voice-ai-pipecat` | [Python](python/voice-ai-pipecat/) | WendyOS, audio devices, network, and an AI provider key | Wake-word voice assistant with local speech processing and cloud LLMs |
 | `llm` | [Python](python/llm/) | WendyOS with enough disk and memory for the selected model | Ollama and Open WebUI multi-service chat app |
-| `mac-llm` | [Swift](swift/mac-llm/) | Wendy Agent for Mac on Apple Silicon | Native MLX model backend with Open WebUI |
+| `mac-llm` | [Swift](swift/mac-llm/), [Mojo](mojo/mac-llm/) | Wendy Agent for Mac on Apple Silicon | Native MLX or MAX model backend with Open WebUI |
 | `ros2-talker-listener` | [Swift](swift/ros2-talker-listener/) | WendyOS and ROS 2-compatible networking | Swift ROS 2 publisher and subscriber over CycloneDDS |
 | `go2-rc` | [Python](python/go2-rc/) | Unitree Go2 EDU | Browser teleoperation with motion and camera services |
 | `g1-rc` | [Python](python/g1-rc/) | Unitree G1 with supported camera and robot network | Browser teleoperation, posture, gestures, and arm presets |
@@ -71,3 +71,15 @@ it is not selectable through `wendy init`.
 
 The audio templates include sample WAV files from
 [pdx-cs-sound/wavs](https://github.com/pdx-cs-sound/wavs).
+
+
+### GPU build capabilities
+
+CUDA-selecting templates consume `WENDY_HAS_CUDA`, injected by the Wendy CLI
+from the agent's `gpu_capabilities.compute_backends`. `WENDY_HAS_GPU` continues
+to mean hardware presence: a Broadcom, ARM, or Metal GPU does not imply CUDA.
+Update CLI and agent together before deploying these templates. An older agent
+without capability metadata gets a CUDA hint only for an explicit NVIDIA vendor.
+Custom Dockerfiles that used `WENDY_HAS_GPU` to choose CUDA should migrate to
+`WENDY_HAS_CUDA` too. Ollama uses its generic image for every vendor, with a
+JetPack 6 backend hint only for NVIDIA on JetPack 6.

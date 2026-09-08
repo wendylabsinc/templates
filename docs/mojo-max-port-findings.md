@@ -538,48 +538,68 @@ Severity: **blocker** (prevents a port), **major** (forces a workaround or non-M
 
 ## Appendix W: WendyOS platform issues hit during porting (NOT for Modular)
 
-Found while deploying `mojo/llm` as a two-service group on WendyOS 0.18.2. First hit with
-CLI/agent 2026.08.18; re-tested 2026-08-24 with **CLI 2026.08.22-053704 + agent
-2026.08.22-032001** (matrix results inline):
+The August observations below are historical evidence, not a description of
+current main. The audit in [templates PR #100](https://github.com/wendylabsinc/templates/pull/100)
+and the 2026-09-07 implementation use WendyOS `de38678cc` and builder `61fdb278`.
+`.mojo` substitution and the single-service entitlement fingerprint were already
+fixed at that base. Readiness starts after container startup. The reported
+256 MiB group memory limit was not reproducible on newer agents and is not a
+current limit.
 
-1. **Group-service containers get an empty network namespace by default** — re-tested on
-   2026.08.22: a group deployed with *no* network entitlement (the exact shape of the
-   shipped `python/llm`) gets containers whose netns holds **only `lo`** (`ip -brief addr`
-   from inside), i.e. **no egress and no ingress** — published ports unreachable from the
-   LAN while a single-service app on the same device serves fine. Rewriting
-   `/etc/resolv.conf` can't help; there is no interface. **Workaround (verified 2026-08-24):**
-   an **app-level** `{ "type": "network", "mode": "host" }` entitlement on a **fresh create**
-   attaches host networking — egress (HF download) and LAN ingress both work, and an
-   in-place redeploy *keeps* networking if the entitlement was already present at create
-   time. Per-service placement of the same entitlement did not work on 2026.08.18 (not
-   re-tested since). Consequence: `python/llm`'s group (Ollama pull at runtime) cannot work
-   as shipped on these agents either.
-2. **Group-service memory cap (~256 MiB) — appears fixed/lifted on agent 2026.08.22**: on
-   2026.08.18 MAX's estimator saw 254 MiB ("Model size exceeds available memory
-   (256.60 MiB > 76.25 MiB)") and Open WebUI never finished booting; on 2026.08.22 the same
-   group compiles and serves the model (no estimator complaint) and Open WebUI boots fully.
-   No memory/resources knob exists in wendy.json to have caused this; agent-side change
-   presumed.
-3. Entitlement changes on an existing app group are not applied by `wendy run` redeploy —
-   a full `apps remove` + fresh deploy is required. (Not re-tested on 2026.08.22; the
-   workaround in W1 was applied via remove + fresh create.)
-4. `wendy device logs` streaming connections drop after ~2 minutes of quiet (WiFi device;
-   still observed with 2026.08.22 — "keepalive ping failed" during a long graph compile).
-   `wendy device shell`: unsupported by agent with CLI 2026.08.18; with CLI 2026.08.22 it
-   connects (interactive TTY only — no one-shot `-- command` use over a pipe).
-5. **(new, found 2026-08-24)** `wendy run`'s readiness probe window starts before image
-   transfer completes and spans service cold-start; a first-boot graph compile (~4 min) plus
-   Open WebUI's first-boot downloads exceeded the template's 300 s `timeoutSeconds`, so
-   `wendy run` reports a readiness timeout for a deploy that comes up healthy a minute
-   later. Cosmetic, but users will read it as a failed deploy.
-6. **(new, found 2026-08-24)** `wendy init` template substitution skips `.mojo` files:
-   `isTextFile()` in `go/internal/cli/commands/template.go` (WendyAgent) allowlists
-   `.py/.rs/.swift/...` but not `.mojo`, so `{{.PORT}}`-style tokens survive into
-   scaffolded Mojo sources and the build fails on a parse error. Until the CLI fix ships,
-   the Mojo templates read `PORT` from the environment (set via `ENV PORT={{.PORT}}` in
-   the Dockerfile, which *is* substituted); one-line CLI fix proposed in WendyAgent.
+| Issue | Implemented behavior | Verification / release status |
+|---|---|---|
+| WDY-2906 | Warn before building when effective app/service networking gives only loopback. Explain explicit host, bridge, and none; shared secondaries use the primary namespace. | Deterministic warning fixtures pass. Orin/Thor/Pi LAN and DNS acceptance pending. Bridge still does not publish LAN ports. |
+| WDY-2907 | App → service → global CLI environment, last CLI value wins including empty values. The same result drives create, fingerprint, and watch. | Go environment/watch fixtures pass; two-service integration fixture extended. |
+| WDY-2908 | Root disk scalars retained; optional container-storage filesystem reported from mount/device identity, including binds. Prune advice requires confirmed storage pressure. | Injectable mount and v1/v2 metadata fixtures pass. Thor `df` comparison pending. |
+| WDY-2909 | Hardware presence is separate from cuda/rocm/metal capabilities. Broadcom/ARM/Qualcomm/Vivante and PCI vendors identified; CUDA templates use WENDY_HAS_CUDA. Ollama accepts arbitrary vendors. | Vendor/backend fixtures and real Mac Metal metadata pass. Linux hardware acceptance pending. |
+| WDY-2910 | Attached runs keep checking a running service every 5 seconds after the initial deadline. Browser/hooks await readiness once; cancellation and replacement stop obsolete probes. | Deterministic lifecycle fixtures pass. Real Mac: timeout 1 s, readiness 11 s, one hook. |
+| WDY-2911 | Native command/cwd/env/file sync, capability negotiation, persisted launch configuration and PID birth identity; Mojo/MAX Mac browser chat added. | Swift path/identity/reconciliation tests pass. MAX and WebUI on Apple Silicon serve browser-chat requests; fresh runtime reaches browser readiness in about 465.5 s, warm runtime and restart recovery pass. Release pending. |
+| WDY-2912 | Empty log heartbeats every 15 seconds; serialized writers and cancellation cleanup. CLI/MCP omit heartbeat data; Go keepalive ACK timeout 20 seconds. | Go/Swift fixtures pass. One real Mac loopback subscription survived 625 s and received its new log, with one output line. Direct WiFi and cloud ten-minute acceptance pending; original WiFi cause remains unconfirmed. |
+| WDY-2913 | Explicit empty isolation remains authoritative during cache hydration. Replacement still cleans up CNI using old persisted configuration. | Linux race fixtures pass. Full deployed-group namespace/entitlement/CNI acceptance pending. |
+
+No production version has shipped from these branches yet. Do not close issues
+from unit-test evidence alone. Hardware acceptance, stable agent/CLI release,
+and the builder fallback version plus both architecture checksums remain gates.
 
 ## Appendix B: device validation log
+
+
+- **2026-09-07 · Apple M4 Max (16 CPU cores, 48 GiB), macOS 26.6.2 (25G83) ·
+  development CLI `dev`, native agent `0000.00.00-000000-dev` · MAX 26.5.0 /
+  Python 3.14.7, Open WebUI 0.9.5 / Python 3.11.16, uv 0.12.10:**
+  - `mojo/mac-llm` installs both environments through native deployment and
+    serves `HuggingFaceTB/SmolLM2-135M-Instruct` on Metal. MAX 26.5 uses
+    `MAX_SERVE_HOST=127.0.0.1` (it has no `--host` option); listener checked at
+    `127.0.0.1:11435`. Open WebUI serves the browser on port 8080.
+  - Cold model cache: weight download 28.6 s, compile 29.3 s, MAX healthy after
+    83.8 s. Warm redeploy: compile 0.6 s, MAX healthy after 9.1 s; both Python
+    environments reused. The first package-install run found the host-flag
+    mismatch above; the corrected model-cold run completed successfully.
+  - Final uninterrupted deployment used a new app ID with no runtime directory:
+    both environments, model/cache, and WebUI data were created afresh. Browser
+    readiness took approximately 465.5 s, within the 600 s budget; MAX became
+    healthy after 109.6 s. The default browser hook opened exactly once after
+    readiness and WebUI answered a chat request. uv was already installed on
+    this Mac. Both child listeners closed after the app was stopped, and the
+    development agent was stopped using `make agent-stop`.
+  - Final CLI scaffold passed with `--target darwin --language mojo --template
+    mac-llm --branch ed/wdy-2906-2913`; the new catalog and Darwin selection flow
+    produced the native launcher and configuration.
+  - Open WebUI's browser-chat route lists the model and returns **"Hello!"**
+    through MAX. Account data, secret, install stamps, and runtime marker
+    survive redeploy and agent restart. The launcher PID changes and its birth
+    time is persisted; the replaced launcher exits.
+  - Native readiness fixture: explicit environment wins (including empty),
+    cwd is the synced `data` subdirectory, 1 s deadline prints "still starting",
+    readiness succeeds at 11 s, host hook runs exactly once.
+  - One CLI log subscription over local loopback ran 625 s, received the app's
+    log emitted after 605 s of silence, and rendered exactly one JSON line.
+    This is **local transport evidence**, not WiFi or cloud acceptance.
+  - Development binary SHA-256: CLI
+    `e7090a14c8b746652ba5edc84ef3f78a4b97788d7fd91e7d70b93e77828e256a`;
+    Mac agent archive
+    `3810dbc9971d2c986cabbcfced51a18399202cd0e9674ac025d932383978b4b2`.
+    No stable release is claimed.
 
 Populated as spikes and ports run. Format: date · device · JetPack/L4T · MAX version · what ran · result.
 

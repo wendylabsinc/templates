@@ -38,7 +38,10 @@ EXTRA_DOCKERFILES = (
 
 
 def _dockerfiles_with_the_shim() -> list[pathlib.Path]:
-    paths = sorted(REPO_ROOT.glob("*/camera-feed-yolo/Dockerfile"))
+    # MAX/Mojo uses its own current CUDA runtime, not the dustynv CUDA-12
+    # compatibility layer. Keep the six CUDA-12 consumers explicit.
+    paths = [REPO_ROOT / language / "camera-feed-yolo" / "Dockerfile"
+             for language in ("cpp", "node", "python", "rust", "swift")]
     paths += [REPO_ROOT / rel for rel in EXTRA_DOCKERFILES]
     return paths
 

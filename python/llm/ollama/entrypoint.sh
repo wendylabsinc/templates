@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -f /etc/wendy-jetpack6 ]]; then
+  export JETSON_JETPACK=6
+fi
+
 mkdir -p "$OLLAMA_MODELS"
 
 # Pull the configured model in the background once the server is up, so the

@@ -536,7 +536,7 @@ struct CameraFeedYoloService: Service {
     let logger: Logger
 
     func run() async throws {
-        let useGpu = envTruthy("WENDY_HAS_GPU")
+        let useGpu = envTruthy("WENDY_HAS_CUDA")
         let rpi = isRpi()
         let usePassthrough = !useGpu || rpi
         let minIntervalMs: UInt64 = useGpu ? UInt64(1000 / 15) : UInt64(1000 / 3)

@@ -12,33 +12,15 @@
 # shim is needed here: that fix is for JetPack-6 images running on JetPack-7
 # hosts, whereas stock ollama ships its own CUDA backends and picks the one
 # matching the host at startup.
+FROM ollama/ollama:latest AS final
 ARG WENDY_GPU_VENDOR=generic
 ARG WENDY_JETPACK_MAJOR=0
 
-# Stock image: CUDA on x86_64 where present, CPU otherwise.
-FROM ollama/ollama:latest AS base-generic
-
-# JetPack 7 (L4T r38 / CUDA 13, SBSA arm64): stock ollama's cuda_sbsa backend
-# detects Thor (compute capability 11.0) since v0.11.11, so the stock image
-# applies here too. Do not pin ghcr.io/nvidia-ai-iot/ollama for this: its only
-# published tag is frozen at Ollama 0.11.6 (Aug 2025) and rejects newer model
-# architectures (e.g. laguna) with "unknown model architecture".
-FROM base-generic AS base-nvidia-jp7
-
-# JetPack 6 (Orin on L4T r36): recent official arm64 ollama images bundle
-# JetPack CUDA libs, but /etc/nv_tegra_release is not visible in-container,
-# so force the JetPack-6 backend explicitly.
-FROM ollama/ollama:latest AS base-nvidia-jp6
-ENV JETSON_JETPACK=6
-
-# Alias stages so every WENDY_GPU_VENDOR x WENDY_JETPACK_MAJOR combination
-# resolves (jp0 = arg not injected, e.g. x86 NVIDIA dGPU or plain docker build).
-FROM base-generic AS base-nvidia-jp0
-FROM base-generic AS base-generic-jp0
-FROM base-generic AS base-generic-jp6
-FROM base-generic AS base-generic-jp7
-
-FROM base-${WENDY_GPU_VENDOR}-jp${WENDY_JETPACK_MAJOR} AS final
+# Every vendor uses the stock image. Only JetPack 6 needs an explicit backend
+# hint; vendor discovery may report values such as broadcom, arm, or qualcomm.
+RUN if [ "$WENDY_GPU_VENDOR" = nvidia ] && [ "$WENDY_JETPACK_MAJOR" = 6 ]; then \
+        touch /etc/wendy-jetpack6; \
+    fi
 
 ENV DEBIAN_FRONTEND=noninteractive
 

@@ -1,0 +1,12 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "language": "mojo",
+    "platform": "darwin",
+    "files": [{"path": "launcher.py"}],
+    "brewfile": "Brewfile.wendy",
+    "run": {"command": "/usr/bin/python3", "args": ["launcher.py"], "cwd": "."},
+    "env": {"MAX_MODEL": "{{.MAX_MODEL}}"},
+    "readiness": {"tcpSocket": {"port": {{.PORT}}}, "timeoutSeconds": 600},
+    "hooks": {"postStart": {"openURL": "http://%WENDY_HOSTNAME%:{{.PORT}}"}}
+}

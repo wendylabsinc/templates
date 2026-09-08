@@ -699,7 +699,7 @@ int main()
 {
     gst_init(nullptr, nullptr);
 
-    bool useGpu = envTruthy("WENDY_HAS_GPU");
+    bool useGpu = envTruthy("WENDY_HAS_CUDA");
     bool rpi = isRpi();
     bool usePassthrough = !useGpu || rpi;
     LOG_INFO << "Startup: has_gpu=" << useGpu << " is_rpi=" << rpi

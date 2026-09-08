@@ -67,10 +67,10 @@ def _env_bool(name: str) -> bool | None:
 
 
 def _has_cuda() -> bool:
-    # wendy CLI bakes WENDY_HAS_GPU into the image from the agent's device
-    # capability probe (see WENDY_HAS_GPU / WENDY_GPU_VENDOR build args). Prefer
+    # wendy CLI bakes WENDY_HAS_CUDA into the image from the agent's device
+    # capability probe (see WENDY_HAS_CUDA / WENDY_GPU_VENDOR build args). Prefer
     # that over runtime detection so CPU-only devices never load the CUDA path.
-    hint = _env_bool("WENDY_HAS_GPU")
+    hint = _env_bool("WENDY_HAS_CUDA")
     if hint is False:
         return False
     if os.environ.get("WENDY_GPU_VENDOR", "").lower() not in ("", "nvidia"):

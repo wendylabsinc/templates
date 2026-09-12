@@ -313,6 +313,28 @@ def _enumerate_linux_cameras() -> list[dict]:
     return cameras
 
 
+# Capture-retry backoff bounds. A device with no camera used to retry a dead
+# node every 2s forever; back off instead so the log stays readable.
+_CAPTURE_RETRY_MIN_S = 2.0
+_CAPTURE_RETRY_MAX_S = 30.0
+
+
+def _first_capture_device() -> str | None:
+    """First /dev/video* node v4l2 reports as a real capture source, else None.
+
+    The stream path used to fall back to /dev/video0 unconditionally. On a board
+    whose only /dev/video* nodes are mem2mem codecs (e.g. qcom-iris on the
+    Dragonwing IQ-8275) that node can never produce frames, so opening it just
+    failed on a loop.
+    """
+    if IS_MACOS:
+        return None
+    for path in _linux_candidate_video_nodes():
+        if _v4l2_is_capture(path):
+            return path
+    return None
+
+
 def enumerate_cameras() -> list[dict]:
     if not IS_MACOS or not _HAS_GSTREAMER:
         return _enumerate_linux_cameras()
@@ -364,6 +386,7 @@ class YOLOCamera:
         self._last_meta: dict = {"detections": 0, "inference_ms": 0, "classes": {}, "boxes": [], "frame_w": 0, "frame_h": 0}
         self._capture_mode: str = "opencv" if _FORCE_OPENCV else "gstreamer"
         self._opencv_thread: threading.Thread | None = None
+        self._last_status_payload: str | None = None
         self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
         self._inference_thread.start()
 
@@ -556,6 +579,67 @@ class YOLOCamera:
                 if self._restart_task is asyncio.current_task():
                     self._restart_task = None
 
+    def _push_status(self, queues: list[asyncio.Queue], payload: str):
+        """Queue a frameless status message: (None, payload).
+
+        The websocket handler sends the text and skips send_bytes when the frame
+        is None.
+        """
+        if not self._loop or not queues:
+            return
+
+        def _do_push():
+            for q in queues:
+                if q.full():
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                try:
+                    q.put_nowait((None, payload))
+                except asyncio.QueueFull:
+                    pass
+
+        self._loop.call_soon_threadsafe(_do_push)
+
+    def _broadcast_status(self, status: str, message: str):
+        """Tell every connected client, at most once per state change.
+
+        Deduplicated so a retry loop notifies on each transition rather than on
+        every attempt. New clients are served by _replay_status_to() instead,
+        which is not subject to this dedup.
+        """
+        payload = json.dumps({"status": status, "message": message})
+        with self._lock:
+            if payload == self._last_status_payload:
+                return
+            self._last_status_payload = payload
+            queues = list(self.queues.values())
+        self._push_status(queues, payload)
+
+    def _note_status(self, status: str, message: str):
+        """Record the current status without pushing it to existing clients.
+
+        Used on connect: the clients already attached were told when they
+        connected, so only the new one needs it (via _replay_status_to).
+        """
+        with self._lock:
+            self._last_status_payload = json.dumps(
+                {"status": status, "message": message}
+            )
+
+    def _replay_status_to(self, q: asyncio.Queue):
+        """Give a just-connected client the current status.
+
+        Without this, the dedup in _broadcast_status means only the very first
+        client ever learns why there is no video — every later connection, including
+        each browser reconnect, is met with silence.
+        """
+        with self._lock:
+            payload = self._last_status_payload
+        if payload:
+            self._push_status([q], payload)
+
     def _distribute_frame(self, raw_jpeg: bytes):
         """Thread-safe: marshals the actual queue push onto the asyncio loop."""
         if not self._loop:
@@ -600,10 +684,13 @@ class YOLOCamera:
         return Gst.FlowReturn.OK
 
     def _try_opencv_fallback(self, device: str | None) -> bool:
-        candidates = [device, "/dev/video0"] if device and device != "/dev/video0" else ["/dev/video0"]
+        candidates: list[str] = []
+        if device and _v4l2_is_capture(device):
+            candidates.append(device)
+        discovered = _first_capture_device()
+        if discovered and discovered not in candidates:
+            candidates.append(discovered)
         for dev in candidates:
-            if dev is None:
-                continue
             cap = cv2.VideoCapture(dev)
             opened = cap.isOpened()
             cap.release()
@@ -623,24 +710,43 @@ class YOLOCamera:
         self._opencv_thread.start()
 
     def _opencv_loop(self, initial_device: str):
+        backoff = _CAPTURE_RETRY_MIN_S
         while True:
             with self._lock:
                 device = self._current_device or initial_device
 
-            cap = cv2.VideoCapture(device)
-            if not cap.isOpened() and device != "/dev/video0":
-                cap.release()
-                cap = cv2.VideoCapture("/dev/video0")
-            if not cap.isOpened():
-                cap.release()
-                cap = cv2.VideoCapture(0)
-
-            if not cap.isOpened():
-                cap.release()
-                logger.warning("OpenCV: no camera on %s, retrying in 2s", device)
-                time.sleep(2)
+            # Verify the node is a capture source before handing it to OpenCV.
+            # Without this an encoder/decoder node fails open() on every pass and
+            # OpenCV logs ~8 lines of V4L2/FFMPEG errors each time.
+            if not _v4l2_is_capture(device):
+                logger.warning(
+                    "OpenCV: %s is not a V4L2 capture device; retrying in %.0fs",
+                    device, backoff,
+                )
+                self._broadcast_status(
+                    "no_capture_device",
+                    f"{device} is not a capture device.",
+                )
+                time.sleep(backoff)
+                backoff = min(backoff * 2, _CAPTURE_RETRY_MAX_S)
                 continue
 
+            cap = cv2.VideoCapture(device)
+            if not cap.isOpened():
+                cap.release()
+                logger.warning(
+                    "OpenCV: could not open %s, retrying in %.0fs", device, backoff
+                )
+                self._broadcast_status(
+                    "camera_unavailable", f"Could not open {device}."
+                )
+                time.sleep(backoff)
+                backoff = min(backoff * 2, _CAPTURE_RETRY_MAX_S)
+                continue
+
+            backoff = _CAPTURE_RETRY_MIN_S
+            with self._lock:
+                self._last_status_payload = None
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             logger.info("OpenCV camera opened: %s", device)
@@ -676,8 +782,12 @@ class YOLOCamera:
             finally:
                 cap.release()
 
-            logger.warning("OpenCV: camera lost on %s, retrying in 2s", device)
-            time.sleep(2)
+            logger.warning(
+                "OpenCV: camera lost on %s, retrying in %.0fs", device, backoff
+            )
+            self._broadcast_status("camera_lost", f"Lost camera on {device}.")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, _CAPTURE_RETRY_MAX_S)
 
     def _inference_loop(self):
         last_inference = 0.0
@@ -748,10 +858,23 @@ class YOLOCamera:
             should_start_gst = mode == "gstreamer" and self.pipeline is None
 
         if mode == "opencv":
-            device = self._current_device or "/dev/video0"
-            self._start_opencv_thread(device)
+            device = self._current_device or _first_capture_device()
+            if device is None:
+                logger.warning(
+                    "No V4L2 capture device present; not starting capture thread"
+                )
+                self._note_status(
+                    "no_capture_device",
+                    "No camera detected on this device.",
+                )
+            else:
+                self._start_opencv_thread(device)
         elif should_start_gst:
             self._ensure_restart_task("client connected")
+
+        # Always tell the new client the current state; _broadcast_status above
+        # is deduplicated and stays silent once an earlier client was told.
+        self._replay_status_to(q)
 
         logger.info("Client added (total: %d)", len(self.queues))
         return q
@@ -810,7 +933,8 @@ async def websocket_stream(websocket: WebSocket):
             while True:
                 frame_data, meta = await q.get()
                 await websocket.send_text(meta)
-                await websocket.send_bytes(frame_data)
+                if frame_data is not None:
+                    await websocket.send_bytes(frame_data)
         except Exception:
             pass
 

@@ -579,20 +579,12 @@ class YOLOCamera:
                 if self._restart_task is asyncio.current_task():
                     self._restart_task = None
 
-    def _broadcast_status(self, status: str, message: str):
-        """Push a frameless status message so the UI can explain a black screen.
+    def _push_status(self, queues: list[asyncio.Queue], payload: str):
+        """Queue a frameless status message: (None, payload).
 
-        Sent as (None, payload): the websocket handler sends the text and skips
-        the binary frame. Deduplicated so a retry loop notifies once per state
-        change rather than on every attempt.
+        The websocket handler sends the text and skips send_bytes when the frame
+        is None.
         """
-        payload = json.dumps({"status": status, "message": message})
-        with self._lock:
-            if payload == self._last_status_payload:
-                return
-            self._last_status_payload = payload
-            queues = list(self.queues.values())
-
         if not self._loop or not queues:
             return
 
@@ -609,6 +601,44 @@ class YOLOCamera:
                     pass
 
         self._loop.call_soon_threadsafe(_do_push)
+
+    def _broadcast_status(self, status: str, message: str):
+        """Tell every connected client, at most once per state change.
+
+        Deduplicated so a retry loop notifies on each transition rather than on
+        every attempt. New clients are served by _replay_status_to() instead,
+        which is not subject to this dedup.
+        """
+        payload = json.dumps({"status": status, "message": message})
+        with self._lock:
+            if payload == self._last_status_payload:
+                return
+            self._last_status_payload = payload
+            queues = list(self.queues.values())
+        self._push_status(queues, payload)
+
+    def _note_status(self, status: str, message: str):
+        """Record the current status without pushing it to existing clients.
+
+        Used on connect: the clients already attached were told when they
+        connected, so only the new one needs it (via _replay_status_to).
+        """
+        with self._lock:
+            self._last_status_payload = json.dumps(
+                {"status": status, "message": message}
+            )
+
+    def _replay_status_to(self, q: asyncio.Queue):
+        """Give a just-connected client the current status.
+
+        Without this, the dedup in _broadcast_status means only the very first
+        client ever learns why there is no video — every later connection, including
+        each browser reconnect, is met with silence.
+        """
+        with self._lock:
+            payload = self._last_status_payload
+        if payload:
+            self._push_status([q], payload)
 
     def _distribute_frame(self, raw_jpeg: bytes):
         """Thread-safe: marshals the actual queue push onto the asyncio loop."""
@@ -833,7 +863,7 @@ class YOLOCamera:
                 logger.warning(
                     "No V4L2 capture device present; not starting capture thread"
                 )
-                self._broadcast_status(
+                self._note_status(
                     "no_capture_device",
                     "No camera detected on this device.",
                 )
@@ -841,6 +871,10 @@ class YOLOCamera:
                 self._start_opencv_thread(device)
         elif should_start_gst:
             self._ensure_restart_task("client connected")
+
+        # Always tell the new client the current state; _broadcast_status above
+        # is deduplicated and stays silent once an earlier client was told.
+        self._replay_status_to(q)
 
         logger.info("Client added (total: %d)", len(self.queues))
         return q

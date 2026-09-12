@@ -11,6 +11,7 @@ then simulate a device that exposes only non-capture nodes.
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import sys
 import types
@@ -138,3 +139,30 @@ def test_status_broadcast_is_deduplicated(app_module):
 
     assert first == 1
     assert second == 1, "identical consecutive status must not be re-sent"
+
+
+def test_every_new_client_learns_the_status(app_module):
+    """Each connecting client gets the status, not just the first one.
+
+    _broadcast_status is deduplicated, so without a per-client replay only the
+    very first client ever learned why there was no video — and since browsers
+    reconnect, in practice nobody saw it.
+    """
+    import asyncio
+
+    async def scenario():
+        camera = app_module.YOLOCamera()
+        camera._capture_mode = "opencv"
+        with mock.patch.object(app_module, "_first_capture_device", return_value=None):
+            first = await camera.add_client(object())
+            second = await camera.add_client(object())
+            await asyncio.sleep(0.05)  # let call_soon_threadsafe drain
+        return first, second
+
+    first, second = asyncio.run(scenario())
+
+    for label, queue in (("first", first), ("second", second)):
+        assert queue.qsize() == 1, f"{label} client should get exactly one status"
+        frame, payload = queue.get_nowait()
+        assert frame is None, "status messages carry no binary frame"
+        assert json.loads(payload)["status"] == "no_capture_device"

@@ -181,6 +181,16 @@
             "languages": [
                 "mojo"
             ]
+        },
+        {
+            "name": "gpu-hello-vulkan",
+            "description": "Vulkan GPU diagnostics: verified vector-add + matmul compute shaders on any Vulkan 1.1+ device GPU (Adreno, Mali, desktop), report served over HTTP",
+            "targets": [
+                "wendyos"
+            ],
+            "languages": [
+                "cpp"
+            ]
         }
     ],
     "languages": [

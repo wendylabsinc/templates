@@ -21,6 +21,12 @@
             ]
         },
         {
+            "name": "blink-rgb-led",
+            "description": "Blink an onboard WS2812 RGB LED on an ESP32",
+            "targets": ["wendy-lite"],
+            "languages": ["c"]
+        },
+        {
             "name": "simple-api",
             "description": "Minimal HTTP API with JSON endpoints",
             "languages": [
@@ -199,6 +205,10 @@
         {
             "key": "node",
             "name": "Node (TypeScript)"
+        },
+        {
+            "key": "c",
+            "name": "C"
         },
         {
             "key": "cpp",

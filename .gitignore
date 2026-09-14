@@ -13,6 +13,14 @@ dist/
 __pycache__/
 *.pyc
 
+# C / ESP-IDF
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+dependencies.lock
+eim_config.toml
+
 # IDE
 .vscode/
 .idea/

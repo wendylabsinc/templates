@@ -1,0 +1,6 @@
+{
+  "appId": "{{.APP_ID}}",
+  "version": "0.1.0",
+  "platform": "wendy-lite",
+  "language": "c"
+}

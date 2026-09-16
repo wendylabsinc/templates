@@ -14,5 +14,10 @@
     "readiness": {
         "tcpSocket": { "port": {{.PORT}} },
         "timeoutSeconds": 240
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
     }
 }

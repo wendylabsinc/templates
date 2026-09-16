@@ -1,0 +1,21 @@
+{
+    "name": "camera-feed-yolo-usb",
+    "description": "YOLOv8 object detection on a USB camera, ONNX Runtime on the CPU, with MJPEG negotiated so a USB 2.0 port still gives a sharp picture",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port",
+            "type": "integer",
+            "default": 3007,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

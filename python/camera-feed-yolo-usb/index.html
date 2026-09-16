@@ -1,0 +1,195 @@
+<!doctype html>
+<html class="h-full bg-black overflow-hidden">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{.APP_ID}} — YOLO Detection</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  </head>
+  <body class="h-full flex flex-col m-0 p-0 text-white font-sans overflow-hidden bg-black">
+    <!-- Boxes are drawn on the frame by the device, so there is no canvas
+         overlay to keep aligned: what arrives is already the finished picture. -->
+    <div class="fixed inset-0 z-0 flex items-center justify-center bg-black">
+      <img
+        id="video-stream"
+        class="max-w-full max-h-full w-full h-full object-contain"
+        alt=""
+      />
+    </div>
+
+    <!-- UI Overlay -->
+    <div class="relative z-10 p-6 flex flex-col justify-between h-full pointer-events-none">
+      <div class="flex justify-between items-start">
+        <div class="pointer-events-auto">
+          <a href="https://wendy.sh" target="_blank" rel="noopener noreferrer" class="flex items-center gap-2 no-underline">
+            <img src="/assets/wendy-logo.svg" alt="Wendy" class="h-6 w-auto drop-shadow-md" />
+            <h1 class="text-xl font-bold drop-shadow-md">{{.APP_ID}}</h1>
+          </a>
+          <div class="flex items-center gap-2 mt-1">
+            <span id="status-dot" class="w-2 h-2 rounded-full bg-yellow-500 shadow-sm"></span>
+            <span id="status-text" class="text-xs font-medium uppercase tracking-wider drop-shadow-md">Connecting...</span>
+          </div>
+        </div>
+
+        <div class="flex flex-col items-end gap-2 pointer-events-auto">
+          <div class="flex items-center gap-2 bg-black/40 backdrop-blur-sm rounded-lg px-3 py-2 border border-white/10">
+            <label class="text-[10px] uppercase tracking-widest text-white/70 whitespace-nowrap">Conf</label>
+            <input id="confidence-slider" type="range" min="5" max="95" value="25" class="w-20 h-1 accent-blue-500" />
+            <span id="confidence-value" class="text-[10px] font-mono text-white/90 w-8 text-right">0.25</span>
+          </div>
+          <button id="fullscreen-btn" class="bg-black/40 hover:bg-black/60 p-2 rounded-full backdrop-blur-sm transition-colors border border-white/10 group">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="group-hover:scale-110 transition-transform"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="flex items-end justify-between">
+        <!-- Format is first and not abbreviated: on a USB 2.0 port it is the
+             difference between a sharp 720p picture and a stretched 480p one,
+             and V4L2 will accept a request it does not honour. -->
+        <div class="pointer-events-auto bg-black/40 backdrop-blur-md p-3 rounded-lg border border-white/10 text-[10px] flex gap-4 uppercase tracking-widest text-white/70">
+          <div><span class="font-bold text-white">Format:</span> <span id="format">—</span></div>
+          <div><span class="font-bold text-white">FPS:</span> <span id="fps">0</span></div>
+          <div><span class="font-bold text-white">Objects:</span> <span id="det-count">0</span></div>
+          <div><span class="font-bold text-white">Inference:</span> <span id="inference-ms">—</span>ms</div>
+          <div><span class="font-bold text-white">Model:</span> YOLOv8n</div>
+        </div>
+
+        <div id="classes-panel" class="pointer-events-auto bg-black/40 backdrop-blur-md p-3 rounded-lg border border-white/10 text-[10px] uppercase tracking-widest text-white/70 min-w-[140px] hidden">
+          <div class="font-bold text-white mb-1">Detected</div>
+          <div id="classes-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <div
+      id="loading-overlay"
+      class="fixed inset-0 z-20 flex items-center justify-center bg-black transition-opacity duration-500"
+    >
+      <div class="text-center px-6">
+        <div class="relative w-16 h-16 mx-auto mb-4">
+          <div class="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
+          <div class="absolute inset-0 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+        <p id="loading-text" class="text-gray-400 font-medium tracking-wide">WAITING FOR CAMERA</p>
+        <p id="loading-hint" class="text-gray-600 text-xs mt-2 max-w-sm mx-auto"></p>
+      </div>
+    </div>
+
+    <script>
+      const imgEl = document.getElementById("video-stream");
+      const statusDot = document.getElementById("status-dot");
+      const statusText = document.getElementById("status-text");
+      const fpsEl = document.getElementById("fps");
+      const fmtEl = document.getElementById("format");
+      const msEl = document.getElementById("inference-ms");
+      const countEl = document.getElementById("det-count");
+      const panel = document.getElementById("classes-panel");
+      const list = document.getElementById("classes-list");
+      const overlay = document.getElementById("loading-overlay");
+      const loadingText = document.getElementById("loading-text");
+      const loadingHint = document.getElementById("loading-hint");
+      const confSlider = document.getElementById("confidence-slider");
+      const confValue = document.getElementById("confidence-value");
+
+      let ws = null;
+      let objectUrl = null;
+      let gotFrame = false;
+
+      function setStatus(state, text) {
+        const colours = {
+          live: "bg-green-500",
+          waiting: "bg-yellow-500",
+          error: "bg-red-500",
+        };
+        statusDot.className =
+          "w-2 h-2 rounded-full shadow-sm " + (colours[state] || colours.waiting);
+        statusText.textContent = text;
+      }
+
+      confSlider.addEventListener("input", () => {
+        const val = (confSlider.value / 100).toFixed(2);
+        confValue.textContent = val;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ confidence: parseFloat(val) }));
+        }
+      });
+
+      document.getElementById("fullscreen-btn").addEventListener("click", () => {
+        if (document.fullscreenElement) document.exitFullscreen();
+        else document.documentElement.requestFullscreen();
+      });
+
+      function connect() {
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(`${proto}//${location.host}/stream`);
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => setStatus("waiting", "Connected");
+
+        ws.onmessage = (e) => {
+          if (typeof e.data !== "string") {
+            const blob = new Blob([e.data], { type: "image/jpeg" });
+            if (objectUrl) URL.revokeObjectURL(objectUrl);
+            objectUrl = URL.createObjectURL(blob);
+            imgEl.src = objectUrl;
+            if (!gotFrame) {
+              gotFrame = true;
+              overlay.style.opacity = "0";
+              setTimeout(() => (overlay.style.display = "none"), 500);
+              setStatus("live", "Live");
+            }
+            return;
+          }
+
+          const m = JSON.parse(e.data);
+          if (m.format) {
+            fmtEl.textContent =
+              m.format.fourcc + " " + m.format.width + "×" + m.format.height;
+          }
+          fpsEl.textContent = m.capture_fps;
+          msEl.textContent = m.inference_ms;
+          countEl.textContent = m.detections.length;
+
+          if (m.detections.length) {
+            const counts = {};
+            for (const d of m.detections) counts[d.name] = (counts[d.name] || 0) + 1;
+            list.innerHTML = Object.entries(counts)
+              .map(
+                ([name, n]) =>
+                  `<div class="flex justify-between gap-3"><span>${name}</span><span class="text-white font-bold">${n}</span></div>`
+              )
+              .join("");
+            panel.classList.remove("hidden");
+          } else {
+            panel.classList.add("hidden");
+          }
+        };
+
+        ws.onclose = () => {
+          setStatus("error", "Reconnecting...");
+          setTimeout(connect, 2000);
+        };
+      }
+      connect();
+
+      // The camera may legitimately be absent -- wrong port, or no OTG adapter --
+      // and saying so beats an unexplained spinner.
+      setInterval(async () => {
+        try {
+          const s = await (await fetch("/status")).json();
+          if (s.error) {
+            setStatus("error", "No camera");
+            loadingText.textContent = "NO CAMERA";
+            loadingHint.textContent = s.error;
+            overlay.style.display = "flex";
+            overlay.style.opacity = "1";
+            gotFrame = false;
+          }
+        } catch (err) {
+          /* the socket's own onclose already reports this */
+        }
+      }, 3000);
+    </script>
+  </body>
+</html>

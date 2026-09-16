@@ -116,6 +116,13 @@
             ]
         },
         {
+            "name": "camera-feed-yolo-usb",
+            "description": "YOLOv8 object detection on a USB camera, ONNX Runtime on the CPU, with MJPEG negotiated so a USB 2.0 port still gives a sharp picture",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "ip-camera-feed",
             "description": "Live feed from a platform-registered IP camera: GStreamer MJPEG over WebSocket via the /dev/video2xx loopback node",
             "languages": ["python"]

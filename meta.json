@@ -104,6 +104,13 @@
             ]
         },
         {
+            "name": "llm-npu",
+            "description": "Llama 3.2 3B answering questions on a Qualcomm Hexagon NPU, with a chat UI. Runs entirely on the device, no network needed",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "camera-feed-yolo",
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)",
             "languages": [

@@ -1,0 +1,23 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "npu"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-models",
+            "path": "/data"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 300
+    }
+}

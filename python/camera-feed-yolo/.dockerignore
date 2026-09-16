@@ -1,0 +1,21 @@
+# Everything here is sent to the builder unless excluded, so anything that lands
+# in the project directory ends up in the image context -- editor state and
+# local tooling config included, which is a place secrets turn up by accident.
+.git
+.gitignore
+.claude
+.DS_Store
+
+__pycache__
+*.pyc
+.venv
+venv
+
+# Model weights are fetched or exported during the build, never shipped in.
+*.pt
+*.onnx
+*.engine
+
+node_modules
+dist
+build

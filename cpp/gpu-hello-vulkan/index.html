@@ -1,0 +1,64 @@
+<!doctype html>
+<title>{{.APP_ID}} — GPU Hello (Vulkan)</title>
+<style>
+  :root { --bg:#faf9f7; --fg:#1a1a18; --mut:#6b6b66; --line:#e2e0dc; --ok:#0f7b4f; --bad:#b3261e; --card:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16161a; --fg:#ececf0; --mut:#9a9aa4; --line:#2c2c33; --ok:#4ade80; --bad:#f87171; --card:#1e1e24; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:32px 16px; background:var(--bg); color:var(--fg);
+         font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size:1.55rem; margin:0 0 4px; letter-spacing:-0.01em; }
+  .sub { color:var(--mut); margin:0 0 28px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:18px 20px; margin-bottom:16px; }
+  .row { display:flex; justify-content:space-between; gap:16px; padding:7px 0; border-bottom:1px solid var(--line); }
+  .row:last-child { border-bottom:0; }
+  .k { color:var(--mut); }
+  .v { font-variant-numeric:tabular-nums; font-weight:600; text-align:right; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:.8rem; font-weight:700; }
+  .pass { background:color-mix(in srgb, var(--ok) 15%, transparent); color:var(--ok); }
+  .fail { background:color-mix(in srgb, var(--bad) 15%, transparent); color:var(--bad); }
+  h2 { font-size:1rem; margin:0 0 10px; display:flex; align-items:center; gap:10px; }
+  code { font:13px ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--bg);
+         border:1px solid var(--line); border-radius:6px; padding:1px 6px; }
+  .note { color:var(--mut); font-size:.87rem; margin-top:22px; }
+  .err { color:var(--bad); }
+</style>
+<div class="wrap">
+  <h1>{{.APP_ID}}</h1>
+  <p class="sub">Vulkan compute on the device GPU &mdash; every result verified against a CPU reference.</p>
+  <div id="out">Loading…</div>
+  <p class="note">GPU access required exactly one line of configuration:
+     <code>{ "type": "gpu" }</code> in <code>wendy.json</code>.</p>
+</div>
+<script>
+const f = (n, d = 2) => Number(n).toFixed(d);
+function card(title, pass, rows) {
+  return `<div class="card"><h2>${title}
+    <span class="badge ${pass ? 'pass' : 'fail'}">${pass ? 'VERIFIED' : 'MISMATCH'}</span></h2>
+    ${rows.map(([k, v]) => `<div class="row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('')}
+  </div>`;
+}
+fetch('report.json').then(r => r.json()).then(d => {
+  if (d.error) { document.getElementById('out').innerHTML =
+      `<div class="card"><h2>No GPU <span class="badge fail">ERROR</span></h2>
+       <div class="row"><span class="k">detail</span><span class="v err">${d.error}</span></div></div>`; return; }
+  document.getElementById('out').innerHTML =
+    card('Device', true, [
+      ['name', d.device], ['vendor', d.vendor],
+      ['type', d.type], ['Vulkan API', d.api_version]]) +
+    card('Vector add', d.vecadd.pass, [
+      ['elements', d.vecadd.elements.toLocaleString()],
+      ['time', f(d.vecadd.ms) + ' ms'],
+      ['throughput', f(d.vecadd.gb_per_s) + ' GB/s'],
+      ['mismatches vs CPU', d.vecadd.mismatches]]) +
+    card('Matrix multiply', d.matmul.pass, [
+      ['size', `${d.matmul.size}×${d.matmul.size}`],
+      ['time', f(d.matmul.ms) + ' ms'],
+      ['throughput', f(d.matmul.gflops) + ' GFLOPS'],
+      ['mismatches vs CPU', d.matmul.mismatches]]);
+}).catch(e => { document.getElementById('out').innerHTML =
+    `<div class="card"><span class="err">Could not load report.json — ${e}</span></div>`; });
+</script>

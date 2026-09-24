@@ -1,0 +1,21 @@
+{
+    "name": "gpu-hello-vulkan",
+    "description": "Vulkan GPU diagnostics: verified vector-add + matmul compute shaders on the device GPU (Adreno/Mali/any Vulkan 1.1+), report served over HTTP",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "HTTP port for the diagnostics report",
+            "type": "integer",
+            "default": 9021,
+            "prompt": "HTTP port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

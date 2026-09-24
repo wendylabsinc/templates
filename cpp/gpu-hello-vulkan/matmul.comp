@@ -1,0 +1,14 @@
+#version 450
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(binding = 0) readonly  buffer A { float a[]; };
+layout(binding = 1) readonly  buffer B { float b[]; };
+layout(binding = 2) writeonly buffer C { float c[]; };
+layout(push_constant) uniform P { uint n; } p;
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+    if (row >= p.n || col >= p.n) return;
+    float sum = 0.0;
+    for (uint k = 0; k < p.n; ++k) sum += a[row * p.n + k] * b[k * p.n + col];
+    c[row * p.n + col] = sum;
+}

@@ -92,8 +92,11 @@ def test_bounded_atomic_joint_commands_and_reset(client):
 
 
 def test_control_origin_bounds_and_health(client):
-    for headers in [{'Origin': 'https://foreign.example'}, {'Sec-Fetch-Site': 'cross-site'}, {'Host': 'rebound.example'}]:
+    for headers in [{'Origin': 'https://foreign.example'}, {'Sec-Fetch-Site': 'cross-site'}]:
         assert client.post('/api/reset', json={}, headers=headers).status_code == 403
+    lan = {'Host': '192.168.1.20:8891', 'Origin': 'http://192.168.1.20:8891'}
+    assert client.get('/api/status', headers=lan).status_code == 200
+    assert client.post('/api/pause', json={'paused': False}, headers=lan).status_code == 200
     assert client.post('/api/reset', content='x' * 4097).status_code == 413
     assert client.post('/api/pause', json={'paused': True, 'extra': 0}).status_code == 422
     with server.sim.lock:

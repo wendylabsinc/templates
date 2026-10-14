@@ -27,9 +27,11 @@ backend is included. There is no ROS/DDS publisher or locomotion policy.
 This template copies `go/simulator/so101` from WendyOS pull request #2245
 (branch `codex/so101-simulator`), commit
 `d5c064fe1dbe883c9075df4d933ab0c44bb1ba9a`. The simulator code is unchanged
-except for the port: `PORT` sets the `Dockerfile` `EXPOSE` and uvicorn
+except for two things. `PORT` sets the `Dockerfile` `EXPOSE` and uvicorn
 `--port`, the `wendy.json` readiness port, and the port in the startup message
-in `so101_sim/server.py`. `APP_ID` sets the `wendy.json` app ID. `README.md`
+in `so101_sim/server.py`. `so101_sim/server.py` also no longer refuses requests
+whose Host is not `localhost`, because an app is opened by the device's address;
+cross-origin POSTs are still refused. `APP_ID` sets the `wendy.json` app ID. `README.md`
 and `template.json` are new. `bundle.go`, `bundle_test.go`, `validation.md`,
 and the original README are left out; they belong to the WendyOS Go tree and
 the `wendy vm` robot profile.

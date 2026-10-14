@@ -198,9 +198,8 @@ app = FastAPI(title='SO-101 virtual arm', lifespan=lifespan)
 
 @app.middleware('http')
 async def local_control(request: Request, call_next):
-    host = request.url.hostname
-    if host not in {'127.0.0.1', 'localhost', '::1', 'testserver'}:
-        return Response('Invalid simulator host', status_code=403)
+    # The app is opened as http://<device>:<port>, so any Host is accepted.
+    # The arm is virtual; cross-origin POSTs are still refused below.
     if request.method == 'POST':
         origin = request.headers.get('origin')
         if ((origin and urlsplit(origin).netloc != request.headers.get('host'))

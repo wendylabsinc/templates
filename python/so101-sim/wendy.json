@@ -13,5 +13,10 @@
       "port": {{.PORT}}
     },
     "timeoutSeconds": 120
+  },
+  "hooks": {
+    "postStart": {
+      "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.PORT}}"
+    }
   }
 }

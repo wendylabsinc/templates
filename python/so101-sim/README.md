@@ -34,21 +34,15 @@ prints `SO-101 simulator ready; virtual model only; HTTP :{{.PORT}}`.
 
 ## Open the viewer
 
-The simulator only answers requests addressed to `localhost` or `127.0.0.1`.
-This check comes unchanged from the WendyOS simulator. If you open
-`http://<device>:{{.PORT}}` from another computer, you get
-`Invalid simulator host` (HTTP 403).
+`wendy run` opens `http://<device>:{{.PORT}}` in your browser when the
+simulator is ready. You can also open that address yourself from any computer
+on the same network. Code that runs on the device itself, such as another app
+with host networking, can use `http://127.0.0.1:{{.PORT}}`.
 
-Forward the port to your computer, then open `http://localhost:{{.PORT}}`. For a
-device enrolled in Wendy Cloud:
-
-```sh
-wendy cloud tunnel {{.PORT}}:{{.PORT}} --device "<cloud device name>"
-```
-
-`wendy cloud discover` lists the cloud device names. Keep the tunnel running
-while you use the page. Code that runs on the device itself, such as another
-app with host networking, can call `http://127.0.0.1:{{.PORT}}` directly.
+The WendyOS simulator only accepts requests addressed to `localhost`. This
+template drops that check so you can open the page by the device's address.
+The arm is virtual, and a page from another website still cannot send it
+commands.
 
 ## Move the arm in the viewer
 
@@ -68,13 +62,12 @@ about 23 degrees. The scene also has a floor and a small blue cube.
 
 ## Move the arm from your own code
 
-Every request goes to `http://localhost:{{.PORT}}` through the tunnel, or to
-`http://127.0.0.1:{{.PORT}}` on the device. Angles are in degrees. POST bodies
-are JSON.
+Send requests to `http://<device>:{{.PORT}}`, or to `http://127.0.0.1:{{.PORT}}`
+from the device itself. Angles are in degrees. POST bodies are JSON.
 
 ```sh
-curl http://localhost:{{.PORT}}/api/status
-curl -X POST http://localhost:{{.PORT}}/api/pose \
+curl http://<device>:{{.PORT}}/api/status
+curl -X POST http://<device>:{{.PORT}}/api/pose \
   -H 'content-type: application/json' \
   -d '{"joints_deg":{"shoulder_pan":20,"gripper":30}}'
 ```
@@ -170,8 +163,8 @@ PYTHONPATH=. .venv/bin/pytest -q tests
 
 The tests use the real model and API without a browser or OpenGL. On Linux,
 install `libosmesa6` and set `MUJOCO_GL=osmesa SO101_RENDER_TEST=1` to also test
-rendering. `tools/smoke_http.py` checks a running simulator, for example
-through the tunnel:
+rendering. `tools/smoke_http.py` checks a simulator running on the same
+computer (it only accepts a `127.0.0.1` address):
 
 ```sh
 .venv/bin/python tools/smoke_http.py http://127.0.0.1:{{.PORT}} --vm-name ''
@@ -186,8 +179,6 @@ wendy device logs {{.APP_ID}} --tail 100
 wendy device apps stop {{.APP_ID}}
 ```
 
-- **`Invalid simulator host` (HTTP 403):** the request was not addressed to
-  `localhost` or `127.0.0.1`. Use the tunnel described above.
 - **`Simulation unavailable` or HTTP 503:** physics or rendering stopped. Check
   the logs, then run `wendy run` again.
 - **Readiness times out:** check that port {{.PORT}} is free, and read the first

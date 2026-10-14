@@ -1,0 +1,11 @@
+assets/
+ros_ws/src/unitree/
+ros_ws/generated_unitree/
+ros_ws/build/
+ros_ws/install/
+ros_ws/log/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+results/

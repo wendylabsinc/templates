@@ -56,6 +56,7 @@ generated project README contains the setup details.
 | `go2-foxglove` | [Python](python/go2-foxglove/) | Unitree Go2 EDU and Foxglove | Stream Go2 DDS and camera data to one Foxglove connection |
 | `go2-rosbag` | [Python](python/go2-rosbag/) | Unitree Go2 EDU and persistent storage | Inspect Go2 topics and record MCAP rosbag files in a browser |
 | `go2-initial-test` | [Python](python/go2-initial-test/) | Unitree Go2 EDU; large multi-service deployment | Dashboard for checking robot interfaces before development |
+| `go2-sim` | [Python](python/go2-sim/) | WendyOS or Linux, x86_64 or ARM64; no robot needed; large first build | Simulated Go2 in MuJoCo with ROS 2 topics and a browser 3D viewer |
 | `blink-led` | [Swift](swift/blink-led/) | Wendy Lite | Blink the board LED through GPIO |
 | `hello-world` | [Swift](swift/hello-world/) | Wendy Lite | Print one message from a minimal embedded Swift app |
 

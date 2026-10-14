@@ -178,6 +178,13 @@
             ]
         },
         {
+            "name": "go2-sim",
+            "description": "Simulated Unitree Go2 in MuJoCo for testing without the robot: a walking robot with ROS 2 topics (CycloneDDS, loopback only) and a browser 3D viewer you can drive from. Runs on x86 or ARM Linux devices",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "ros2-talker-listener",
             "description": "ROS 2 talker/listener demo (over CycloneDDS): std_msgs/String publisher + subscriber as a two-service app group",
             "languages": [

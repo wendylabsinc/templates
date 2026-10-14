@@ -15,6 +15,10 @@ CI runs the same command on every pull request.
 - `test_template_readmes.py` checks catalog directories, project README
   coverage, supported README placeholders, relative Markdown links, and
   shared-source drift in both directions.
+- `test_go2_sim.py` checks the `go2-sim` template variables, its `wendy.json`
+  and `Dockerfile` changes, and renders the template the way `wendy init` does
+  to prove every other file, including the vendored Three.js modules, comes out
+  byte for byte unchanged.
 
 The checks read Git-tracked files and non-ignored untracked files, so ignored
 build output such as `node_modules/`, `.build/`, and `target/` is never scanned.

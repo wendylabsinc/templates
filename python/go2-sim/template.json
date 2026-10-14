@@ -1,0 +1,21 @@
+{
+    "name": "go2-sim",
+    "description": "Simulated Unitree Go2 in MuJoCo: a walking robot with ROS 2 topics and a browser 3D viewer, for testing without the real robot. Runs on x86 or ARM Linux devices.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Port for the simulator's web viewer — open http://<device>:<port> in a browser. Change it if another simulator already uses 8890.",
+            "type": "integer",
+            "default": 8890,
+            "prompt": "Viewer web port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

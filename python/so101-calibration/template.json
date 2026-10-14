@@ -1,0 +1,29 @@
+{
+    "name": "so101-calibration",
+    "description": "Calibrate an SO-101 arm from a browser: move it by hand, record home and joint ranges, and save LeRobot-convention calibration JSON. Torque stays off.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Port for the calibration web page — open http://<device>:<port> in a browser",
+            "type": "integer",
+            "default": 8090,
+            "prompt": "Web UI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "SERIAL_DEVICE",
+            "description": "USB serial tty the arm appears as on the device (ttyACM<N> or ttyUSB<N>; check with ls /dev/ttyACM* /dev/ttyUSB*). It must be connected when you deploy.",
+            "type": "string",
+            "default": "ttyACM0",
+            "prompt": "Arm serial device",
+            "validate": { "pattern": "^tty(ACM|USB)[0-9]+$" }
+        }
+    ]
+}

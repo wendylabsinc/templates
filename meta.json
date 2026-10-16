@@ -171,6 +171,13 @@
             ]
         },
         {
+            "name": "so101-calibration",
+            "description": "Calibrate an SO-101 arm from a browser: move it by hand (torque stays off), record home and joint ranges, and save LeRobot-convention calibration JSON. Finds the arm's serial port by pinging its Feetech servos",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
             "languages": [

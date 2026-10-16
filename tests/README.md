@@ -15,6 +15,8 @@ CI runs the same command on every pull request.
 - `test_template_readmes.py` checks catalog directories, project README
   coverage, supported README placeholders, relative Markdown links, and
   shared-source drift in both directions.
+- `test_so101_calibration.py` checks the `so101-calibration` serial-port
+  auto-detection with fake ports, and that the app never writes to the servos.
 - `test_so101_sim.py` checks the `so101-sim` variables, the `{{.APP_ID}}` and
   `{{.PORT}}` wiring in `wendy.json`, the `Dockerfile` and the startup message,
   and that `wendy init` rendering leaves every other simulator file byte for

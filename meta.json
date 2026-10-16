@@ -185,6 +185,13 @@
             ]
         },
         {
+            "name": "so101-sim",
+            "description": "Simulate an SO-101 robot arm in MuJoCo: a 3D browser viewer with six joint sliders, plus an HTTP API to move the virtual arm from your own code. Virtual only: no USB serial port or servos",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "ros2-talker-listener",
             "description": "ROS 2 talker/listener demo (over CycloneDDS): std_msgs/String publisher + subscriber as a two-service app group",
             "languages": [

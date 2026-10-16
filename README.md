@@ -53,6 +53,7 @@ generated project README contains the setup details.
 | `go2-rc` | [Python](python/go2-rc/) | Unitree Go2 EDU | Browser teleoperation with motion and camera services |
 | `g1-rc` | [Python](python/g1-rc/) | Unitree G1 with supported camera and robot network | Browser teleoperation, posture, gestures, and arm presets |
 | `rc-car` | [Python](python/rc-car/) | Yahboom ROSMASTER R2, serial controller, camera, and optional joystick | Browser and gamepad control for an Ackermann robot car |
+| `so101-calibration` | [Python](python/so101-calibration/) | WendyOS and an SO-101 arm on USB serial | Browser-guided arm calibration to LeRobot JSON, with the arm kept limp |
 | `go2-foxglove` | [Python](python/go2-foxglove/) | Unitree Go2 EDU and Foxglove | Stream Go2 DDS and camera data to one Foxglove connection |
 | `go2-rosbag` | [Python](python/go2-rosbag/) | Unitree Go2 EDU and persistent storage | Inspect Go2 topics and record MCAP rosbag files in a browser |
 | `go2-initial-test` | [Python](python/go2-initial-test/) | Unitree Go2 EDU; large multi-service deployment | Dashboard for checking robot interfaces before development |

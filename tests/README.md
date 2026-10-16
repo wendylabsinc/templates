@@ -15,6 +15,8 @@ CI runs the same command on every pull request.
 - `test_template_readmes.py` checks catalog directories, project README
   coverage, supported README placeholders, relative Markdown links, and
   shared-source drift in both directions.
+- `test_so101_calibration.py` checks the `so101-calibration` serial-port
+  auto-detection with fake ports, and that the app never writes to the servos.
 
 The checks read Git-tracked files and non-ignored untracked files, so ignored
 build output such as `node_modules/`, `.build/`, and `target/` is never scanned.

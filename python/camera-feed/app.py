@@ -295,6 +295,8 @@ class MJPEGCamera:
         self._bus = None
         self._bus_watch_id = None
         self._restart_task: asyncio.Task | None = None
+        self._pending_frame = None
+        self._delivery_scheduled = False
 
     def _start_pipeline(self, device_id: str | None = None) -> Gst.Pipeline | None:
         src = build_source(device_id)
@@ -308,32 +310,26 @@ class MJPEGCamera:
         ]
 
         for p_str in pipelines:
+            pipeline = None
             try:
                 pipeline = Gst.parse_launch(p_str)
-                ret = pipeline.set_state(Gst.State.PAUSED)
-                if ret == Gst.StateChangeReturn.FAILURE:
-                    pipeline.set_state(Gst.State.NULL)
-                    logger.info("Pipeline failed: %s", p_str)
-                    continue
-                if ret == Gst.StateChangeReturn.ASYNC:
-                    ret, _, _ = pipeline.get_state(5 * Gst.SECOND)
-                    if ret == Gst.StateChangeReturn.FAILURE:
-                        bus = pipeline.get_bus()
-                        msg = bus.pop_filtered(Gst.MessageType.ERROR)
-                        if msg:
-                            err, debug = msg.parse_error()
-                            logger.info(
-                                "Pipeline preroll error for %s: %s%s",
-                                p_str,
-                                err,
-                                f" ({debug})" if debug else "",
-                            )
-                        pipeline.set_state(Gst.State.NULL)
-                        logger.info("Pipeline preroll failed: %s", p_str)
-                        continue
-                logger.info("Pipeline ready: %s", p_str)
+                if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+                    raise RuntimeError("pipeline could not enter PLAYING")
+                # Live sources may report NO_PREROLL in PAUSED without ever
+                # negotiating. A real sample is the readiness criterion.
+                sink = pipeline.get_by_name("sink")
+                sample = sink.emit("try-pull-sample", 5 * Gst.SECOND)
+                if sample is None:
+                    msg = pipeline.get_bus().pop_filtered(Gst.MessageType.ERROR)
+                    if msg:
+                        err, debug = msg.parse_error()
+                        raise RuntimeError(f"{err} ({debug})")
+                    raise RuntimeError("pipeline produced no frame within 5 seconds")
+                logger.info("Pipeline delivered first frame: %s", p_str)
                 return pipeline
             except Exception as e:
+                if pipeline is not None:
+                    pipeline.set_state(Gst.State.NULL)
                 logger.info("Pipeline exception: %s — %s", p_str, e)
         return None
 
@@ -476,13 +472,35 @@ class MJPEGCamera:
         buf.unmap(mapinfo)
 
         with self._lock:
-            for q in self.queues.values():
+            loop = self._loop
+            if loop is None or loop.is_closed():
+                return Gst.FlowReturn.OK
+            # Coalesce while the loop is busy; never build an unbounded queue
+            # of JPEG callbacks on the GStreamer streaming thread.
+            self._pending_frame = (sink, data)
+            if not self._delivery_scheduled:
+                self._delivery_scheduled = True
                 try:
-                    q.put_nowait(data)
-                except asyncio.QueueFull:
-                    pass
-
+                    loop.call_soon_threadsafe(self._deliver_pending_frame)
+                except RuntimeError:  # shutdown raced the is_closed check
+                    self._delivery_scheduled = False
+                    self._pending_frame = None
         return Gst.FlowReturn.OK
+
+    def _deliver_pending_frame(self):
+        # asyncio queues and their waiters belong to this event-loop thread.
+        with self._lock:
+            pending, self._pending_frame = self._pending_frame, None
+            self._delivery_scheduled = False
+            if pending is None or self.pipeline is None:
+                return
+            sink, data = pending
+            if self.pipeline.get_by_name("sink") != sink:
+                return  # stale callback from a stopped/replaced pipeline
+            for q in self.queues.values():
+                if q.full():
+                    q.get_nowait()
+                q.put_nowait(data)
 
     async def add_client(self, ws: WebSocket) -> asyncio.Queue:
         self._loop = asyncio.get_running_loop()

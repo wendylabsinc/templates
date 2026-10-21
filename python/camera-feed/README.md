@@ -63,3 +63,5 @@ wendy device apps stop {{.APP_ID}}
 If no camera appears, confirm the device is connected and not held by another
 application. A V4L2 node may expose metadata or infrared output instead of the
 expected color stream; select another capture-capable node when available.
+
+The container listens on IPv6 and IPv4, including the IPv6-only USB connection.

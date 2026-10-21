@@ -295,8 +295,6 @@ class MJPEGCamera:
         self._bus = None
         self._bus_watch_id = None
         self._restart_task: asyncio.Task | None = None
-        self._pending_frame = None
-        self._delivery_scheduled = False
 
     def _start_pipeline(self, device_id: str | None = None) -> Gst.Pipeline | None:
         src = build_source(device_id)
@@ -472,35 +470,13 @@ class MJPEGCamera:
         buf.unmap(mapinfo)
 
         with self._lock:
-            loop = self._loop
-            if loop is None or loop.is_closed():
-                return Gst.FlowReturn.OK
-            # Coalesce while the loop is busy; never build an unbounded queue
-            # of JPEG callbacks on the GStreamer streaming thread.
-            self._pending_frame = (sink, data)
-            if not self._delivery_scheduled:
-                self._delivery_scheduled = True
-                try:
-                    loop.call_soon_threadsafe(self._deliver_pending_frame)
-                except RuntimeError:  # shutdown raced the is_closed check
-                    self._delivery_scheduled = False
-                    self._pending_frame = None
-        return Gst.FlowReturn.OK
-
-    def _deliver_pending_frame(self):
-        # asyncio queues and their waiters belong to this event-loop thread.
-        with self._lock:
-            pending, self._pending_frame = self._pending_frame, None
-            self._delivery_scheduled = False
-            if pending is None or self.pipeline is None:
-                return
-            sink, data = pending
-            if self.pipeline.get_by_name("sink") != sink:
-                return  # stale callback from a stopped/replaced pipeline
             for q in self.queues.values():
-                if q.full():
-                    q.get_nowait()
-                q.put_nowait(data)
+                try:
+                    q.put_nowait(data)
+                except asyncio.QueueFull:
+                    pass
+
+        return Gst.FlowReturn.OK
 
     async def add_client(self, ws: WebSocket) -> asyncio.Queue:
         self._loop = asyncio.get_running_loop()

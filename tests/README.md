@@ -21,6 +21,12 @@ CI runs the same command on every pull request.
   `{{.PORT}}` wiring in `wendy.json`, the `Dockerfile` and the startup message,
   and that `wendy init` rendering leaves every other simulator file byte for
   byte unchanged.
+- `test_so101_train_apps.py` checks the `so101-record` and `so101-policy`
+  templates without LeRobot or hardware: their settings parsing, the dataset
+  resume and upload decisions, model revision resolution and camera matching,
+  the stop sequence and calibration writes against a fake servo bus, that the
+  two copies of `so101_common.py` stay identical, and that `wendy.json`, the
+  `Dockerfile` and the README agree with the settings code.
 
 The checks read Git-tracked files and non-ignored untracked files, so ignored
 build output such as `node_modules/`, `.build/`, and `target/` is never scanned.

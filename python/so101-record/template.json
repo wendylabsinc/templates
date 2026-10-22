@@ -1,0 +1,45 @@
+{
+    "name": "so101-record",
+    "description": "Record SO-101 teleoperation demonstrations (leader arm, follower arm and one USB camera) as a LeRobot 0.6.1 dataset on the device, and optionally upload it to the Hugging Face Hub.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Port for the recorder's web page (status, countdown, and the next, re-record and stop buttons): open http://<device>:<port> in a browser",
+            "type": "integer",
+            "default": 8092,
+            "prompt": "Web UI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "FOLLOWER_SERIAL_DEVICE",
+            "description": "USB serial tty of the follower arm (the arm that copies your moves), such as ttyACM0. Check with ls -l /dev/serial/by-id/ on the device. It must be connected when you deploy.",
+            "type": "string",
+            "default": "ttyACM0",
+            "prompt": "Follower arm serial device",
+            "validate": { "pattern": "^tty(ACM|USB)[0-9]+$" }
+        },
+        {
+            "name": "LEADER_SERIAL_DEVICE",
+            "description": "USB serial tty of the leader arm (the arm you move by hand), such as ttyACM1. It must be connected when you deploy.",
+            "type": "string",
+            "default": "ttyACM1",
+            "prompt": "Leader arm serial device",
+            "validate": { "pattern": "^tty(ACM|USB)[0-9]+$" }
+        },
+        {
+            "name": "CALIBRATION_VOLUME",
+            "description": "Persistent volume that holds follower.json and leader.json from the so101-calibration template: <calibration-app-id>-data",
+            "type": "string",
+            "default": "so101-calibration-data",
+            "prompt": "Calibration volume",
+            "validate": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+        }
+    ]
+}

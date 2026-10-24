@@ -206,6 +206,20 @@
             ]
         },
         {
+            "name": "elrobot-record",
+            "description": "Record ElRobot teleoperation demonstrations (7-joint + gripper leader and follower arms, arm and table cameras) as a LeRobot 0.6.1 dataset for policy training, controlled from a browser; calibrates the arms without writing to the servos, and optionally uploads the dataset to the Hugging Face Hub",
+            "languages": [
+                "python"
+            ]
+        },
+        {
+            "name": "elrobot-policy",
+            "description": "Run a trained LeRobot 0.6.1 policy (ACT or SmolVLA) on an ElRobot follower arm (7 joints + gripper) with its arm and table cameras: loads a pinned Hugging Face model revision, starts from a browser, and stops safely (back to the start pose, then torque off)",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "ros2-talker-listener",
             "description": "ROS 2 talker/listener demo (over CycloneDDS): std_msgs/String publisher + subscriber as a two-service app group",
             "languages": [

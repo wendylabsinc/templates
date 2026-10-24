@@ -60,6 +60,8 @@ generated project README contains the setup details.
 | `so101-sim` | [Python](python/so101-sim/) | WendyOS on arm64 or x86_64; no robot hardware | MuJoCo SO-101 arm simulator with a 3D browser viewer and a joint API |
 | `so101-record` | [Python](python/so101-record/) | WendyOS, SO-101 leader and follower arms on USB serial, a USB camera, and calibration from `so101-calibration` | Record teleoperated demonstrations as a LeRobot 0.6.1 dataset; optional Hugging Face upload |
 | `so101-policy` | [Python](python/so101-policy/) | WendyOS, an SO-101 follower arm on USB serial, a USB camera, and calibration from `so101-calibration`; CUDA on x86_64 NVIDIA devices | Run a trained ACT or SmolVLA policy from a pinned Hugging Face revision, with a safe stop |
+| `elrobot-record` | [Python](python/elrobot-record/) | WendyOS, ElRobot (norma-core) leader and follower arms on USB serial, and two USB cameras | Calibrate the arms without writing to the servos, then record teleoperated demonstrations as a LeRobot 0.6.1 dataset; optional Hugging Face upload |
+| `elrobot-policy` | [Python](python/elrobot-policy/) | WendyOS, an ElRobot follower arm on USB serial, two USB cameras, and a calibration from `elrobot-record`; CUDA on x86_64 NVIDIA devices | Run a trained ACT or SmolVLA policy from a pinned Hugging Face revision, with a safe stop |
 | `blink-led` | [Swift](swift/blink-led/) | Wendy Lite | Blink the board LED through GPIO |
 | `hello-world` | [Swift](swift/hello-world/) | Wendy Lite | Print one message from a minimal embedded Swift app |
 

@@ -27,6 +27,14 @@ CI runs the same command on every pull request.
   the stop sequence and calibration writes against a fake servo bus, that the
   two copies of `so101_common.py` stay identical, and that `wendy.json`, the
   `Dockerfile` and the README agree with the settings code.
+- `test_elrobot_train_apps.py` does the same for `elrobot-record` and
+  `elrobot-policy`, and also checks the 8-joint motor map of the vendored
+  `elrobot_arms.py` and its license header, the calibration file checks
+  against the URDF ranges, the calibration page's range capture and homing
+  math (it must never write to the servos), which registers connecting writes
+  with and without `ELROBOT_WRITE_CALIBRATION` and `ELROBOT_CONFIGURE_SERVOS`,
+  the checks before torque goes on, that the shared files stay identical, and
+  that each README names every register the app can write.
 
 The checks read Git-tracked files and non-ignored untracked files, so ignored
 build output such as `node_modules/`, `.build/`, and `target/` is never scanned.

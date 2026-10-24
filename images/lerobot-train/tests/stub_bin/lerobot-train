@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""A stand-in for LeRobot 0.6.1's `lerobot-train`, for the entrypoint tests.
+
+It trains nothing. It parses the same flags, refuses the same things, writes
+the same log lines and the same checkpoint layout as the real one:
+
+- log lines use LeRobot's formatter, "%(levelname)s %(asctime)s
+  %(lerobot_location)15s %(message)s", where the location is the last 15
+  characters of "<path>/lerobot_train.py:<line>" (lerobot/utils/utils.py);
+- the training line is MetricsTracker.__str__ (lerobot/utils/logging_utils.py),
+  printed every `log_freq` steps, with steps rounded by format_big_number;
+- the tqdm bar ("Training: ...") is redrawn with \\r and no newline, so log
+  lines land on the same line as the bar, as they do in a real pipe;
+- checkpoints follow lerobot/common/train_utils.py: checkpoints/<step>/
+  {pretrained_model,training_state}, then the `last` symlink is moved.
+
+Test knobs (environment variables): STUB_ARGV_FILE, STUB_PID_FILE,
+STUB_STEP_SLEEP, STUB_FAIL_AT_STEP + STUB_EXIT_CODE, STUB_KILL_AT_STEP,
+STUB_NAN_LOSS_AT_STEP, STUB_PRINT_SECRETS, STUB_SKIP_FINAL_CHECKPOINT,
+STUB_TQDM_EVERY, STUB_ECHO (a line printed to stdout as is).
+"""
+
+import json
+import os
+import pprint
+import signal
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+SCRIPT = "/opt/venv/lib/python3.12/site-packages/lerobot/scripts/lerobot_train.py"
+
+
+def log(lineno, message, level="INFO"):
+    location = f"{SCRIPT}:{lineno}"[-15:]
+    sys.stderr.write(f"{level} {datetime.now():%Y-%m-%d %H:%M:%S} {location:>15} {message}\n")
+    sys.stderr.flush()
+
+
+def format_big_number(num, precision=0):
+    suffixes = ["", "K", "M", "B", "T", "Q"]
+    divisor = 1000.0
+    for suffix in suffixes:
+        if abs(num) < divisor:
+            return f"{num:.{precision}f}{suffix}"
+        num /= divisor
+    return num
+
+
+def parse_args(argv):
+    opts = {}
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if not arg.startswith("--"):
+            sys.stderr.write(f"error: unrecognized argument {arg}\n")
+            sys.exit(1)
+        if "=" in arg:
+            key, value = arg[2:].split("=", 1)
+        elif index + 1 < len(argv) and not argv[index + 1].startswith("--"):
+            key, value = arg[2:], argv[index + 1]
+            index += 1
+        else:
+            key, value = arg[2:], "true"
+        opts[key] = value
+        index += 1
+    return opts
+
+
+def die(exception_line, code=1):
+    sys.stderr.write("Traceback (most recent call last):\n")
+    sys.stderr.write(f'  File "{SCRIPT}", line 235, in train\n')
+    sys.stderr.write("    cfg.validate()\n")
+    sys.stderr.write(exception_line + "\n")
+    sys.stderr.flush()
+    sys.exit(code)
+
+
+def save_checkpoint(output_dir, step, total_steps, train_config, batch_size):
+    identifier = f"{step:0{max(6, len(str(total_steps)))}d}"
+    checkpoint = output_dir / "checkpoints" / identifier
+    pretrained = checkpoint / "pretrained_model"
+    state = checkpoint / "training_state"
+    pretrained.mkdir(parents=True, exist_ok=True)
+    (pretrained / "config.json").write_text(json.dumps({"type": train_config["policy"]["type"]}))
+    (pretrained / "model.safetensors").write_bytes(b"weights@" + str(step).encode())
+    (pretrained / "train_config.json").write_text(json.dumps(train_config, indent=4))
+    (pretrained / "policy_preprocessor.json").write_text("{}")
+    (pretrained / "policy_preprocessor_step_3_normalizer_processor.safetensors").write_bytes(b"stats")
+    (pretrained / "policy_postprocessor.json").write_text("{}")
+    (pretrained / "policy_postprocessor_step_0_unnormalizer_processor.safetensors").write_bytes(b"stats")
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "training_step.json").write_text(json.dumps({"step": step, "num_processes": 1, "batch_size": batch_size}))
+    (state / "rng_state.safetensors").write_bytes(b"rng")
+    (state / "optimizer_param_groups.json").write_text("[]")
+    (state / "optimizer_state.safetensors").write_bytes(b"optimizer")
+    last = output_dir / "checkpoints" / "last"
+    if last.is_symlink():
+        last.unlink()
+    last.symlink_to(identifier)
+
+
+def main():
+    argv = sys.argv[1:]
+    if os.environ.get("STUB_ARGV_FILE"):
+        with open(os.environ["STUB_ARGV_FILE"], "a") as f:
+            f.write(json.dumps(argv) + "\n")
+    if os.environ.get("STUB_PID_FILE"):
+        Path(os.environ["STUB_PID_FILE"]).write_text(str(os.getpid()))
+    opts = parse_args(argv)
+
+    output_dir = Path(opts["output_dir"])
+    resume = opts.get("resume") == "true"
+    if resume:
+        config_path = Path(opts["config_path"])
+        saved = json.loads(config_path.read_text())
+        start = json.loads((config_path.parent.parent / "training_state" / "training_step.json").read_text())["step"]
+        dataset = saved["dataset"]["repo_id"]
+        revision = opts.get("dataset.revision", saved["dataset"]["revision"])
+        policy_type = saved["policy"]["type"]
+    else:
+        if output_dir.is_dir():
+            die(
+                f"FileExistsError: Output directory {output_dir} already exists and resume is False. "
+                f"Please change your output directory so that {output_dir} is not overwritten."
+            )
+        start = 0
+        dataset = opts["dataset.repo_id"]
+        revision = opts.get("dataset.revision")
+        policy_type = opts.get("policy.type") or ("smolvla" if "smolvla" in opts.get("policy.path", "") else None)
+    if policy_type is None:
+        die("ValueError: Neither policy nor reward_model is configured.")
+
+    steps = int(opts.get("steps", 100_000))
+    batch_size = int(opts.get("batch_size", 8))
+    log_freq = int(opts.get("log_freq", 200))
+    save_freq = int(opts.get("save_freq", 20_000))
+    train_config = {
+        "dataset": {"repo_id": dataset, "revision": revision, "streaming": False},
+        "policy": {
+            "type": policy_type,
+            "push_to_hub": opts.get("policy.push_to_hub", "true") == "true",
+            "repo_id": opts.get("policy.repo_id"),
+            "pretrained_revision": opts.get("policy.pretrained_revision"),
+        },
+        "output_dir": str(output_dir),
+        "resume": resume,
+        "steps": steps,
+        "batch_size": batch_size,
+        "log_freq": log_freq,
+        "save_freq": save_freq,
+        "save_checkpoint": opts.get("save_checkpoint", "true") == "true",
+    }
+    for line in pprint.pformat(train_config).splitlines():
+        sys.stderr.write(line + "\n")
+    log(280, "Logs will be saved locally.")
+    if os.environ.get("STUB_ECHO"):
+        print(os.environ["STUB_ECHO"], flush=True)
+    log(298, "Creating dataset")
+    if os.environ.get("STUB_PRINT_SECRETS"):
+        token = os.environ.get("HF_TOKEN", "")
+        print(f"stub debug: HF_TOKEN={token}", flush=True)
+        log(298, f"GET https://huggingface.co/api/datasets/{dataset}?token={token}", level="WARNING")
+    log(324, "Creating policy")
+    log(402, "Creating optimizer and scheduler")
+    log(434, f"Output dir: {output_dir}")
+    log(441, f"cfg.steps={steps} ({format_big_number(steps)})")
+    log(597, f"Start offline training on a fixed dataset, with effective batch size: {batch_size}")
+
+    total = steps - start
+    tqdm_every = int(os.environ.get("STUB_TQDM_EVERY", "0"))
+    sleep = float(os.environ.get("STUB_STEP_SLEEP", "0"))
+    fail_at = int(os.environ.get("STUB_FAIL_AT_STEP", "0"))
+    kill_at = int(os.environ.get("STUB_KILL_AT_STEP", "0"))
+    nan_at = int(os.environ.get("STUB_NAN_LOSS_AT_STEP", "0"))
+    num_frames, num_episodes = 11_939, 50
+
+    sys.stderr.write(f"\rTraining:   0%|          | 0/{total} [00:00<?, ?step/s]")
+    sys.stderr.flush()
+    for step in range(start + 1, steps + 1):
+        if sleep:
+            time.sleep(sleep)
+        if step == fail_at:
+            die(
+                "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB",
+                int(os.environ.get("STUB_EXIT_CODE", "1")),
+            )
+        if step == kill_at:
+            os.kill(os.getpid(), signal.SIGKILL)
+        done = step - start
+        if tqdm_every and (done % tqdm_every == 0 or step == steps):
+            percent = int(100 * done / total)
+            bar = ("█" * (percent // 10)).ljust(10)
+            sys.stderr.write(f"\rTraining: {percent:3d}%|{bar}| {done}/{total} [00:01<00:02,  4.20step/s]")
+            sys.stderr.flush()
+        if log_freq > 0 and step % log_freq == 0:
+            samples = step * batch_size
+            loss = "nan" if step == nan_at else f"{1.0 / (1.0 + step / 100.0):.3f}"
+            log(
+                641,
+                f"step:{format_big_number(step)} smpl:{format_big_number(samples)} "
+                f"ep:{format_big_number(samples / (num_frames / num_episodes))} epch:{samples / num_frames:.2f} "
+                f"loss:{loss} grdn:12.345 lr:1.0e-05 updt_s:0.200 data_s:0.010 smp/s:40 "
+                f"l1_loss:0.081 kld_loss:1.500",
+            )
+        if (save_freq > 0 and step % save_freq == 0) or step == steps:
+            if step == steps and os.environ.get("STUB_SKIP_FINAL_CHECKPOINT"):
+                continue
+            log(687, f"Checkpoint policy after step {step}")
+            save_checkpoint(output_dir, step, steps, train_config, batch_size)
+    sys.stderr.write("\n")
+    log(770, "End of training")
+
+
+if __name__ == "__main__":
+    main()

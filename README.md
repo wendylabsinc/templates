@@ -73,6 +73,12 @@ shared-source maintenance, tests, and hosted-source deployment.
 The `common/` directory contains maintainer sources used by several templates;
 it is not selectable through `wendy init`.
 
+The `images/` directory holds container images that Wendy publishes for
+templates to use, not templates themselves. `images/lerobot-train/` is the
+LeRobot training image that `wendy train` runs on a cloud GPU: it trains on a
+dataset recorded with `so101-record` or `elrobot-record` and produces the model
+that `so101-policy` or `elrobot-policy` runs.
+
 ## Acknowledgments
 
 The audio templates include sample WAV files from

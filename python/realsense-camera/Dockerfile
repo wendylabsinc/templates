@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 # Stage 1 — Build the React/Vite frontend
-FROM node:22-alpine AS frontend-builder
+FROM node:22.23.4-alpine AS frontend-builder
 WORKDIR /build
 COPY package.json package-lock.json ./
 # `npm install` not `npm ci` — the upstream sample lockfile may be slightly

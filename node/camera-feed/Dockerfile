@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 # Stage 1 — build
-FROM node:22-slim AS builder
+FROM node:22.23.4-slim AS builder
 
 WORKDIR /app
 
@@ -12,7 +12,7 @@ COPY src ./src
 RUN npm run build
 
 # Stage 2 — runtime
-FROM node:22-slim
+FROM node:22.23.4-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \

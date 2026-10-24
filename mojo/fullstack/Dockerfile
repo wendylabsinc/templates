@@ -11,7 +11,7 @@ ARG WENDY_PLATFORM=generic
 ARG WENDY_DEVICE_TYPE=generic
 
 # Stage 1 — build the React frontend
-FROM node:22-slim AS frontend
+FROM node:22.23.4-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm install

@@ -58,6 +58,10 @@ generated project README contains the setup details.
 | `go2-rosbag` | [Python](python/go2-rosbag/) | Unitree Go2 EDU and persistent storage | Inspect Go2 topics and record MCAP rosbag files in a browser |
 | `go2-initial-test` | [Python](python/go2-initial-test/) | Unitree Go2 EDU; large multi-service deployment | Dashboard for checking robot interfaces before development |
 | `so101-sim` | [Python](python/so101-sim/) | WendyOS on arm64 or x86_64; no robot hardware | MuJoCo SO-101 arm simulator with a 3D browser viewer and a joint API |
+| `so101-record` | [Python](python/so101-record/) | WendyOS, SO-101 leader and follower arms on USB serial, a USB camera, and calibration from `so101-calibration` | Record teleoperated demonstrations as a LeRobot 0.6.1 dataset; optional Hugging Face upload |
+| `so101-policy` | [Python](python/so101-policy/) | WendyOS, an SO-101 follower arm on USB serial, a USB camera, and calibration from `so101-calibration`; CUDA on x86_64 NVIDIA devices | Run a trained ACT or SmolVLA policy from a pinned Hugging Face revision, with a safe stop |
+| `elrobot-record` | [Python](python/elrobot-record/) | WendyOS, ElRobot (norma-core) leader and follower arms on USB serial, and two USB cameras | Calibrate the arms without writing to the servos, then record teleoperated demonstrations as a LeRobot 0.6.1 dataset; optional Hugging Face upload |
+| `elrobot-policy` | [Python](python/elrobot-policy/) | WendyOS, an ElRobot follower arm on USB serial, two USB cameras, and a calibration from `elrobot-record`; CUDA on x86_64 NVIDIA devices | Run a trained ACT or SmolVLA policy from a pinned Hugging Face revision, with a safe stop |
 | `blink-led` | [Swift](swift/blink-led/) | Wendy Lite | Blink the board LED through GPIO |
 | `hello-world` | [Swift](swift/hello-world/) | Wendy Lite | Print one message from a minimal embedded Swift app |
 
@@ -68,6 +72,12 @@ shared-source maintenance, tests, and hosted-source deployment.
 
 The `common/` directory contains maintainer sources used by several templates;
 it is not selectable through `wendy init`.
+
+The `images/` directory holds container images that Wendy publishes for
+templates to use, not templates themselves. `images/lerobot-train/` is the
+LeRobot training image that `wendy train` runs on a cloud GPU: it trains on a
+dataset recorded with `so101-record` or `elrobot-record` and produces the model
+that `so101-policy` or `elrobot-policy` runs.
 
 ## Acknowledgments
 

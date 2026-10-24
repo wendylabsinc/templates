@@ -1,0 +1,5 @@
+# Only what the image needs. Everything else (tests, README) stays out.
+*
+!pyproject.toml
+!uv.lock
+!entrypoint.py

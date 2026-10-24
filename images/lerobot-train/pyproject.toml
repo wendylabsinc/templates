@@ -1,0 +1,34 @@
+# Python dependencies of the lerobot-train image. uv.lock pins every package,
+# and `uv sync --locked` in the Dockerfile fails if this file and the lock
+# disagree. To change a version, edit this file, then run
+# `uvx --from uv==0.13.5 uv lock` in this folder.
+[project]
+name = "wendy-lerobot-train"
+version = "0.6.1"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # `training` brings the dataset loaders (torchcodec, PyAV), accelerate and
+    # wandb; `smolvla` brings transformers. ACT needs nothing beyond the core.
+    "lerobot[training,smolvla]==0.6.1",
+    # Listed directly only so that [tool.uv.sources] below applies to them;
+    # LeRobot sets their version range and uv.lock pins the exact build.
+    "torch",
+    "torchvision",
+]
+
+[tool.uv]
+# A dependency set, not an installable package.
+package = false
+# The image is linux/amd64 only: Nebius GPUs are x86 NVIDIA machines.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+# The CUDA 12.8 build of torch that LeRobot 0.6.1 pins in its own pyproject
+# (NVIDIA driver >= 570). torchcodec stays on PyPI, as it does in LeRobot.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]

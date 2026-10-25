@@ -308,32 +308,26 @@ class MJPEGCamera:
         ]
 
         for p_str in pipelines:
+            pipeline = None
             try:
                 pipeline = Gst.parse_launch(p_str)
-                ret = pipeline.set_state(Gst.State.PAUSED)
-                if ret == Gst.StateChangeReturn.FAILURE:
-                    pipeline.set_state(Gst.State.NULL)
-                    logger.info("Pipeline failed: %s", p_str)
-                    continue
-                if ret == Gst.StateChangeReturn.ASYNC:
-                    ret, _, _ = pipeline.get_state(5 * Gst.SECOND)
-                    if ret == Gst.StateChangeReturn.FAILURE:
-                        bus = pipeline.get_bus()
-                        msg = bus.pop_filtered(Gst.MessageType.ERROR)
-                        if msg:
-                            err, debug = msg.parse_error()
-                            logger.info(
-                                "Pipeline preroll error for %s: %s%s",
-                                p_str,
-                                err,
-                                f" ({debug})" if debug else "",
-                            )
-                        pipeline.set_state(Gst.State.NULL)
-                        logger.info("Pipeline preroll failed: %s", p_str)
-                        continue
-                logger.info("Pipeline ready: %s", p_str)
+                if pipeline.set_state(Gst.State.PLAYING) == Gst.StateChangeReturn.FAILURE:
+                    raise RuntimeError("pipeline could not enter PLAYING")
+                # Live sources may report NO_PREROLL in PAUSED without ever
+                # negotiating. A real sample is the readiness criterion.
+                sink = pipeline.get_by_name("sink")
+                sample = sink.emit("try-pull-sample", 5 * Gst.SECOND)
+                if sample is None:
+                    msg = pipeline.get_bus().pop_filtered(Gst.MessageType.ERROR)
+                    if msg:
+                        err, debug = msg.parse_error()
+                        raise RuntimeError(f"{err} ({debug})")
+                    raise RuntimeError("pipeline produced no frame within 5 seconds")
+                logger.info("Pipeline delivered first frame: %s", p_str)
                 return pipeline
             except Exception as e:
+                if pipeline is not None:
+                    pipeline.set_state(Gst.State.NULL)
                 logger.info("Pipeline exception: %s — %s", p_str, e)
         return None
 

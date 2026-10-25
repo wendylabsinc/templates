@@ -589,6 +589,14 @@ async def root():
 
 
 if __name__ == "__main__":
+    import socket
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port={{.PORT}})
+    # A pre-bound dual-stack socket keeps USB IPv6 and IPv4 LAN access working.
+    if socket.has_dualstack_ipv6():
+        with socket.create_server(
+            ("::", {{.PORT}}), family=socket.AF_INET6, dualstack_ipv6=True
+        ) as listener:
+            uvicorn.run(app, fd=listener.fileno())
+    else:
+        uvicorn.run(app, host="0.0.0.0", port={{.PORT}})

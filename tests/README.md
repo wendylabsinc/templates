@@ -15,6 +15,10 @@ CI runs the same command on every pull request.
 - `test_template_readmes.py` checks catalog directories, project README
   coverage, supported README placeholders, relative Markdown links, and
   shared-source drift in both directions.
+- `test_llm_npu.py` checks the `llm-npu` server with fake DSP tools and a local
+  model server: choosing the bundle by DSP architecture, resuming and verifying
+  the download, reporting failures instead of ready, the answer cap, and that it
+  exits on SIGTERM without ever signalling a running Genie process.
 - `test_so101_calibration.py` checks the `so101-calibration` serial-port
   auto-detection with fake ports, and that the app never writes to the servos.
 - `test_so101_sim.py` checks the `so101-sim` variables, the `{{.APP_ID}}` and

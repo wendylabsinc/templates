@@ -382,6 +382,32 @@ class Stop(Base):
         self.assertNotIn("TERMED", self.runs())
         self.assertIn("run-finished", self.runs())
 
+    def test_answer_in_progress_reaches_the_client_before_exit(self):
+        # Exiting ends the handler threads, so the app used to wait for the answer and then
+        # drop it: seen on an IQ-8275, where every stop during a turn lost the response.
+        self.start()
+        self.wait_state(lambda s: s == "ready")
+        (self.fake / "genie_mode").write_text("held")
+        answers = []
+        def ask():
+            try:
+                answers.append(self.get("/ask?q=x", 30))
+            except OSError as e:
+                answers.append(e)
+
+        client = threading.Thread(target=ask, daemon=True)
+        client.start()
+        time.sleep(0.4)
+        self.proc.send_signal(signal.SIGTERM)
+        time.sleep(0.4)
+        (self.fake / "release").touch()
+        self.assertEqual(self.proc.wait(10), 0)
+        client.join(5)
+        self.assertEqual(len(answers), 1)
+        self.assertIsInstance(answers[0], tuple, f"the answer was lost: {answers[0]!r}")
+        self.assertEqual(answers[0][0], 200)
+        self.assertTrue(answers[0][1])
+
 
 class Stuck(Base):
     stuck_after = 1

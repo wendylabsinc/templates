@@ -51,6 +51,7 @@ BOARDS = {
 MAX_ANSWER_TOKENS = 200
 # Far beyond any capped turn, so a run this long is stuck rather than slow.
 STUCK_AFTER_SECONDS = 120
+DELIVERY_SECONDS = 2  # how long a stop waits for a finished answer to reach its client
 
 # Each turn re-sends the conversation, because genie-t2t-run keeps nothing between runs.
 # Six messages keep the model aware of what was just said without the wait creeping up.
@@ -71,6 +72,8 @@ STOPPING = threading.Event()
 DSP_LOCK = threading.Lock()  # one DSP user at a time
 CHILD_LOCK = threading.Lock()  # guards _child against a stop that arrives mid-start
 _child = None
+TURNS_CHANGED = threading.Condition()
+_turns_open = 0  # requests that have not finished sending their answer
 
 STATE_LOCK = threading.Lock()
 STATE = {"state": "starting", "bytes": 0, "total": 0, "pct": 0,
@@ -412,8 +415,12 @@ class Handler(BaseHTTPRequestHandler):
             question = urllib.parse.parse_qs(url.query).get("q", [""])[0].strip()
             if not question:
                 return self._send("usage: /ask?q=your+question", status=400)
-            status, text = ask(question)
-            return self._send(text, status=status)
+            turn_opened()
+            try:
+                status, text = ask(question)
+                return self._send(text, status=status)
+            finally:
+                turn_closed()
         self.send_error(404)
 
     def log_message(self, fmt, *args):  # quieter than the default access log
@@ -422,8 +429,21 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---- stopping ---------------------------------------------------------------------
 
+def turn_opened():
+    global _turns_open
+    with TURNS_CHANGED:
+        _turns_open += 1
+
+
+def turn_closed():
+    global _turns_open
+    with TURNS_CHANGED:
+        _turns_open -= 1
+        TURNS_CHANGED.notify_all()
+
+
 def drain():
-    """Wait until nothing is using the DSP, so the process can exit.
+    """Wait until nothing is using the DSP and any answer is sent, so the process can exit.
 
     PID 1 exiting kills everything left in the container, so this waits as long as a
     child runs. A capped turn ends inside the Agent's window. One that does not makes the
@@ -435,6 +455,10 @@ def drain():
     if child is not None:
         print("stopping: waiting for the DSP process to finish", flush=True)
         child.wait()
+    # Exiting ends the handler threads, which would lose the answer just generated. The
+    # limit stops a stalled client from holding up the exit.
+    with TURNS_CHANGED:
+        TURNS_CHANGED.wait_for(lambda: _turns_open == 0, timeout=DELIVERY_SECONDS)
 
 
 def main():

@@ -63,9 +63,10 @@ waits 30 seconds, and refuses to force-kill it. A shell entrypoint with no handl
 the signal, and the app can then be neither stopped nor replaced.
 
 **Never signal a running Genie process.** SIGTERM to a live `genie-t2t-run` wedged an
-IQ-9075's DSP until a power cycle. So `serve.py` waits for a turn in flight to finish, and
-`dialog::max-num-tokens` caps each answer at 200 tokens (`MAX_ANSWER_TOKENS`) so that it
-finishes inside the Agent's 30 seconds. A longer answer is cut off at the cap.
+IQ-9075's DSP until a power cycle. So `serve.py` waits for a turn in flight to finish and
+delivers its answer before exiting, and `dialog::max-num-tokens` caps each answer at 200
+tokens (`MAX_ANSWER_TOKENS`) so that it finishes inside the Agent's 30 seconds. A longer
+answer is cut off at the cap.
 
 ## The port opens before the model is ready
 

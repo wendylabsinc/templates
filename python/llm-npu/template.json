@@ -1,6 +1,6 @@
 {
     "name": "llm-npu",
-    "description": "Llama 3.2 3B answering questions on a Qualcomm Hexagon NPU, with a chat UI. Runs entirely on the device, no network needed",
+    "description": "Qwen3-4B answering questions on a Qualcomm Hexagon NPU, with a chat UI. Runs entirely on the device, offline after its first run",
     "variables": [
         {
             "name": "APP_ID",
@@ -15,7 +15,10 @@
             "type": "integer",
             "default": 3008,
             "prompt": "HTTP port",
-            "validate": { "min": 1, "max": 65535 }
+            "validate": {
+                "min": 1,
+                "max": 65535
+            }
         }
     ]
 }

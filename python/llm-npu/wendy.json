@@ -11,6 +11,10 @@
             "type": "npu"
         },
         {
+            "type": "http",
+            "port": {{.PORT}}
+        },
+        {
             "type": "persist",
             "name": "{{.APP_ID}}-models",
             "path": "/data"

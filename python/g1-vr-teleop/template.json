@@ -18,22 +18,6 @@
             "validate": { "min": 1, "max": 65535 }
         },
         {
-            "name": "ROBOT_KEY",
-            "description": "Shared secret, at least 16 letters, digits, - or _. The console asks for it before it can arm the robot, and the bridge uses it to reach the onboard commander. Generate one with: openssl rand -hex 16",
-            "type": "string",
-            "required": true,
-            "prompt": "Control key (openssl rand -hex 16)",
-            "validate": { "pattern": "^[A-Za-z0-9_-]{16,128}$" }
-        },
-        {
-            "name": "DEADMAN",
-            "description": "Button on the Unitree remote that a spotter must hold for the arms to move (R1, L1, R2, L2, A, B, X, Y, ...). Use none only if a spotter holds the remote ready to press the damping combo.",
-            "type": "string",
-            "default": "R2",
-            "prompt": "Dead-man button on the Unitree remote",
-            "validate": { "pattern": "^(none|R1|L1|R2|L2|F1|F2|A|B|X|Y|start|select|up|down|left|right)$" }
-        },
-        {
             "name": "WALKING",
             "description": "on lets the Quest's left stick walk and turn the robot while armed (bounded speed, still behind the console's walking permission). off keeps the legs under the robot's own controller only.",
             "type": "string",

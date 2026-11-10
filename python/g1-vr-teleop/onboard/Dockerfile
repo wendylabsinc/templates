@@ -46,14 +46,17 @@ COPY *.py ./
 COPY calibration ./calibration
 COPY entrypoint.sh ./entrypoint.sh
 
-# Settings used at the Avangrid conference build (Oct 2026). The head camera
+# Settings used at the Avangrid conference build (Oct 2026): no software
+# dead-man and no key. A spotter holds the Unitree remote and its damping combo
+# is the stop. Set G1_DEADMAN to a remote button (e.g. R2) to require it held,
+# and G1_KEY plus TELEOP_CONTROL_KEY in teleop/Dockerfile to require a key. The head camera
 # (RealSense colour, usually /dev/video4) only runs when recording is on.
 ENV PYTHONUNBUFFERED=1 \
     G1_NET={{.NETWORK_INTERFACE}} \
     G1_DOMAIN={{.DDS_DOMAIN}} \
     G1_PORT=8090 \
-    G1_KEY={{.ROBOT_KEY}} \
-    G1_DEADMAN={{.DEADMAN}} \
+    G1_KEY= \
+    G1_DEADMAN=none \
     G1_LOCOMOTION={{.WALKING}} \
     G1_CONTROL_HZ=100 \
     G1_ARM_GAIN_PROFILE=smooth_v1 \

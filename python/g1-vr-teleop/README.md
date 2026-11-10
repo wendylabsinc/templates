@@ -11,9 +11,9 @@ October 2026, without the extras that were added for that demo.
 
 - A Unitree G1 (29-DOF) with Dex3-1 hands and WendyOS on its computer
 - A Meta Quest 3 on the same network as the robot
-- **A spotter holding the Unitree remote.** By default they hold
-  `{{.DEADMAN}}` for the arms to move; releasing it freezes the arms. The
-  remote's damping combo is the emergency stop.
+- **A spotter holding the Unitree remote**, watching the robot. There is no
+  software dead-man and the operator's hands are busy, so the remote's
+  damping combo is the stop.
 - The robot standing in running mode (power on → damping → lock stand →
   running mode). The arms are blended into Unitree's own motion controller,
   so they will not move in damping or lock-stand mode.
@@ -28,17 +28,15 @@ wendy run
 The first build takes a while: it compiles CycloneDDS and installs Pinocchio
 and PyTorch (CPU-only).
 
-1. **Operator console.** Open
-   `https://<robot>:{{.HTTPS_PORT}}/control.html?key=<ROBOT_KEY>` on a laptop
-   and accept the self-signed certificate. The key is the `ROBOT_KEY` you
-   chose at `wendy init`; without it the buttons refuse.
+1. **Operator console.** Open `https://<robot>:{{.HTTPS_PORT}}/control.html`
+   on a laptop and accept the self-signed certificate.
 2. **Headset.** In the Quest browser open `https://<robot>:{{.HTTPS_PORT}}/`,
    accept the same certificate, then tap **Enter VR**. The certificate is
    kept across redeploys, so this is a one-time step.
 3. **Arm.** On the console press **1 · Take control** (the arms hold their
    current pose), then **2 · ARM**. The arms now follow your hands.
 4. **Stop.** **Release** hands the arms back to the robot. The spotter can
-   always let go of the dead-man or press the damping combo.
+   always press the damping combo.
 
 The first time on a new robot, use **Set home** with the arms posed by hand
 where every session should start; it is saved on the robot.
@@ -69,14 +67,13 @@ With `RECORDING=on`, start a session from the console or with the left
 squeeze. When a session stops it is checked and sealed: a manifest records a
 hash of every file, so a session copied off the robot can be verified.
 
-Sessions live in the `{{.APP_ID}}-sessions` volume. List and download them
-with the key:
+Sessions live in the `{{.APP_ID}}-sessions` volume. List and download them:
 
 ```sh
 B=https://<robot>:{{.HTTPS_PORT}}
-curl -sk -H "X-Teleop-Key: $KEY" "$B/session/list"
-curl -sk -H "X-Teleop-Key: $KEY" "$B/session/get?session=<id>"    -o <id>.jsonl
-curl -sk -H "X-Teleop-Key: $KEY" "$B/session/frames?session=<id>" -o <id>.frames.tar
+curl -sk "$B/session/list"
+curl -sk "$B/session/get?session=<id>"    -o <id>.jsonl
+curl -sk "$B/session/frames?session=<id>" -o <id>.frames.tar
 ```
 
 Each row of the `.jsonl` has the tracked hands and head, the retargeted
@@ -90,8 +87,6 @@ which only runs while recording is on.
 |---|---|---|
 | `APP_ID` | required | App-group identifier |
 | `HTTPS_PORT` | `8443` | Headset page and operator console |
-| `ROBOT_KEY` | required | Shared secret for the console and the onboard commander |
-| `DEADMAN` | `R2` | Remote button the spotter holds; `none` relies on the damping combo alone |
 | `WALKING` | `off` | `on` lets the left stick walk the robot |
 | `RECORDING` | `off` | `on` adds session recording and the head camera |
 | `NETWORK_INTERFACE` | `auto` | Interface with the `192.168.123.x` robot address |
@@ -99,6 +94,12 @@ which only runs while recording is on.
 
 Arm, smoothing and send-rate settings are the conference ones and live as
 `ENV` lines in `teleop/Dockerfile` and `onboard/Dockerfile`.
+
+**No key and no dead-man, as at the conference.** Anyone who can reach the
+robot's network can open the console and arm it, so keep it on a private
+network. To lock it down, set the same secret in `G1_KEY` (onboard) and
+`TELEOP_CONTROL_KEY` (teleop); the console then needs `?key=<secret>` in its
+URL. To require a held button, set `G1_DEADMAN` to one (`R2`, `L2`, `A`, ...).
 
 ## How it works
 
@@ -114,7 +115,7 @@ Arm, smoothing and send-rate settings are the conference ones and live as
 
 | Service | Port | Role |
 |---|---:|---|
-| `onboard` | `8090` | The only code that moves the robot. Starts in STANDBY, holds on Take control, follows only while ARMED, enforces joint limits, the dead-man and its own timeouts |
+| `onboard` | `8090` | The only code that moves the robot. Starts in STANDBY, holds on Take control, follows only while ARMED, enforces joint limits and its own timeouts |
 | `teleop` | `8200`, `{{.HTTPS_PORT}}` | Serves the headset page and console, retargets hands to arm and finger targets (Pinocchio IK, DexPilot), records sessions |
 
 Both use host networking and run on the robot's computer. The G1 and Dex3

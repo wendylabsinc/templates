@@ -16,8 +16,9 @@ fi
 
 set -- python3 g1_onboard.py --net "$net" --domain "$G1_DOMAIN" --port "$G1_PORT" --key "$G1_KEY"
 
-# A dead-man is required on the real robot (domain 0). "none" means a second
-# person holds the Unitree remote and uses its damping combo as the stop.
+# "none" (the default) means no software dead-man: a second person holds the
+# Unitree remote and uses its damping combo as the stop. A button name (R2, L2,
+# A, ...) makes the arms move only while that button is held.
 case "${G1_DEADMAN:-}" in
   none) set -- "$@" --no-deadman ;;
   "") ;;

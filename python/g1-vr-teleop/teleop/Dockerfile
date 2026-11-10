@@ -29,9 +29,10 @@ RUN micromamba install -y -n base -c conda-forge \
 ENV PATH=/opt/conda/bin:$PATH
 
 # dex-retargeting maps fingers (DexPilot) and needs torch; CPU-only is enough.
-RUN pip install --no-cache-dir aiohttp==3.10.11 \
+# It imports `six` without declaring it, so install that explicitly.
+RUN pip install --no-cache-dir aiohttp==3.10.11 six \
     && pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
-    && pip install --no-cache-dir dex_retargeting
+    && pip install --no-cache-dir dex_retargeting==0.5.0
 
 # G1 URDF + meshes and the Dex3 hand config, from Unitree's xr_teleoperate
 # (Apache-2.0) at a pinned commit. Pinocchio's URDF loader needs the meshes.
@@ -79,4 +80,5 @@ ENV PYTHONUNBUFFERED=1 \
     TELEOP_REALG1_SEND_HZ=90
 
 EXPOSE 8200 {{.HTTPS_PORT}}
-CMD ["/app/entrypoint.sh"]
+# Through sh: wendy init does not keep the executable bit.
+CMD ["sh", "/app/entrypoint.sh"]

@@ -129,7 +129,7 @@ web pages, without a robot or headset. It needs Pinocchio with CasADi, which
 pip does not provide, so use conda-forge:
 
 ```sh
-./fetch-assets.sh
+sh fetch-assets.sh
 micromamba create -n g1-teleop -c conda-forge python=3.12 pinocchio casadi numpy pyyaml pytest
 micromamba run -n g1-teleop pip install aiohttp==3.10.11 dex_retargeting
 micromamba run -n g1-teleop python -m pytest tests -q

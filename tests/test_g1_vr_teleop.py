@@ -86,3 +86,11 @@ def test_onboard_entrypoint_maps_deadman_and_walking():
     assert 'none) set -- "$@" --no-deadman' in script
     assert 'set -- "$@" --deadman "$G1_DEADMAN"' in script
     assert 'on) set -- "$@" --locomotion' in script
+
+
+def test_entrypoints_run_through_sh():
+    # wendy init writes files without the executable bit, so a Dockerfile that
+    # execs a script directly fails with "permission denied" on the robot.
+    for service in ("onboard", "teleop"):
+        dockerfile = (PROJECT / service / "Dockerfile").read_text()
+        assert 'CMD ["sh", "/app/entrypoint.sh"]' in dockerfile, service

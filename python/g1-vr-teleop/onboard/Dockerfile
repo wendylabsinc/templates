@@ -68,4 +68,5 @@ ENV PYTHONUNBUFFERED=1 \
     G1_STATE_DIR=/state
 
 EXPOSE 8090
-CMD ["/app/entrypoint.sh"]
+# Through sh: wendy init does not keep the executable bit.
+CMD ["sh", "/app/entrypoint.sh"]

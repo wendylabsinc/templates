@@ -1,0 +1,17 @@
+const assert = require('node:assert/strict');
+const { recoveryStatus } = require('../web/usb-link.js');
+const now = 100;
+const ready = {state:'ready', checked_at:now, forwarded:true};
+const robot = {connected:true, state:'HOLDING', xr_connected:true, hands_fresh:true};
+assert.equal(recoveryStatus({state:'unauthorized',checked_at:now},robot,now).canArm,false);
+assert.match(recoveryStatus({state:'unauthorized',checked_at:now},robot,now).text,/Allow USB debugging/);
+assert.equal(recoveryStatus({...ready,checked_at:80},robot,now).canArm,false);
+assert.equal(recoveryStatus(ready,{...robot,hands_fresh:false},now).canArm,false);
+assert.equal(recoveryStatus(ready,{...robot,connected:false},now).canArm,false);
+assert.equal(recoveryStatus(ready,robot,now).canArm,true);
+assert.match(recoveryStatus(ready,robot,now).text,/deliberately/);
+assert.match(recoveryStatus(ready,{...robot,camera:{connected:false}},now).text,/camera/i);
+assert.equal(recoveryStatus(null,robot,now).canArm,false);
+assert.equal(recoveryStatus(ready,{...robot,homing:true},now).canArm,false);
+assert.match(recoveryStatus(null,{...robot,homing:true},now).text,/returning/);
+console.log('USB recovery UI cases passed');

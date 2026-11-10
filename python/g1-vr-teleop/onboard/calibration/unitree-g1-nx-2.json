@@ -1,0 +1,64 @@
+{
+  "limits": [
+    [
+      -3.0238458633422853,
+      2.6148123264312746
+    ],
+    [
+      -0.09327141642570495,
+      2.194609355926514
+    ],
+    [
+      -2.55725212097168,
+      2.55876202583313
+    ],
+    [
+      -0.20660622119903566,
+      1.862682294845581
+    ],
+    [
+      -1.5190946578979492,
+      1.9168270349502563
+    ],
+    [
+      -0.7961821675300598,
+      0.9895021438598632
+    ],
+    [
+      -1.0802984952926635,
+      1.039993119239807
+    ],
+    [
+      -2.5523266315460207,
+      2.6116964340209963
+    ],
+    [
+      -2.1987919330596926,
+      0.09322347939014435
+    ],
+    [
+      -2.568685007095337,
+      2.558055114746094
+    ],
+    [
+      -0.9898352146148681,
+      2.008602333068848
+    ],
+    [
+      -1.9164435386657714,
+      1.9298898696899414
+    ],
+    [
+      -1.5772622346878051,
+      1.5498730659484863
+    ],
+    [
+      -1.573956561088562,
+      1.5503715991973877
+    ]
+  ],
+  "observed": null,
+  "captured": "2026-09-14",
+  "device": "unitree-g1-nx-2",
+  "note": "Walked by hand 2026-09-14: a full from-scratch pass, then a top-up of the left arm. Fixes right_wrist_roll, which the 13 Sep calibration captured as -110..+1.9 deg -- one direction only -- and which therefore followed teleop at 7% and silently corrupted every episode recorded before this. NOTE: `observed` is null here because the status endpoint only exposed the raw extremes while recording -- fixed in the onboard, but this backup was taken before that deploy. Restoring this file gives correct LIMITS; a later calibration pass against it will start from scratch rather than topping up."
+}

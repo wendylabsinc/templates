@@ -1,0 +1,253 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>G1 teleop control</title>
+<style>
+  :root { color-scheme: dark; }
+  [hidden] { display:none !important; }
+  body { margin:0; padding:16px; background:#111; color:#eee;
+         font:16px/1.4 system-ui,-apple-system,sans-serif; }
+  h1 { font-size:18px; margin:0 0 12px; font-weight:600; }
+  #state { font-size:28px; font-weight:700; padding:14px; border-radius:10px;
+           background:#1c1c1c; border:2px solid #333; margin-bottom:6px; }
+  #state.ARMED { border-color:#c62828; background:#2a1414; color:#ff7b7b; }
+  #state.HOLDING { border-color:#f9a825; background:#2a2412; color:#ffd54f; }
+  #state.STANDBY { border-color:#2e7d32; background:#142a16; color:#81c784; }
+  #msg  { color:#999; font-size:13px; min-height:1.3em; margin-bottom:14px; }
+  .thermal-alert { padding:12px 14px; margin:0 0 14px; border:2px solid #f9a825;
+                   border-radius:10px; background:#2a2412; color:#ffd54f;
+                   font-weight:800; }
+  .thermal-alert.bad { border-color:#c62828; background:#2a1414; color:#ff7b7b; }
+  button { display:block; width:100%; margin:8px 0; padding:20px; font-size:20px;
+           font-weight:600; border:none; border-radius:10px; color:#fff;
+           background:#333; cursor:pointer; }
+  button:active { filter:brightness(1.4); }
+  .go   { background:#1565c0; }
+  .arm  { background:#b71c1c; }
+  .stop { background:#455a64; }
+  #waist-lock { background:#455a64; }
+  #waist-lock.locked { background:#9FE2BF; color:#171C23; }
+  #walking-toggle.walking-allowed { background:#8c5d18; }
+  .row { display:flex; gap:8px; font-size:13px; color:#888; margin-top:14px;
+         flex-wrap:wrap; }
+  .pill { padding:4px 10px; border-radius:20px; background:#1c1c1c; }
+  .ok { color:#81c784; } .bad { color:#e57373; }
+  p.note { color:#888; font-size:13px; border-top:1px solid #2a2a2a;
+           padding-top:12px; margin-top:18px; }
+</style>
+<h1>G1 teleop — operator control</h1>
+<div id="state">…</div>
+<div id="msg"></div>
+<div id="usb-link" class="thermal-alert" role="status" hidden></div>
+<div id="motor-hot" class="thermal-alert bad" role="alert" hidden></div>
+<div id="thermal-rise" class="thermal-alert" hidden></div>
+
+<button class="go"   data-cmd="take_control">1 · Take control <small>(grab arms, hold pose)</small></button>
+<button class="arm"  data-cmd="arm">2 · ARM <small>(robot follows your hands)</small></button>
+<button class="go"   data-cmd="home">Go home <small>(slew to the captured pose, slowly)</small></button>
+<button class="stop" data-cmd="hold">Hold <small>(freeze arms, relax hands)</small></button>
+<button class="stop" data-cmd="relax">Release <small>(hand the arms back)</small></button>
+<button id="waist-lock" aria-pressed="false">Waist: right stick turns it <small>(press to lock the waist)</small></button>
+<button id="walking-toggle" aria-pressed="false" disabled>Walking permission unavailable</button>
+<div id="walking-hint" role="status">Waiting for the bridge.</div>
+<button class="stop" data-cmd="set_home" style="opacity:.65;font-size:15px;padding:12px">
+  Set home now <small>(record where the arms are)</small></button>
+<button class="stop" data-cmd="set_home_in_30" style="opacity:.65;font-size:15px;padding:12px">
+  Set home in 30s <small>(press, walk over, pose the arms, hold still)</small></button>
+
+<div class="row" id="recording-controls">
+  <button class="stop" data-session="start" style="opacity:.8;font-size:15px;padding:12px">
+    Start session <small>(record from here)</small></button>
+  <button class="stop" data-session="stop" style="opacity:.8;font-size:15px;padding:12px">
+    Stop session <small>(and check the file)</small></button>
+</div>
+<p class="note" id="sessionmsg">Raw sessions are labelled and segmented offline; there are no live attempt/success/fail controls.</p>
+
+<div class="row">
+  <span class="pill">onboard <b id="conn">?</b></span>
+  <span class="pill">headset <b id="xr">?</b></span>
+  <span class="pill">hands seen <b id="nhands">?</b></span>
+  <span class="pill">to robot <b id="hands">?</b></span>
+  <span class="pill" id="age"></span>
+</div>
+<p class="note" id="hint"></p>
+
+<p class="note">The stop of last resort is the <b>remote's damping combo</b>, not
+this page. It cuts motion in the robot's own motion-control service, below
+everything here. Keep it in someone's hands.</p>
+
+<script src="./usb-link.js"></script>
+<script type="module">
+import {bindWalkingControl} from './walking_control.js';
+const showWalking = bindWalkingControl(document.getElementById('walking-toggle'), document.getElementById('walking-hint'), async allowed => {
+  const q = new URLSearchParams({allowed: allowed ? '1' : '0'});
+  const key = new URLSearchParams(location.search).get('key');
+  if (key) q.set('key', key);
+  const response = await fetch('/locomotion?' + q, {method:'POST'});
+  const result = await response.json();
+  if (!response.ok || !result.ok) throw Error(result.error || 'Request failed');
+  return result;
+});
+const $ = s => document.querySelector(s);
+
+for (const b of document.querySelectorAll("button[data-session]")) {
+  b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const key = new URLSearchParams(location.search).get("key");
+      const step = b.dataset.session;
+      const q = new URLSearchParams();
+      if (key) q.set("key", key);
+      if (step === "start") q.set("name", prompt("Session name (task, e.g. can-handover):", "") || "");
+      const r = await fetch("/session/" + step + (q.toString() ? "?" + q : ""), { method: "POST" });
+      const j = await r.json();
+      let text = step + ": " + (j.ok ? "ok" : "refused: " + j.error);
+      if (j.session) text += " " + j.session;
+      if (j.check) {
+        text += j.check.ok ? " — file OK" : " — ISSUES: " + (j.check.issues || []).map(i => i.code).join(", ");
+        text += ` (${j.check.frames} frames, ARMED ${Math.round(100 * (j.check.usable_frac || 0))}%`
+              + (j.check.attempts ? `, ${j.check.attempts} attempts` : "")
+              + (j.check.outcomes ? `, success ${j.check.outcomes.success} fail ${j.check.outcomes.fail}` : "") + ")";
+      }
+      $("#sessionmsg").textContent = text;
+    } catch (e) {
+      $("#sessionmsg").textContent = "session request failed: " + e;
+    } finally {
+      setTimeout(() => { b.disabled = false; }, 300);
+    }
+  };
+}
+
+for (const b of document.querySelectorAll("button[data-cmd]")) {
+  b.onclick = async () => {
+    b.disabled = true;
+    try {
+      // Carry the key from our own URL, so control.html?key=... just works.
+      if (b.dataset.cmd === "arm" && window.usbLink?.enabled) {
+        const check = await window.usbLink.checkArm();
+        if (!check.canArm) {
+          $("#msg").textContent = check.text;
+          return;
+        }
+      }
+      const key = new URLSearchParams(location.search).get("key");
+      const url = "/control/" + b.dataset.cmd + (key ? "?key=" + encodeURIComponent(key) : "");
+      const r = await fetch(url, { method: "POST" });
+      const j = await r.json();
+      if (!j.ok) $("#msg").textContent = "refused: " + j.error;
+    } catch (e) {
+      $("#msg").textContent = "control request failed: " + e;
+    } finally {
+      setTimeout(() => { b.disabled = false; }, 300);
+    }
+  };
+}
+
+// The waist lock: while it is on the right stick cannot turn the waist
+// (bridge/server.py, waist_on_thumbstick). Shown from /control/status so the
+// button says what the bridge is doing, not what was last clicked.
+function showWaistLock(frozen) {
+  const b = $("#waist-lock");
+  b.classList.toggle("locked", !!frozen);
+  b.setAttribute("aria-pressed", frozen ? "true" : "false");
+  b.innerHTML = frozen
+    ? "Waist LOCKED <small>(the right stick cannot turn it; press to unlock)</small>"
+    : "Waist: right stick turns it <small>(press to lock the waist)</small>";
+}
+$("#waist-lock").onclick = async () => {
+  const b = $("#waist-lock");
+  b.disabled = true;
+  try {
+    const q = new URLSearchParams();
+    const key = new URLSearchParams(location.search).get("key");
+    if (key) q.set("key", key);
+    q.set("frozen", b.classList.contains("locked") ? "0" : "1");
+    const j = await (await fetch("/waist?" + q, { method: "POST" })).json();
+    if (j.ok) showWaistLock(j.frozen);
+    else $("#msg").textContent = "waist lock refused: " + j.error;
+  } catch (e) {
+    $("#msg").textContent = "waist lock request failed: " + e;
+  } finally {
+    setTimeout(() => { b.disabled = false; }, 300);
+  }
+};
+
+async function poll() {
+  try {
+    const s = await (await fetch("/control/status")).json();
+    // Strip the onboard's explanatory suffix: "ARMED — teleop motion enabled…"
+    const st = (s.state || "?").split(" ")[0];
+    $("#state").textContent = st;
+    if (s.homing) $("#state").textContent = "RETURNING HOME";
+    $("#state").className = st;
+    showWaistLock(s.waist_frozen);
+    // TELEOP_RECORDING=0: the bridge has no recorder and no /session routes.
+    const recordingOn = s.recording_enabled !== false;
+    $("#recording-controls").hidden = !recordingOn;
+    $("#sessionmsg").hidden = !recordingOn;
+    showWalking(s.locomotion_permission, s.locomotion);
+    // Command replies can outlive a watchdog transition. Do not show an old
+    // "ARMED" reply underneath the current HOLDING state.
+    $("#msg").textContent = st !== "ARMED" && /^ARMED\b/.test(s.msg || "")
+      ? "Teleop is not armed. Check tracking, then re-arm deliberately."
+      : s.msg || "";
+    $("#conn").textContent = s.connected ? "connected" : "NOT CONNECTED";
+    $("#conn").className = s.connected ? "ok" : "bad";
+    $("#hands").textContent = s.hands_fresh ? "flowing" : "no data";
+    $("#hands").className = s.hands_fresh ? "ok" : "bad";
+    $("#xr").textContent = s.xr_connected ? (s.xr_fps + " fps") : "not in XR";
+    $("#xr").className = s.xr_connected ? "ok" : "bad";
+    $("#nhands").textContent = s.xr_hands;
+    $("#nhands").className = s.xr_hands === 2 ? "ok" : "bad";
+    $("#age").textContent = s.hands_age_s != null ? s.hands_age_s + "s old" : "";
+    const thermal = s.thermal && s.thermal.fastest;
+    const motorHot = s.motor_heat_alert || {};
+    const motorHotBox = $("#motor-hot");
+    if (motorHot.active) {
+      const joint = String(motorHot.joint || "motor").replace(/_joint$/, "").replace(/_/g, " ");
+      motorHotBox.textContent = `MOTOR HOT — ${joint}: ${motorHot.temperature_c} °C (80 °C alert)`;
+      motorHotBox.hidden = false;
+    } else {
+      motorHotBox.hidden = true;
+    }
+    const thermalBox = $("#thermal-rise");
+    if (thermal) {
+      const joint = String(thermal.joint || "joint").replace(/_joint$/, "").replace(/_/g, " ");
+      thermalBox.textContent = `THERMAL RISE — ${joint}: +${Number(thermal.rise_c_per_s).toFixed(2)} °C/s, now ${thermal.temperature_c} °C`;
+      thermalBox.className = "thermal-alert" + (thermal.level === "bad" ? " bad" : "");
+      thermalBox.hidden = false;
+    } else {
+      thermalBox.hidden = true;
+    }
+
+    // Say which link is broken, rather than leaving four pills to interpret.
+    let hint = "";
+    if (!s.connected)            hint = "The bridge cannot reach the robot — is the onboard app running?";
+    // NOT localhost: on the Quest, localhost is the Quest. That advice is
+    // left over from an adb-reverse setup over the cable and sent an operator
+    // to a page that cannot exist, while the panel they were reading it on
+    // could only ever say "not in XR" until they found the right one. The
+    // headset reaches the bridge over wifi, on the TLS port, and WebXR needs
+    // the secure origin anyway.
+    else if (!s.xr_connected)    hint = `No XR session. On the HEADSET open https://${location.host}/ and press Enter VR (this page is the operator's).`;
+    else if (s.xr_hands === 0)   hint = "Headset is connected but sees NO hands. Put the Quest controllers away — the headset switches to controller mode the moment it detects one. Then hold both hands up in view.";
+    else if (s.xr_hands === 1)   hint = "Only one hand tracked. Both are required — the other hand is out of view or occluded.";
+    else if (!s.hands_fresh)     hint = "Two hands seen but the data is stale — frames are arriving too slowly.";
+    $("#hint").textContent = hint;
+    if (window.usbLink?.enabled) {
+      const health = window.usbLink.status(s);
+      $("#usb-link").hidden = false;
+      $("#usb-link").textContent = health.text;
+      $("#usb-link").className = "thermal-alert" + (health.canArm ? "" : " bad");
+      document.querySelector('button[data-cmd="arm"]').disabled = !health.canArm;
+      $("#hint").textContent = ""; // USB-specific recovery above replaces the Wi-Fi instructions.
+    }
+  } catch (e) {
+    showWalking(null, null);
+    $("#conn").textContent = "bridge unreachable";
+    $("#conn").className = "bad";
+  }
+}
+poll();
+setInterval(poll, 500);
+</script>

@@ -1,0 +1,52 @@
+{
+    "name": "g1-vr-teleop",
+    "description": "Teleoperate a Unitree G1's arms and Dex3 hands from a Meta Quest 3 in VR, with optional recording of each session as a training episode (joint states, commands and camera frames).",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "HTTPS_PORT",
+            "description": "HTTPS port for the headset page and the operator console. WebXR needs HTTPS, so the app serves a self-signed certificate that the headset accepts once.",
+            "type": "integer",
+            "default": 8443,
+            "prompt": "Headset and console HTTPS port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "WALKING",
+            "description": "on lets the Quest's left stick walk and turn the robot while armed (bounded speed, still behind the console's walking permission). off keeps the legs under the robot's own controller only.",
+            "type": "string",
+            "default": "off",
+            "prompt": "Walk with the left stick (on/off)",
+            "validate": { "pattern": "^(on|off)$" }
+        },
+        {
+            "name": "RECORDING",
+            "description": "on adds data collection: start and stop a session from the console and each one is saved on the robot as a sealed training episode. off removes the recording controls and endpoints.",
+            "type": "string",
+            "default": "off",
+            "prompt": "Data collection (on/off)",
+            "validate": { "pattern": "^(on|off)$" }
+        },
+        {
+            "name": "NETWORK_INTERFACE",
+            "description": "Interface on the G1's computer with the robot-network address (192.168.123.x). Leave as auto unless detection fails.",
+            "type": "string",
+            "default": "auto",
+            "prompt": "Robot network interface"
+        },
+        {
+            "name": "DDS_DOMAIN",
+            "description": "DDS domain: 0 drives the real robot, 1 drives a Unitree simulator on the same network.",
+            "type": "integer",
+            "default": 0,
+            "prompt": "DDS domain (0 = real robot, 1 = simulator)",
+            "validate": { "min": 0, "max": 1 }
+        }
+    ]
+}

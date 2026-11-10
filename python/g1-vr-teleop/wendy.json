@@ -1,0 +1,32 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "services": {
+        "onboard": {
+            "context": "./onboard",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "{{.APP_ID}}-state", "path": "/state" },
+                { "type": "camera" }
+            ]
+        },
+        "teleop": {
+            "context": "./teleop",
+            "dependsOn": ["onboard"],
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "{{.APP_ID}}-sessions", "path": "/sessions" }
+            ]
+        }
+    },
+    "readiness": {
+        "tcpSocket": { "port": {{.HTTPS_PORT}} },
+        "timeoutSeconds": 120
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser https://${WENDY_HOSTNAME}:{{.HTTPS_PORT}}/control.html"
+        }
+    }
+}

@@ -1,0 +1,5 @@
+teleop/assets/
+__pycache__/
+.pytest_cache/
+sessions/
+*.pkl

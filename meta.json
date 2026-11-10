@@ -150,6 +150,13 @@
             ]
         },
         {
+            "name": "g1-vr-teleop",
+            "description": "Teleoperate a Unitree G1's arms and Dex3 hands from a Meta Quest 3 in VR, with optional session recording for training data",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "go2-initial-test",
             "description": "Pre-hackathon hardware self-test for the Unitree Go2: one tiny app per hardware interface (camera, LiDAR, mic, speaker, IMU, foot contact, battery, motion, GPU, Bluetooth, cloud) plus a dashboard UI showing a live pass/fail go/no-go board",
             "languages": [

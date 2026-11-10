@@ -52,6 +52,7 @@ generated project README contains the setup details.
 | `ros2-talker-listener` | [Swift](swift/ros2-talker-listener/) | WendyOS and ROS 2-compatible networking | Swift ROS 2 publisher and subscriber over CycloneDDS |
 | `go2-rc` | [Python](python/go2-rc/) | Unitree Go2 EDU | Browser teleoperation with motion and camera services |
 | `g1-rc` | [Python](python/g1-rc/) | Unitree G1 with supported camera and robot network | Browser teleoperation, posture, gestures, and arm presets |
+| `g1-vr-teleop` | [Python](python/g1-vr-teleop/) | Unitree G1 (29-DOF) with Dex3 hands, a Meta Quest 3, and a spotter with the Unitree remote | VR arm and hand teleoperation from a Quest 3, with optional recording of training episodes |
 | `rc-car` | [Python](python/rc-car/) | Yahboom ROSMASTER R2, serial controller, camera, and optional joystick | Browser and gamepad control for an Ackermann robot car |
 | `so101-calibration` | [Python](python/so101-calibration/) | WendyOS and an SO-101 arm on USB serial | Browser-guided arm calibration to LeRobot JSON, with the arm kept limp |
 | `go2-foxglove` | [Python](python/go2-foxglove/) | Unitree Go2 EDU and Foxglove | Stream Go2 DDS and camera data to one Foxglove connection |

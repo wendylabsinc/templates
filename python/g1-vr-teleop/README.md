@@ -87,6 +87,7 @@ which only runs while recording is on.
 |---|---|---|
 | `APP_ID` | required | App-group identifier |
 | `HTTPS_PORT` | `8443` | Headset page and operator console |
+| `HTTP_PORT` | `8280` | Same pages over plain HTTP, for a headset on USB only |
 | `WALKING` | `off` | `on` lets the left stick walk the robot |
 | `RECORDING` | `off` | `on` adds session recording and the head camera |
 | `NETWORK_INTERFACE` | `auto` | Interface with the `192.168.123.x` robot address |
@@ -116,7 +117,7 @@ URL. To require a held button, set `G1_DEADMAN` to one (`R2`, `L2`, `A`, ...).
 | Service | Port | Role |
 |---|---:|---|
 | `onboard` | `8090` | The only code that moves the robot. Starts in STANDBY, holds on Take control, follows only while ARMED, enforces joint limits and its own timeouts |
-| `teleop` | `8200`, `{{.HTTPS_PORT}}` | Serves the headset page and console, retargets hands to arm and finger targets (Pinocchio IK, DexPilot), records sessions |
+| `teleop` | `{{.HTTP_PORT}}`, `{{.HTTPS_PORT}}` | Serves the headset page and console, retargets hands to arm and finger targets (Pinocchio IK, DexPilot), records sessions |
 
 Both use host networking and run on the robot's computer. The G1 and Dex3
 model files come from Unitree's

@@ -1,5 +1,11 @@
 /* Optional laptop USB connection diagnostics. Enabled by control.html?usb=1. */
 (function (root) {
+  // The headset reaches this page over adb reverse, so as localhost on the
+  // plain-HTTP port that served the console (HTTP_PORT in the template).
+  function usbPageUrl() {
+    const port = root.location && root.location.port;
+    return `http://localhost${port ? ':' + port : ''}/index.html`;
+  }
   function recoveryStatus(link, robot, now = Date.now() / 1000) {
     if (robot.homing || robot.input_loss_recovery?.phase === 'returning')
       return {canArm:false, text:'Input lost — slowly returning to the saved home pose onboard. Teleop remains unarmed. Hold cancels the return.'};
@@ -12,7 +18,7 @@
     if (!robot.connected)
       return {canArm:false, text:'USB is ready, but the G1 controller is disconnected. Check its Ethernet link and onboard service. Go home requires that service to be running.'};
     if (!robot.xr_connected || !robot.hands_fresh)
-      return {canArm:false, text:'USB is ready; waiting for fresh tracking. In the headset open http://localhost:8200/index.html and enter VR. After recovery the robot remains unarmed; Go home remains available.'};
+      return {canArm:false, text:`USB is ready; waiting for fresh tracking. In the headset open ${usbPageUrl()} and enter VR. After recovery the robot remains unarmed; Go home remains available.`};
     const camera = robot.camera && !robot.camera.connected ? ' Camera is disconnected; restore its service before relying on the view.' : '';
     return {canArm:robot.state === 'HOLDING', text:'USB and tracking are ready. After a dropout, re-arm deliberately when the workspace is clear.' + camera};
   }

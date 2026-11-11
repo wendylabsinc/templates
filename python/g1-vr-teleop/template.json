@@ -18,6 +18,14 @@
             "validate": { "min": 1, "max": 65535 }
         },
         {
+            "name": "HTTP_PORT",
+            "description": "Plain-HTTP port for the same pages. Only a headset on USB (adb reverse, reached as localhost) uses it; over Wi-Fi the headset needs HTTPS_PORT. Change it if another app on the robot already listens here.",
+            "type": "integer",
+            "default": 8280,
+            "prompt": "Plain-HTTP port (USB headset only)",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
             "name": "WALKING",
             "description": "on lets the Quest's left stick walk and turn the robot while armed (bounded speed, still behind the console's walking permission). off keeps the legs under the robot's own controller only.",
             "type": "string",

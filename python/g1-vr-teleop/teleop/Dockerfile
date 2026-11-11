@@ -56,7 +56,7 @@ COPY entrypoint.sh ./entrypoint.sh
 # Arm, smoothing and waist settings from the Avangrid conference build.
 # The waist starts locked; unlock it from the operator console.
 ENV PYTHONUNBUFFERED=1 \
-    TELEOP_PORT=8200 \
+    TELEOP_PORT={{.HTTP_PORT}} \
     TELEOP_TLS_PORT={{.HTTPS_PORT}} \
     TELEOP_RETARGET=g1 \
     TELEOP_SINK=realg1 \
@@ -79,6 +79,6 @@ ENV PYTHONUNBUFFERED=1 \
     TELEOP_SMOOTH_WRIST_COST=1.0 \
     TELEOP_REALG1_SEND_HZ=90
 
-EXPOSE 8200 {{.HTTPS_PORT}}
+EXPOSE {{.HTTP_PORT}} {{.HTTPS_PORT}}
 # Through sh: wendy init does not keep the executable bit.
 CMD ["sh", "/app/entrypoint.sh"]

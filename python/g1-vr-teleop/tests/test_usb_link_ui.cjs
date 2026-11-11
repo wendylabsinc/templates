@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { recoveryStatus } = require('../web/usb-link.js');
+const { recoveryStatus } = require('../teleop/web/usb-link.js');
 const now = 100;
 const ready = {state:'ready', checked_at:now, forwarded:true};
 const robot = {connected:true, state:'HOLDING', xr_connected:true, hands_fresh:true};
@@ -7,6 +7,8 @@ assert.equal(recoveryStatus({state:'unauthorized',checked_at:now},robot,now).can
 assert.match(recoveryStatus({state:'unauthorized',checked_at:now},robot,now).text,/Allow USB debugging/);
 assert.equal(recoveryStatus({...ready,checked_at:80},robot,now).canArm,false);
 assert.equal(recoveryStatus(ready,{...robot,hands_fresh:false},now).canArm,false);
+assert.match(recoveryStatus(ready,{...robot,hands_fresh:false},now).text,/open http:\/\/localhost(:\d+)?\/index\.html/);
+assert.doesNotMatch(recoveryStatus(ready,{...robot,hands_fresh:false},now).text,/8200/);
 assert.equal(recoveryStatus(ready,{...robot,connected:false},now).canArm,false);
 assert.equal(recoveryStatus(ready,robot,now).canArm,true);
 assert.match(recoveryStatus(ready,robot,now).text,/deliberately/);

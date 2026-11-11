@@ -1,80 +1,203 @@
 <!doctype html>
+<html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>G1 teleop control</title>
+<title>G1 teleop console</title>
 <style>
-  :root { color-scheme: dark; }
+  /* Wendy brand (https://wendy.dev/brand): cream paper, slate ink, square
+     corners, Geist + Geist Mono, seafoam only for the key action. Red and
+     amber are safety colours for ARMED, HOLDING and alerts, not decoration. */
+  @font-face { font-family:"Geist"; src:url(./geist-variable.woff2) format("woff2"); font-weight:100 900; }
+  @font-face { font-family:"Geist Mono"; src:url(./geist-mono-variable.woff2) format("woff2"); font-weight:100 900; }
+  :root {
+    color-scheme: light;
+    --cream:#F1EEE7; --ink:#171C23; --sand:#E6E2D8; --grey:#5B5A56;
+    --border:#DEDEDE; --input:#CBCBCB;
+    --slate-card:#1E242D; --slate-muted:#242B35;
+    --seafoam:#9FE2BF; --seafoam-hover:#86D3A8; --seafoam-ink:#2A7050;
+    --amber:#E0B54A; --amber-ink:#7A5410; --amber-tint:#F6ECD2;
+    --red:#D9483B; --red-ink:#A3261D; --red-tint:#F7DEDA;
+    --sans:"Geist", ui-sans-serif, system-ui, sans-serif;
+    --mono:"Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
   [hidden] { display:none !important; }
-  body { margin:0; padding:16px; background:#111; color:#eee;
-         font:16px/1.4 system-ui,-apple-system,sans-serif; }
-  h1 { font-size:18px; margin:0 0 12px; font-weight:600; }
-  #state { font-size:28px; font-weight:700; padding:14px; border-radius:10px;
-           background:#1c1c1c; border:2px solid #333; margin-bottom:6px; }
-  #state.ARMED { border-color:#c62828; background:#2a1414; color:#ff7b7b; }
-  #state.HOLDING { border-color:#f9a825; background:#2a2412; color:#ffd54f; }
-  #state.STANDBY { border-color:#2e7d32; background:#142a16; color:#81c784; }
-  #msg  { color:#999; font-size:13px; min-height:1.3em; margin-bottom:14px; }
-  .thermal-alert { padding:12px 14px; margin:0 0 14px; border:2px solid #f9a825;
-                   border-radius:10px; background:#2a2412; color:#ffd54f;
-                   font-weight:800; }
-  .thermal-alert.bad { border-color:#c62828; background:#2a1414; color:#ff7b7b; }
-  button { display:block; width:100%; margin:8px 0; padding:20px; font-size:20px;
-           font-weight:600; border:none; border-radius:10px; color:#fff;
-           background:#333; cursor:pointer; }
-  button:active { filter:brightness(1.4); }
-  .go   { background:#1565c0; }
-  .arm  { background:#b71c1c; }
-  .stop { background:#455a64; }
-  #waist-lock { background:#455a64; }
-  #waist-lock.locked { background:#9FE2BF; color:#171C23; }
-  #walking-toggle.walking-allowed { background:#8c5d18; }
-  .row { display:flex; gap:8px; font-size:13px; color:#888; margin-top:14px;
-         flex-wrap:wrap; }
-  .pill { padding:4px 10px; border-radius:20px; background:#1c1c1c; }
-  .ok { color:#81c784; } .bad { color:#e57373; }
-  p.note { color:#888; font-size:13px; border-top:1px solid #2a2a2a;
-           padding-top:12px; margin-top:18px; }
+  * { box-sizing:border-box; border-radius:0; }
+  body { margin:0; background:var(--cream); color:var(--ink);
+         font:16px/1.45 var(--sans); -webkit-font-smoothing:antialiased; }
+  .eyebrow { font:400 12px/1 var(--mono); letter-spacing:.06em; text-transform:uppercase;
+             color:var(--ink); margin:0 0 12px; }
+  .muted { color:var(--grey); }
+
+  header { display:flex; align-items:center; gap:20px; padding:16px 28px;
+           border-bottom:1px solid var(--border); }
+  header img { height:22px; display:block; }
+  header .eyebrow { margin:0; color:var(--grey); }
+  header .host { margin-left:auto; font:13px var(--mono); color:var(--grey); }
+
+  main { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);
+         gap:28px; padding:28px; max-width:1240px; margin:0 auto; }
+  @media (max-width:860px) {
+    main { grid-template-columns:1fr; padding:16px; gap:20px; }
+    header { padding:14px 16px; }
+    header .host { display:none; }
+    /* On a phone: state, then the controls, then the details. */
+    main { display:flex; flex-direction:column; }
+    main > div { display:contents; }
+    main section { margin:0; }
+    .o1 { order:1; } .o2 { order:2; } .o3 { order:3; } .o4 { order:4; }
+    .o5 { order:5; } .o6 { order:6; } .o7 { order:7; } .o8 { order:8; }
+  }
+  section { margin-bottom:24px; }
+  section:last-child { margin-bottom:0; }
+
+  /* Robot state: the one thing the operator must read at a glance. */
+  .state-card { background:#fff; border:1px solid var(--border); border-left:8px solid var(--input);
+                padding:20px 24px; }
+  #state { font:500 56px/1.05 var(--sans); letter-spacing:-.01em; margin:0; color:var(--grey); }
+  #state.STANDBY { color:var(--seafoam-ink); }
+  #state.HOLDING { color:var(--amber-ink); }
+  #state.ARMED   { color:var(--red-ink); }
+  .state-card:has(#state.STANDBY) { border-left-color:var(--seafoam); }
+  .state-card:has(#state.HOLDING) { border-left-color:var(--amber); background:var(--amber-tint); }
+  .state-card:has(#state.ARMED)   { border-left-color:var(--red); background:var(--red-tint); }
+  .state-legend { font:13px var(--mono); color:var(--grey); margin-top:10px; }
+  #msg { font-size:14px; color:var(--grey); min-height:1.4em; margin-top:8px; }
+
+  .thermal-alert { padding:14px 16px; margin-top:12px; border:1px solid var(--amber);
+                   border-left:8px solid var(--amber); background:var(--amber-tint);
+                   color:var(--amber-ink); font-weight:600; }
+  .thermal-alert.bad { border-color:var(--red); background:var(--red-tint); color:var(--red-ink); }
+
+  /* Link health: each hop from the headset to the robot. */
+  .links { background:#fff; border:1px solid var(--border); }
+  .links div { display:flex; justify-content:space-between; gap:12px; padding:11px 16px;
+               border-top:1px solid var(--border); font-size:15px; }
+  .links div:first-child { border-top:0; }
+  .links b { font:500 14px var(--mono); }
+  .links b::before { content:""; display:inline-block; width:8px; height:8px; margin-right:8px;
+                     background:var(--input); vertical-align:1px; }
+  .links b.ok::before { background:var(--seafoam-ink); }
+  .links b.bad { color:var(--red-ink); }
+  .links b.bad::before { background:var(--red); }
+  #hint:not(:empty) { margin-top:12px; padding:14px 16px; background:var(--sand);
+                      border-left:4px solid var(--ink); font-size:15px; }
+
+  .estop { background:var(--ink); color:var(--cream); padding:18px 20px; font-size:14px; }
+  .estop .eyebrow { color:var(--seafoam); margin-bottom:8px; }
+
+  /* Controls. */
+  button { display:flex; align-items:baseline; gap:14px; width:100%; margin:0 0 8px;
+           padding:16px 18px; text-align:left; font:500 18px/1.25 var(--sans);
+           color:var(--ink); background:#fff; border:1px solid var(--input); cursor:pointer;
+           transition:background .12s, border-color .12s; }
+  button:hover:not(:disabled) { border-color:var(--ink); }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button:focus-visible { outline:2px solid var(--seafoam-ink); outline-offset:2px; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  button small { display:block; font:400 13px/1.35 var(--sans); color:var(--grey); margin-top:3px; }
+  button .n { font:400 13px var(--mono); color:var(--grey); min-width:22px; }
+  button .t { display:block; }
+  button.primary { background:var(--ink); color:var(--cream); border-color:var(--ink); }
+  button.primary small, button.primary .n { color:#B9B6AE; }
+  button.primary:hover:not(:disabled) { background:var(--slate-muted); }
+  button.cta { background:var(--seafoam); border-color:var(--seafoam); color:var(--ink); }
+  button.cta small, button.cta .n { color:#2E4A3B; }
+  button.cta:hover:not(:disabled) { background:var(--seafoam-hover); border-color:var(--seafoam-hover); }
+  .pair { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .pair button { margin:0; }
+  /* While ARMED, the ways out are the loudest controls on the page. */
+  body:has(#state.ARMED) button[data-cmd="hold"],
+  body:has(#state.ARMED) button[data-cmd="relax"] { border:2px solid var(--red); background:var(--red-tint); }
+  #waist-lock, #walking-toggle { display:block; }
+  #waist-lock.locked { border-color:var(--seafoam-ink); background:#E3F4EA; }
+  #walking-toggle.walking-allowed { border-color:var(--amber); background:var(--amber-tint); }
+  #walking-hint { font-size:13px; color:var(--grey); margin:-2px 0 8px; }
+  button.small { font-size:15px; padding:12px 16px; }
+  #recording-controls { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  #recording-controls button { margin:0; }
+  p.note { font-size:13px; color:var(--grey); margin:10px 0 0; }
 </style>
-<h1>G1 teleop — operator control</h1>
-<div id="state">…</div>
-<div id="msg"></div>
-<div id="usb-link" class="thermal-alert" role="status" hidden></div>
-<div id="motor-hot" class="thermal-alert bad" role="alert" hidden></div>
-<div id="thermal-rise" class="thermal-alert" hidden></div>
 
-<button class="go"   data-cmd="take_control">1 · Take control <small>(grab arms, hold pose)</small></button>
-<button class="arm"  data-cmd="arm">2 · ARM <small>(robot follows your hands)</small></button>
-<button class="go"   data-cmd="home">Go home <small>(slew to the captured pose, slowly)</small></button>
-<button class="stop" data-cmd="hold">Hold <small>(freeze arms, relax hands)</small></button>
-<button class="stop" data-cmd="relax">Release <small>(hand the arms back)</small></button>
-<button id="waist-lock" aria-pressed="false">Waist: right stick turns it <small>(press to lock the waist)</small></button>
-<button id="walking-toggle" aria-pressed="false" disabled>Walking permission unavailable</button>
-<div id="walking-hint" role="status">Waiting for the bridge.</div>
-<button class="stop" data-cmd="set_home" style="opacity:.65;font-size:15px;padding:12px">
-  Set home now <small>(record where the arms are)</small></button>
-<button class="stop" data-cmd="set_home_in_30" style="opacity:.65;font-size:15px;padding:12px">
-  Set home in 30s <small>(press, walk over, pose the arms, hold still)</small></button>
+<header>
+  <img src="./wendy-logo-slate.svg" alt="Wendy">
+  <p class="eyebrow">G1 teleop · operator console</p>
+  <span class="host" id="host"></span>
+</header>
 
-<div class="row" id="recording-controls">
-  <button class="stop" data-session="start" style="opacity:.8;font-size:15px;padding:12px">
-    Start session <small>(record from here)</small></button>
-  <button class="stop" data-session="stop" style="opacity:.8;font-size:15px;padding:12px">
-    Stop session <small>(and check the file)</small></button>
-</div>
-<p class="note" id="sessionmsg">Raw sessions are labelled and segmented offline; there are no live attempt/success/fail controls.</p>
+<main>
+  <div>
+    <section class="o1">
+      <p class="eyebrow">Robot state</p>
+      <div class="state-card">
+        <div id="state">…</div>
+        <div class="state-legend">STANDBY → HOLDING → ARMED</div>
+        <div id="msg"></div>
+      </div>
+      <div id="usb-link" class="thermal-alert" role="status" hidden></div>
+      <div id="motor-hot" class="thermal-alert bad" role="alert" hidden></div>
+      <div id="thermal-rise" class="thermal-alert" hidden></div>
+    </section>
 
-<div class="row">
-  <span class="pill">onboard <b id="conn">?</b></span>
-  <span class="pill">headset <b id="xr">?</b></span>
-  <span class="pill">hands seen <b id="nhands">?</b></span>
-  <span class="pill">to robot <b id="hands">?</b></span>
-  <span class="pill" id="age"></span>
-</div>
-<p class="note" id="hint"></p>
+    <section class="o5">
+      <p class="eyebrow">Link</p>
+      <div class="links">
+        <div><span>Onboard commander</span><b id="conn">?</b></div>
+        <div><span>Headset</span><b id="xr">?</b></div>
+        <div><span>Hands seen</span><b id="nhands">?</b></div>
+        <div><span>Hand data to robot</span><b id="hands">?</b></div>
+        <div><span>Hand data age</span><b id="age">–</b></div>
+      </div>
+      <p id="hint"></p>
+    </section>
 
-<p class="note">The stop of last resort is the <b>remote's damping combo</b>, not
-this page. It cuts motion in the robot's own motion-control service, below
-everything here. Keep it in someone's hands.</p>
+    <section class="estop o8">
+      <p class="eyebrow">Stop of last resort</p>
+      The <b>remote's damping combo</b>, not this page. It cuts motion in the
+      robot's own motion-control service, below everything here. Keep it in
+      someone's hands.
+    </section>
+  </div>
+
+  <div>
+    <section class="o2">
+      <p class="eyebrow">Sequence</p>
+      <button class="primary" data-cmd="take_control"><span class="n">01</span><span class="t">Take control <small>Grab the arms and hold their current pose</small></span></button>
+      <button class="cta" data-cmd="arm"><span class="n">02</span><span class="t">Arm <small>The robot follows your hands</small></span></button>
+    </section>
+
+    <section class="o3">
+      <p class="eyebrow">Stop and return</p>
+      <div class="pair">
+        <button data-cmd="hold"><span class="t">Hold <small>Freeze arms, relax hands</small></span></button>
+        <button data-cmd="relax"><span class="t">Release <small>Hand the arms back</small></span></button>
+      </div>
+      <button data-cmd="home" style="margin-top:8px"><span class="t">Go home <small>Slew slowly to the saved home pose</small></span></button>
+    </section>
+
+    <section class="o4">
+      <p class="eyebrow">Options</p>
+      <button id="waist-lock" aria-pressed="false">Waist: right stick turns it <small>(press to lock the waist)</small></button>
+      <button id="walking-toggle" aria-pressed="false" disabled>Walking permission unavailable</button>
+      <div id="walking-hint" role="status">Waiting for the bridge.</div>
+    </section>
+
+    <section class="o6">
+      <p class="eyebrow">Home pose</p>
+      <div class="pair">
+        <button class="small" data-cmd="set_home"><span class="t">Set home now <small>Record where the arms are</small></span></button>
+        <button class="small" data-cmd="set_home_in_30"><span class="t">Set home in 30 s <small>Press, walk over, pose the arms, hold still</small></span></button>
+      </div>
+    </section>
+
+    <section class="o7">
+      <div id="recording-controls">
+        <button class="small" data-session="start"><span class="t">Start session <small>Record from here</small></span></button>
+        <button class="small" data-session="stop"><span class="t">Stop session <small>And check the file</small></span></button>
+      </div>
+      <p class="note" id="sessionmsg">Raw sessions are labelled and segmented offline; there are no live attempt/success/fail controls.</p>
+    </section>
+  </div>
+</main>
 
 <script src="./usb-link.js"></script>
 <script type="module">
@@ -89,6 +212,7 @@ const showWalking = bindWalkingControl(document.getElementById('walking-toggle')
   return result;
 });
 const $ = s => document.querySelector(s);
+$("#host").textContent = location.host;
 
 for (const b of document.querySelectorAll("button[data-session]")) {
   b.onclick = async () => {
@@ -199,7 +323,7 @@ async function poll() {
     $("#xr").className = s.xr_connected ? "ok" : "bad";
     $("#nhands").textContent = s.xr_hands;
     $("#nhands").className = s.xr_hands === 2 ? "ok" : "bad";
-    $("#age").textContent = s.hands_age_s != null ? s.hands_age_s + "s old" : "";
+    $("#age").textContent = s.hands_age_s != null ? Number(s.hands_age_s).toFixed(1) + " s" : "–";
     const thermal = s.thermal && s.thermal.fastest;
     const motorHot = s.motor_heat_alert || {};
     const motorHotBox = $("#motor-hot");
@@ -251,3 +375,4 @@ async function poll() {
 poll();
 setInterval(poll, 500);
 </script>
+</html>

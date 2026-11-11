@@ -94,3 +94,14 @@ def test_entrypoints_run_through_sh():
     for service in ("onboard", "teleop"):
         dockerfile = (PROJECT / service / "Dockerfile").read_text()
         assert 'CMD ["sh", "/app/entrypoint.sh"]' in dockerfile, service
+
+
+def test_teleop_ports_come_from_variables():
+    # Every port the teleop service listens on is a template variable, as in
+    # the other templates, so a robot that already runs something on a default
+    # port can move it at init instead of editing the Dockerfile.
+    dockerfile = (PROJECT / "teleop" / "Dockerfile").read_text()
+    assert "TELEOP_PORT={{.HTTP_PORT}}" in dockerfile
+    assert "TELEOP_TLS_PORT={{.HTTPS_PORT}}" in dockerfile
+    assert "EXPOSE {{.HTTP_PORT}} {{.HTTPS_PORT}}" in dockerfile
+    assert VARIABLES["HTTP_PORT"]["default"] != VARIABLES["HTTPS_PORT"]["default"]

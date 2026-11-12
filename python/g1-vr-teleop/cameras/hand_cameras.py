@@ -421,10 +421,25 @@ def make_app(cams):
             "X-Captured-Mono-Ns": str(header["t_cap_mono_ns"]),
             "X-Captured-Unix-Ns": str(header["t_cap_unix_ns"])})
 
+    open_streams = set()
+
+    async def close_streams(app):
+        # Without this, shutdown waits for every subscriber (teleop keeps
+        # one per camera open) and a redeploy stalls for aiohttp's timeout.
+        for ws in list(open_streams):
+            await ws.close(code=1001, message=b"shutting down")
+
     async def stream(request):
         ws = web.WebSocketResponse()
         await ws.prepare(request)
-        name = request.match_info["name"]
+        open_streams.add(ws)
+        try:
+            await _stream(ws, request.match_info["name"])
+        finally:
+            open_streams.discard(ws)
+        return ws
+
+    async def _stream(ws, name):
         last = 0
         while not ws.closed:
             # Looked up every time, so a swap takes effect on open streams.
@@ -437,13 +452,13 @@ def make_app(cams):
                 except Exception:  # noqa: BLE001 -- a dead socket ends the stream
                     break
             await asyncio.sleep(0.5 / max(1.0, cams.fps))
-        return ws
 
     async def swap(request):
         ok, msg = cams.swap()
         return web.json_response({"ok": ok, "msg": msg}, status=200 if ok else 409)
 
     app = web.Application()
+    app.on_shutdown.append(close_streams)
     app.router.add_get("/status", status)
     app.router.add_get("/health", status)
     app.router.add_get("/cam/{name}/frame.jpg", frame)
@@ -462,7 +477,7 @@ def main():
     cams.start()
     port = int(os.environ.get("HAND_CAM_PORT", 8091))
     print(f"[cameras] serving on :{port}")
-    web.run_app(make_app(cams), host="0.0.0.0", port=port, print=None)
+    web.run_app(make_app(cams), host="0.0.0.0", port=port, print=None, shutdown_timeout=5)
 
 
 if __name__ == "__main__":

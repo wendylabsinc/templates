@@ -72,14 +72,61 @@ Sessions live in the `{{.APP_ID}}-sessions` volume. List and download them:
 ```sh
 B=https://<robot>:{{.HTTPS_PORT}}
 curl -sk "$B/session/list"
-curl -sk "$B/session/get?session=<id>"    -o <id>.jsonl
-curl -sk "$B/session/frames?session=<id>" -o <id>.frames.tar
+curl -sk "$B/session/get?session=<id>"      -o <id>.jsonl
+curl -sk "$B/session/frames?session=<id>"   -o <id>.frames.tar
+curl -sk "$B/session/manifest?session=<id>" -o <id>.manifest.json
 ```
 
 Each row of the `.jsonl` has the tracked hands and head, the retargeted
 targets, the commands actually sent, and the robot's measured joints. Camera
-frames come from the robot's head camera (RealSense colour, `/dev/video4`),
-which only runs while recording is on.
+frames come from the robot's head camera (`HEAD_CAMERA`, the RealSense colour
+node, usually `/dev/video4`) and, with `HAND_CAMERAS=on`, from both hand
+cameras. Frames are kept only while the robot is ARMED:
+
+```text
+<id>.jsonl                     one row per pose frame (t_mono_ns, hand_cams, ...)
+<id>.frames/                   head camera frames + index.jsonl
+<id>.frames/hand-left/         left hand camera frames + index.jsonl
+<id>.frames/hand-right/        right hand camera frames + index.jsonl
+<id>.manifest.json             the seal: a hash over every file above
+```
+
+Every hand-camera frame carries its capture time on the robot's monotonic
+clock, and every row carries `t_mono_ns` on the same clock, so video and
+joints line up exactly.
+
+## Export to LeRobot and GR00T
+
+`tools/export_dataset.py` turns sealed sessions into a
+[LeRobot](https://github.com/huggingface/lerobot) v2.1 dataset with the extra
+files [GR00T](https://github.com/NVIDIA/Isaac-GR00T) needs. Run it on a
+laptop:
+
+```sh
+pip install -r tools/requirements-export.txt   # plus ffmpeg (brew install ffmpeg)
+# Put each session's .jsonl, .frames.tar and .manifest.json in one folder:
+python tools/export_dataset.py --out dataset --task "pick up the can" sessions/
+```
+
+- **One episode per attempt.** Sessions are split at marks, pauses and holds;
+  only ARMED rows count as demonstration.
+- **State and action** are one 29-number vector: waist, left arm, right arm,
+  left hand, right hand. State is what the robot measured; action is the
+  command it was sent.
+- **Video:** `observation.images.left_wrist_view` and `right_wrist_view` by
+  default; add the head camera with `--cameras left,right,head`
+  (`ego_view`). Each video is resampled onto the same grid as the joints
+  (`--fps`, default 30).
+- **Checked, not trusted:** each session's seal is verified first. An attempt
+  with missing measurements, or a camera that repeats more than 20% of its
+  frames, is refused with the reason, and nothing is written until every
+  attempt passes.
+- **GR00T:** `meta/modality.json` and `new_embodiment_config.py` (pass it as
+  `--modality-config-path`) describe the vector and the video keys.
+  `wendy-export.json` lists which sealed sessions went in, by hash.
+
+For a dataset in LeRobot's newer v3.0 layout, convert this one with LeRobot's
+own v2.1-to-v3.0 converter.
 
 ## Configuration
 

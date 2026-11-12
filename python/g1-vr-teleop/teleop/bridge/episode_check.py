@@ -336,6 +336,8 @@ def check(path):
         issue("depth_missing", "warn", f"{cam_n - depth_n} of {cam_n} camera frames have no depth "
                                        f"({100 * (cam_n - depth_n) / cam_n:.0f} % > {100 * DEPTH_MISSING_FRAC:.0f} %)")
 
+    _check_hand_cameras(path, header, body, footer, rep, issue)
+
     rep["marks"] = len(marks)
     att = attempts(body, marks, outcomes=outcomes)
     rep["attempts"] = len(att)
@@ -359,6 +361,66 @@ def check(path):
     rep["issues"] = issues
     rep["ok"] = not any(i["severity"] in ("error", "warn") for i in issues)
     return rep
+
+
+HAND_CAM_FRESH_S = 0.2    # a hand frame older than this at a pose row is stale
+HAND_CAM_FRESH_FRAC = 0.8 # ARMED rows below this share with a fresh frame: warn
+
+
+def _hand_index(path, name):
+    """The rows of <sid>.frames/hand-<name>/index.jsonl, or [] without one."""
+    base = str(path)
+    for suffix in (".jsonl.gz", ".jsonl"):
+        if base.endswith(suffix):
+            base = base[:-len(suffix)]
+            break
+    p = os.path.join(base + ".frames", "hand-" + name, "index.jsonl")
+    try:
+        with open(p) as fh:
+            return [json.loads(l) for l in fh if l.strip()]
+    except (OSError, ValueError):
+        return []
+
+
+def _check_hand_cameras(path, header, body, footer, rep, issue):
+    """Per hand camera: frames written, measured fps and the largest gap
+    between captures, and the share of ARMED rows that had a fresh frame.
+
+    Expected cameras are the ones the header says were connected when the
+    session started, plus any the footer counted. A camera that was expected
+    and wrote nothing while the robot was ARMED is a warning: an episode
+    without the wrist views looks complete until someone trains on it."""
+    hdr = (header or {}).get("hand_cameras")
+    expected = set(hdr) if isinstance(hdr, dict) and "error" not in hdr else set()
+    counts = (footer or {}).get("hand_cams") or {}
+    names = sorted(expected | set(counts))
+    rep["hand_cameras"] = {}
+    if not names:
+        return
+    armed = [r for r in body if str((r.get("robot") or {}).get("state") or "").startswith("ARMED")]
+    for name in names:
+        c = counts.get(name) or {}
+        idx = _hand_index(path, name)
+        t = [r["t_cap_mono_ns"] for r in idx if isinstance(r.get("t_cap_mono_ns"), int)]
+        gaps = [(b - a) / 1e9 for a, b in zip(t, t[1:]) if b >= a]
+        fresh = sum(1 for r in armed
+                    if ((r.get("hand_cams") or {}).get(name) or {}).get("age_s", 1e9) <= HAND_CAM_FRESH_S)
+        rep["hand_cameras"][name] = {
+            "frames": c.get("frames", len(idx)), "dropped": c.get("dropped", 0),
+            "fps": (round((len(t) - 1) / ((t[-1] - t[0]) / 1e9), 1)
+                    if len(t) > 1 and t[-1] > t[0] else None),
+            "max_gap_s": round(max(gaps), 3) if gaps else None,
+            "armed_rows": len(armed), "armed_rows_fresh": fresh}
+        if c.get("dropped"):
+            issue("hand_cam_dropped", "warn",
+                  f"{name} hand camera: the recorder dropped {c['dropped']} frames")
+        if armed and not c.get("frames"):
+            issue("hand_cam_empty", "warn",
+                  f"{name} hand camera wrote no frames while the robot was ARMED")
+        elif armed and fresh < HAND_CAM_FRESH_FRAC * len(armed):
+            issue("hand_cam_stale", "warn",
+                  f"{name} hand camera: only {fresh} of {len(armed)} ARMED rows had a frame "
+                  f"newer than {HAND_CAM_FRESH_S} s")
 
 
 HAND_ORDER = ("thumb_0", "thumb_1", "thumb_2", "middle_0", "middle_1", "index_0", "index_1")

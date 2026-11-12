@@ -44,12 +44,13 @@ def cam_url_from_ctrl(url: str) -> str:
 
 
 class CameraClient:
-    def __init__(self, url, on_frame=None):
-        self._init_state(url, on_frame)
-        threading.Thread(target=self._thread, daemon=True, name="cam-client").start()
+    def __init__(self, url, on_frame=None, label="camera"):
+        self._init_state(url, on_frame, label)
+        threading.Thread(target=self._thread, daemon=True, name=f"cam-client-{label}").start()
 
-    def _init_state(self, url, on_frame):
+    def _init_state(self, url, on_frame, label="camera"):
         self.url = url
+        self.label = label
         self.on_frame = on_frame
         self._lock = threading.Lock()
         self._latest = None            # (header, jpeg, t_recv monotonic)
@@ -75,16 +76,22 @@ class CameraClient:
             try:
                 self.on_frame(header, jpeg)
             except Exception as e:  # noqa: BLE001 -- the recorder must not break the stream
-                print(f"[camera] on_frame error: {e}")
+                print(f"[{self.label}] on_frame error: {e}")
 
     def latest_ref(self):
-        """-> {seq, t, age_s} of the newest frame, for the pose row, or None."""
+        """-> {seq, t, age_s} of the newest frame, for the pose row, or None.
+
+        A hand camera also stamps its capture time on CLOCK_MONOTONIC
+        (t_cap_mono_ns), the clock the pose rows carry as t_mono_ns."""
         with self._lock:
             if self._latest is None:
                 return None
             header, _, t_recv = self._latest
-            return {"seq": header.get("seq"), "t": header.get("t"),
-                    "age_s": round(time.monotonic() - t_recv, 4)}
+            ref = {"seq": header.get("seq"), "t": header.get("t"),
+                   "age_s": round(time.monotonic() - t_recv, 4)}
+            if header.get("t_cap_mono_ns") is not None:
+                ref["t_cap_mono_ns"] = header["t_cap_mono_ns"]
+            return ref
 
     def status(self):
         with self._lock:
@@ -107,19 +114,26 @@ class CameraClient:
         loop.run_until_complete(self._run())
 
     async def _run(self):
+        fails = 0
         while True:
             try:
                 async with aiohttp.ClientSession() as s:
                     async with s.ws_connect(self.url, max_msg_size=8 * 1024 * 1024) as ws:
                         self.connected = True
-                        print("[camera] connected to the onboard camera stream")
+                        fails = 0
+                        print(f"[{self.label}] connected to {self.url.split('?')[0]}")
                         async for msg in ws:
                             if msg.type is aiohttp.WSMsgType.BINARY:
                                 self._handle(msg.data)
                             elif msg.type is aiohttp.WSMsgType.TEXT:
-                                print(f"[camera] onboard says: {msg.data[:120]}")
+                                print(f"[{self.label}] source says: {msg.data[:120]}")
             except Exception as e:  # noqa: BLE001
-                print(f"[camera] connection lost ({e}); retrying in 2s")
+                fails += 1
+                # The first failure and then about once a minute: a camera
+                # that is simply absent must not bury every other log line.
+                if fails == 1 or fails % 30 == 0:
+                    print(f"[{self.label}] connection lost ({e}); retrying every 2s"
+                          + (f" ({fails} failures)" if fails > 1 else ""))
             finally:
                 self.connected = False
             await asyncio.sleep(2)

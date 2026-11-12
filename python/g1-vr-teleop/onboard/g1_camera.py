@@ -66,9 +66,13 @@ class CameraSource:
 
     @classmethod
     def from_env(cls, env=None, **kw):
-        """-> a CameraSource from G1_CAM* variables, or None when G1_CAM=0."""
+        """-> a CameraSource from G1_CAM* variables, or None when G1_CAM=0
+        or G1_CAMERA=none (a robot without a head camera: without this it
+        retried a missing /dev/video4 every 2 s and recorded 0 frames)."""
         env = os.environ if env is None else env
         if env.get("G1_CAM", "1") in ("0", "off", "no", "false"):
+            return None
+        if str(env.get("G1_CAMERA", "0")).strip().lower() in ("none", "off", ""):
             return None
         return cls(device=env.get("G1_CAMERA", "0"),
                    width=int(env.get("G1_CAM_W", 640)),

@@ -90,6 +90,7 @@ which only runs while recording is on.
 | `HTTP_PORT` | `8280` | Same pages over plain HTTP, for a headset on USB only |
 | `WALKING` | `off` | `on` lets the left stick walk the robot |
 | `RECORDING` | `off` | `on` adds session recording and the head camera |
+| `HEAD_CAMERA` | `4` | The head camera's V4L2 index or `/dev` path, or `none` on a robot without one |
 | `HAND_CAMERAS` | `on` | Runs the two USB cameras in the robot's hands and shows them on the console |
 | `LEFT_HAND_CAMERA` | `auto` | `auto`, or the left camera's `/dev/v4l/by-path` link name (its USB port) |
 | `RIGHT_HAND_CAMERA` | `auto` | Same, for the right hand |

@@ -42,6 +42,14 @@
             "validate": { "pattern": "^(on|off)$" }
         },
         {
+            "name": "HEAD_CAMERA",
+            "description": "The head camera recorded with each session when RECORDING is on: a V4L2 index or /dev/videoN path (the RealSense colour node is usually 4), or none on a robot without one. Device numbers can change between boots; check `wendy device camera list` after a reboot.",
+            "type": "string",
+            "default": "4",
+            "prompt": "Head camera (V4L2 index, /dev path, or none)",
+            "validate": { "pattern": "^(none|[0-9]+|/dev/[A-Za-z0-9/_.:-]+)$" }
+        },
+        {
             "name": "HAND_CAMERAS",
             "description": "on runs the two USB cameras in the G1's hands as their own service (port 8091) and shows both feeds on the operator console. off leaves them alone. Harmless on a robot without hand cameras: the service reports none found.",
             "type": "string",

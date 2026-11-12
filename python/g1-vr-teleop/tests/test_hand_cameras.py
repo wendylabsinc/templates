@@ -244,3 +244,12 @@ def test_template_declares_the_camera_variables_the_dockerfile_uses():
     for var in ("HAND_CAMERAS", "LEFT_HAND_CAMERA", "RIGHT_HAND_CAMERA", "CAMERA_FPS"):
         assert var in names
         assert OPEN + "." + var + CLOSE in docker
+
+
+def test_head_camera_none_turns_the_head_camera_off():
+    pytest.importorskip("aiohttp")
+    sys.path.insert(0, os.path.join(ROOT, "onboard"))
+    from g1_camera import CameraSource
+    assert CameraSource.from_env({"G1_CAM": "on", "G1_CAMERA": "none"}) is None
+    assert CameraSource.from_env({"G1_CAM": "off", "G1_CAMERA": "4"}) is None
+    assert CameraSource.from_env({"G1_CAM": "on", "G1_CAMERA": "4"}).device == "4"

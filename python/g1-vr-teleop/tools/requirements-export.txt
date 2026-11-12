@@ -1,0 +1,7 @@
+# tools/export_dataset.py, on a laptop. Also needs ffmpeg and ffprobe on PATH
+# (brew install ffmpeg / apt install ffmpeg).
+numpy
+pyarrow
+Pillow
+# Only for --format lerobot-v3 or both: LeRobot's own v2.1 -> v3.0 converter.
+# lerobot[dataset]

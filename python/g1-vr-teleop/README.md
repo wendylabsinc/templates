@@ -61,25 +61,76 @@ power on → damping → lock stand → running mode
 | Hold right stick | Give the robot back (release) |
 | Hold Meta button | Recenter the panels |
 
-## Data collection
+## Data collection: GR00T and LeRobot datasets
 
-With `RECORDING=on`, start a session from the console or with the left
-squeeze. When a session stops it is checked and sealed: a manifest records a
-hash of every file, so a session copied off the robot can be verified.
+Deploy with `RECORDING=on` (and, optionally, a `TASK`), then:
 
-Sessions live in the `{{.APP_ID}}-sessions` volume. List and download them:
-
-```sh
-B=https://<robot>:{{.HTTPS_PORT}}
-curl -sk "$B/session/list"
-curl -sk "$B/session/get?session=<id>"    -o <id>.jsonl
-curl -sk "$B/session/frames?session=<id>" -o <id>.frames.tar
+```text
+record on the robot ─▶ pull to a laptop ─▶ export ─▶ train
+Start session         pull_sessions.py     export_dataset.py   GR00T: gr00t/data/stats.py, then fine-tune
+(task instruction)    (sealed files)       groot | lerobot-v3   LeRobot: lerobot-train
 ```
 
-Each row of the `.jsonl` has the tracked hands and head, the retargeted
-targets, the commands actually sent, and the robot's measured joints. Camera
-frames come from the robot's head camera (RealSense colour, `/dev/video4`),
-which only runs while recording is on.
+**1. Record.** On the console, **Start session** asks for the task as an
+instruction ("Pick up the cup and place it on the plate"). Leave it empty to
+use the `TASK` variable. The left squeeze in the headset starts and stops a
+session too. Arm, demonstrate, release; repeat. **Stop session** checks and
+seals the file: a manifest records a hash of every file.
+
+Each ARMED stretch of at least 2 s becomes one training episode. Pauses and
+holds split episodes, so one session can hold many demonstrations. Each row
+has the tracked hands and head, the retargeted targets, the command sent to
+the robot and the measured joints. Head-camera frames (RealSense colour,
+`/dev/video4`, 640x480 at 15 fps) are kept while ARMED.
+
+**2. Pull** the sealed sessions to a laptop:
+
+```sh
+python3 tools/pull_sessions.py --robot <robot>:{{.HTTPS_PORT}} --out sessions/
+```
+
+**3. Export** (needs `pip install -r tools/requirements-export.txt` and ffmpeg):
+
+```sh
+python3 tools/export_dataset.py sessions/*.manifest.json --output datasets/pick-cup --format both
+```
+
+| `--format` | Writes | For |
+|---|---|---|
+| `groot` (default) | LeRobot v2.1 + `meta/modality.json` + `new_embodiment_config.py` | Isaac-GR00T fine-tuning |
+| `lerobot-v3` | LeRobot v3.0, made by LeRobot's own converter (`pip install 'lerobot[dataset]'`) | `lerobot-train`, Hugging Face Hub |
+| `both` | `<output>/groot` and `<output>/lerobot-v3` | Both |
+
+Every episode has: `observation.state` and `action` (29 joints, radians:
+waist yaw, 7 + 7 arm, 7 + 7 Dex3), `observation.images.ego_view` (h264
+mp4), the task instruction, timestamps and `next.done`.
+`meta/episodes_stats.jsonl` holds per-episode statistics, and
+`wendy-export.json` names every source session by its hash.
+
+The exporter refuses rather than invents. It verifies each seal before
+reading, uses only ARMED rows, never fills a missing measurement, and refuses
+an episode whose video would repeat too many stale frames. If anything is
+refused, nothing is written and every reason is listed.
+
+**4. Train.**
+- **GR00T** needs `meta/stats.json`, which it computes itself: `python
+  gr00t/data/stats.py --dataset-path datasets/pick-cup/groot --embodiment-tag
+  NEW_EMBODIMENT --modality-config-path
+  datasets/pick-cup/groot/new_embodiment_config.py`. Then fine-tune with the
+  same `--modality-config-path`.
+- **LeRobot:** `lerobot-train --dataset.repo_id=local/pick-cup
+  --dataset.root=datasets/pick-cup/lerobot-v3 ...`
+
+**Success labels (optional).** The headset has no success/fail buttons. To
+train on successes only, write `<sid>.labels.json` beside a pulled session,
+then export with `--outcomes success`:
+
+```json
+{"schema": "wendy.g1.offline-labels.v1", "session": "<sid>", "episode_sha256": "<from the manifest>",
+ "outcomes": [{"type": "outcome", "t": <unix time inside the attempt>, "result": "success"}]}
+```
+
+The default exports every episode.
 
 ## Configuration
 
@@ -90,6 +141,7 @@ which only runs while recording is on.
 | `HTTP_PORT` | `8280` | Same pages over plain HTTP, for a headset on USB only |
 | `WALKING` | `off` | `on` lets the left stick walk the robot |
 | `RECORDING` | `off` | `on` adds session recording and the head camera |
+| `TASK` | empty | Instruction recorded with each session when the console's box is left empty |
 | `NETWORK_INTERFACE` | `auto` | Interface with the `192.168.123.x` robot address |
 | `DDS_DOMAIN` | `0` | `0` is the real robot, `1` a Unitree simulator |
 

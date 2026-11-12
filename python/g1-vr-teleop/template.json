@@ -42,6 +42,14 @@
             "validate": { "pattern": "^(on|off)$" }
         },
         {
+            "name": "TASK",
+            "description": "The language instruction recorded with every session, e.g. 'Pick up the cup and place it on the plate'. GR00T and LeRobot policies are trained on (camera, joints, commands, instruction). The console asks for it at Start session; this is the default when it is left empty. No quotes, backslashes, braces or $.",
+            "type": "string",
+            "default": "",
+            "prompt": "Task instruction recorded with each session (optional)",
+            "validate": { "pattern": "^[^\"\\\\{}$]*$" }
+        },
+        {
             "name": "NETWORK_INTERFACE",
             "description": "Interface on the G1's computer with the robot-network address (192.168.123.x). Leave as auto unless detection fails.",
             "type": "string",

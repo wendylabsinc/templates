@@ -222,7 +222,13 @@ for (const b of document.querySelectorAll("button[data-session]")) {
       const step = b.dataset.session;
       const q = new URLSearchParams();
       if (key) q.set("key", key);
-      if (step === "start") q.set("name", prompt("Session name (task, e.g. can-handover):", "") || "");
+      if (step === "start") {
+        // The instruction a GR00T / LeRobot policy learns from this session.
+        // Empty keeps the app's TASK variable; Cancel does not start.
+        const task = prompt("Task for this session, as an instruction (e.g. Pick up the cup and place it on the plate). Leave empty to use the app's TASK:", (() => { try { return localStorage.getItem("teleop.task") || ""; } catch (_) { return ""; } })());
+        if (task === null) return;
+        if (task.trim()) { q.set("task", task.trim()); try { localStorage.setItem("teleop.task", task.trim()); } catch (_) {} }
+      }
       const r = await fetch("/session/" + step + (q.toString() ? "?" + q : ""), { method: "POST" });
       const j = await r.json();
       let text = step + ": " + (j.ok ? "ok" : "refused: " + j.error);

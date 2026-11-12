@@ -63,6 +63,7 @@ ENV PYTHONUNBUFFERED=1 \
     TELEOP_ONBOARD_URL=ws://127.0.0.1:8090/ctrl \
     TELEOP_CONTROL_KEY= \
     TELEOP_RECORDING={{.RECORDING}} \
+    TELEOP_TASK="{{.TASK}}" \
     TELEOP_SESSION_DIR=/sessions \
     TELEOP_ARM_CAL=/app/calibration/arm-limits.json \
     TELEOP_ARM=geometry \

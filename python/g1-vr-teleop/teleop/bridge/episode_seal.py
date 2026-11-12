@@ -117,6 +117,27 @@ def _camera_digests(d, files="all"):
     return len(jpgs), frames_sha, index_sha
 
 
+def _hand_camera_digests(frames_d):
+    """-> {name: {dir, frames, frames_sha256, index_sha256}} for each hand
+    camera directory (<sid>.frames/hand-<name>/), or None when there are none.
+
+    Hand cameras are sealed the same way as the head camera, one directory
+    each. The head camera's digest ignores subdirectories, so a manifest
+    sealed before hand cameras existed still verifies."""
+    if frames_d is None:
+        return None
+    out = {}
+    for sub in sorted(os.listdir(frames_d)):
+        path = os.path.join(frames_d, sub)
+        if not (sub.startswith("hand-") and os.path.isdir(path)):
+            continue
+        n, frames_sha, index_sha = _camera_digests(path, files="all")
+        out[sub[len("hand-"):]] = {"dir": os.path.basename(frames_d) + "/" + sub,
+                                   "frames": n, "frames_sha256": frames_sha,
+                                   "index_sha256": index_sha}
+    return out or None
+
+
 def _source():
     """Which code recorded this. In the image there is no .git, so the deploy
     passes the commit through G1_TELEOP_COMMIT and whether the tree it built
@@ -200,9 +221,11 @@ _IDENTITY = ("schema", "session", "header")   # plus episode.sha256 and camera d
 
 def _identity(m):
     cam = m.get("camera") or {}
+    hand = tuple(sorted((name, c.get("frames_sha256"), c.get("index_sha256"))
+                        for name, c in (m.get("hand_cameras") or {}).items()))
     return ({k: m.get(k) for k in _IDENTITY},
             (m.get("episode") or {}).get("sha256"),
-            cam.get("frames_sha256"), cam.get("index_sha256"))
+            cam.get("frames_sha256"), cam.get("index_sha256"), hand)
 
 
 def build(session_path, now=None):
@@ -239,6 +262,9 @@ def build(session_path, now=None):
          "footer": footer,
          "counts": counts,
          "camera": camera,
+         # Absent (None) in sessions without hand cameras and in every
+         # manifest sealed before they existed.
+         "hand_cameras": _hand_camera_digests(d),
          "check": episode_check.check(session_path)}
     m.update(extra)
     return m
@@ -339,6 +365,19 @@ def verify(manifest_path_):
                     reasons.append("camera calibration.json missing")
                 elif sha256_file(calp) != cam["calibration_sha256"]:
                     reasons.append("camera calibration.json sha256 differs")
+    for name, hc in sorted((m.get("hand_cameras") or {}).items()):
+        d = os.path.join(base, str(hc.get("dir") or ""))
+        if not hc.get("dir") or not os.path.isdir(d):
+            reasons.append(f"{name} hand camera frames dir missing: {hc.get('dir')}")
+            continue
+        n, frames_sha, index_sha = _camera_digests(d, files="all")
+        if n != hc.get("frames"):
+            reasons.append(f"{name} hand camera frames {n} != sealed {hc.get('frames')}")
+        if frames_sha != hc.get("frames_sha256"):
+            reasons.append(f"{name} hand camera frames sha256 differs: "
+                           "a frame was altered, added or removed")
+        if index_sha != hc.get("index_sha256"):
+            reasons.append(f"{name} hand camera index.jsonl sha256 differs")
     rep["ok"] = not reasons
     return rep
 
@@ -350,7 +389,9 @@ def summary(rep):
         return head + "".join(f"\n  {r}" for r in rep["reasons"])
     c = rep.get("counts") or {}
     cam = rep.get("camera") or {}
+    hand = rep.get("hand_cameras") or {}
+    hand_s = "".join(f", {n} hand frames {h.get('frames', 0)}" for n, h in sorted(hand.items()))
     return (f"{rep['session']}: sealed  {c.get('frames')} frames, ARMED {c.get('armed_frames')}, "
             f"{len(c.get('attempts') or ())} attempts ({c.get('marks')} marked), "
-            f"outcomes {c.get('outcomes') or {}}, camera frames {cam.get('frames', 0)}, "
+            f"outcomes {c.get('outcomes') or {}}, camera frames {cam.get('frames', 0)}{hand_s}, "
             f"sha256 {rep['episode']['sha256'][:12]}..., check {'OK' if (rep.get('check') or {}).get('ok') else 'ISSUES'}")

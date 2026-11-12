@@ -46,6 +46,7 @@
     main section { margin:0; }
     .o1 { order:1; } .o2 { order:2; } .o3 { order:3; } .o4 { order:4; }
     .o5 { order:5; } .o6 { order:6; } .o7 { order:7; } .o8 { order:8; }
+    .o9 { order:9; }
   }
   section { margin-bottom:24px; }
   section:last-child { margin-bottom:0; }
@@ -116,6 +117,14 @@
   #recording-controls { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
   #recording-controls button { margin:0; }
   p.note { font-size:13px; color:var(--grey); margin:10px 0 0; }
+
+  /* Hand cameras: what the robot's hands see, labelled by USB port. */
+  .cams { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+  .cams figure { margin:0; background:#fff; border:1px solid var(--border); }
+  .cams img { display:block; width:100%; aspect-ratio:4/3; object-fit:cover; background:var(--sand); }
+  .cams figcaption { padding:8px 10px; font:13px var(--mono); color:var(--grey); }
+  .cams figcaption b { font:500 13px var(--sans); color:var(--ink); margin-right:6px; }
+  .cams figcaption.bad { color:var(--red-ink); }
 </style>
 
 <header>
@@ -148,6 +157,16 @@
         <div><span>Hand data age</span><b id="age">–</b></div>
       </div>
       <p id="hint"></p>
+    </section>
+
+    <section class="o9" id="hand-cams" hidden>
+      <p class="eyebrow">Hand cameras</p>
+      <div class="cams">
+        <figure><img id="cam-left" alt="Left hand camera"><figcaption id="cap-left"><b>Left</b>…</figcaption></figure>
+        <figure><img id="cam-right" alt="Right hand camera"><figcaption id="cap-right"><b>Right</b>…</figcaption></figure>
+      </div>
+      <button class="small" id="cam-swap"><span class="t">Swap left and right <small>If a hand's feed is on the wrong side. Remembered on the robot.</small></span></button>
+      <p class="note" id="cam-msg"></p>
     </section>
 
     <section class="estop o8">
@@ -374,5 +393,84 @@ async function poll() {
 }
 poll();
 setInterval(poll, 500);
+</script>
+<script>
+// Hand cameras (cameras/hand_cameras.py through the bridge's /hand-camera/*).
+// Each feed asks for its next frame only when the last one has arrived, so a
+// slow link drops frames instead of queueing them.
+(function () {
+  const key = new URLSearchParams(location.search).get("key");
+  const q = key ? "?key=" + encodeURIComponent(key) : "";
+  const section = document.getElementById("hand-cams");
+  const msg = document.getElementById("cam-msg");
+  const FEED_MS = 200;   // about 5 frames a second per camera is enough to aim by
+  let live = false;
+
+  function feed(name) {
+    const img = document.getElementById("cam-" + name);
+    const next = () => setTimeout(load, live ? FEED_MS : 1000);
+    function load() {
+      if (!live) return next();
+      img.src = "/hand-camera/" + name + ".jpg?t=" + Date.now();
+    }
+    img.onload = next;
+    img.onerror = next;
+    load();
+  }
+
+  function caption(name, cam) {
+    const cap = document.getElementById("cap-" + name);
+    const label = name === "left" ? "Left" : "Right";
+    if (!cam) {
+      cap.className = "bad";
+      cap.innerHTML = "<b>" + label + "</b>no camera";
+      return;
+    }
+    const ok = cam.opened && cam.last_age_s !== null && cam.last_age_s < 2;
+    cap.className = ok ? "" : "bad";
+    const port = cam.port ? "port " + cam.port : cam.path;
+    const detail = ok ? cam.fps + " fps" : (cam.last_error || "no frames");
+    cap.innerHTML = "<b>" + label + "</b>";
+    cap.append(port + " · " + detail);
+  }
+
+  async function status() {
+    try {
+      const s = await (await fetch("/hand-camera/status")).json();
+      const cams = s.cameras || {};
+      live = !!s.enabled && Object.keys(cams).length > 0;
+      section.hidden = !s.enabled;
+      caption("left", cams.left);
+      caption("right", cams.right);
+      document.getElementById("cam-swap").disabled = !(s.can_swap && cams.left && cams.right);
+      if (s.enabled && !live) {
+        msg.textContent = "No hand cameras found (" + (s.found || []).length + " capture node(s) on the robot).";
+      } else if (!msg.dataset.sticky) {
+        msg.textContent = "";
+      }
+    } catch (e) {
+      live = false;
+    }
+  }
+
+  document.getElementById("cam-swap").onclick = async (ev) => {
+    const b = ev.currentTarget;
+    b.disabled = true;
+    try {
+      const r = await (await fetch("/hand-camera/swap" + q, { method: "POST" })).json();
+      msg.textContent = r.ok ? "Swapped. Check that each hand's feed is now on its own side." : "Not swapped: " + r.msg;
+      msg.dataset.sticky = "1";
+      setTimeout(() => { delete msg.dataset.sticky; }, 8000);
+    } catch (e) {
+      msg.textContent = "Swap failed: " + e;
+    }
+    status();
+  };
+
+  status();
+  setInterval(status, 2000);
+  feed("left");
+  feed("right");
+})();
 </script>
 </html>

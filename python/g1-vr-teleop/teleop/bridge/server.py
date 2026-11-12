@@ -999,6 +999,9 @@ async def start_session(app, name="", task=None, extra_meta=None):
                           "build": build_info(),
                           "camera": (app["camera"].status()
                                      if app.get("camera") is not None else None),
+                          # Which hand camera was left and which right, by
+                          # USB port, for this session.
+                          "hand_cameras": await hand_cam_header(app),
                           "config": _run_config(app),
                           **dict(extra_meta or {})})
     print(f"[bridge] session: {out}")
@@ -1112,10 +1115,16 @@ async def session_handler(request: web.Request) -> web.Response:
             return web.json_response({"ok": False, "session": sid,
                                       "error": "no camera frames for this session"},
                                      status=404)
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w") as tf:
-            tf.add(frames_dir, arcname=os.path.basename(frames_dir))
-        blob = buf.getvalue()
+        # Built in a worker thread: with the hand cameras a session's frames
+        # (hand-left/, hand-right/ inside this directory) run to hundreds of
+        # MB, and tarring them on the event loop froze the 90 Hz pose path
+        # for as long as it took.
+        def build_tar():
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as tf:
+                tf.add(frames_dir, arcname=os.path.basename(frames_dir))
+            return buf.getvalue()
+        blob = await asyncio.to_thread(build_tar)
         return web.Response(body=blob, content_type="application/x-tar",
                             headers={"Content-Disposition":
                                      f'attachment; filename="{os.path.basename(frames_dir)}.tar"'})
@@ -1209,6 +1218,104 @@ async def camera_frame_handler(request: web.Request) -> web.Response:
                         headers={"Cache-Control": "no-store",
                                  "X-Frame-Seq": str(header.get("seq", "")),
                                  "X-Frame-Id": str(header.get("frame_id", ""))})
+
+
+# -- Hand cameras (cameras/hand_cameras.py, port 8091) --------------------- #
+# Proxied, not linked: the console is served over HTTPS and the camera service
+# speaks plain HTTP on the robot, and a browser blocks that mix. Every handler
+# answers even when the service is absent, so a robot without hand cameras
+# shows an empty panel instead of errors.
+HAND_CAM_NAMES = ("left", "right")
+
+
+def _hand_cam_base() -> str:
+    return os.environ.get("TELEOP_HAND_CAM_URL", "http://127.0.0.1:8091").rstrip("/")
+
+
+def _hand_cam_http(app):
+    import aiohttp
+    s = app.get("hand_cam_http")
+    if s is None or s.closed:
+        s = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2.0))
+        app["hand_cam_http"] = s
+    return s
+
+
+async def hand_camera_status_handler(request: web.Request) -> web.Response:
+    """The hand-camera service's /status, or {"enabled": false} without it."""
+    try:
+        async with _hand_cam_http(request.app).get(_hand_cam_base() + "/status") as r:
+            data = await r.json()
+    except Exception as e:  # noqa: BLE001 -- no service is a state, not an error
+        data = {"enabled": False,
+                "error": f"hand-camera service unreachable ({type(e).__name__})"}
+    return web.json_response(data, headers={"Cache-Control": "no-store"})
+
+
+async def hand_camera_frame_handler(request: web.Request) -> web.Response:
+    """The newest JPEG from one hand camera, for the console."""
+    name = request.match_info["name"]
+    if name not in HAND_CAM_NAMES:
+        return web.Response(status=404, text="no such camera")
+    try:
+        url = f"{_hand_cam_base()}/cam/{name}/frame.jpg"
+        async with _hand_cam_http(request.app).get(url) as r:
+            if r.status != 200:
+                return web.Response(status=404, text="no frame")
+            body = await r.read()
+            headers = {"Cache-Control": "no-store"}
+            for h in ("X-Frame-Seq", "X-Captured-Mono-Ns", "X-Captured-Unix-Ns"):
+                if h in r.headers:
+                    headers[h] = r.headers[h]
+    except Exception:  # noqa: BLE001
+        return web.Response(status=503, text="hand-camera service unreachable")
+    return web.Response(body=body, content_type="image/jpeg", headers=headers)
+
+
+def hand_cams_enabled(env=None) -> bool:
+    env = os.environ if env is None else env
+    return str(env.get("TELEOP_HAND_CAMS", "off")).strip().lower() not in ("0", "off", "no", "false", "")
+
+
+def hand_cam_refs(app):
+    """{name: {seq, t_cap_mono_ns, age_s}} of each hand camera's newest frame,
+    for the pose row, or None when there are none."""
+    clients = app.get("hand_cams") or {}
+    refs = {name: c.latest_ref() for name, c in clients.items()}
+    refs = {name: r for name, r in refs.items() if r is not None}
+    return refs or None
+
+
+async def hand_cam_header(app):
+    """Which camera was which for this session: names, USB ports, devices.
+
+    Written into the session header. Left and right are a choice an operator
+    made with the Swap button, and a recording must say which choice it was
+    made under; a cable moved later cannot rewrite it."""
+    if not app.get("hand_cams"):
+        return None
+    try:
+        async with _hand_cam_http(app).get(_hand_cam_base() + "/status") as r:
+            st = await r.json()
+    except Exception as e:  # noqa: BLE001 -- a header without it says so
+        return {"error": f"hand-camera service unreachable ({type(e).__name__})"}
+    return {name: {k: cam.get(k) for k in ("port", "path", "device", "camera", "w", "h", "fps")}
+            for name, cam in (st.get("cameras") or {}).items()}
+
+
+async def hand_camera_swap_handler(request: web.Request) -> web.Response:
+    """Swap which camera is called left and which right (saved on the robot)."""
+    locked = _locked(request)
+    if locked is not None:
+        return locked
+    try:
+        async with _hand_cam_http(request.app).post(_hand_cam_base() + "/swap") as r:
+            data, status = await r.json(), r.status
+    except Exception as e:  # noqa: BLE001
+        return web.json_response(
+            {"ok": False, "msg": f"hand-camera service unreachable ({type(e).__name__})"},
+            status=503)
+    return web.json_response(data, status=status)
 
 
 async def control_handler(request: web.Request) -> web.Response:
@@ -1521,6 +1628,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                         # Which camera frame was current for this row.
                         cam=(request.app["camera"].latest_ref()
                              if request.app.get("camera") is not None else None),
+                        # And which frame from each hand camera.
+                        hand_cams=hand_cam_refs(request.app),
                         # What the robot was TOLD for this frame, and the
                         # constant between that and `targets`.
                         sent=sent_row,
@@ -1652,6 +1761,11 @@ def make_app(retargeter, sink: SimSink, recording=None) -> web.Application:
     async def close_control_events(app):
         await asyncio.to_thread(app["control_events"].close)
     app.on_cleanup.append(close_control_events)
+    async def close_hand_cam_http(app):
+        s = app.get("hand_cam_http")
+        if s is not None and not s.closed:
+            await s.close()
+    app.on_cleanup.append(close_hand_cam_http)
     app["stats"] = {"connected": False, "frames": 0, "hands": 0,
                     "fps": 0.0, "since": 0.0}
     recording = recording_enabled() if recording is None else bool(recording)
@@ -1705,6 +1819,9 @@ def make_app(retargeter, sink: SimSink, recording=None) -> web.Application:
         app.router.add_post("/record/{step}", record_handler)
         app.router.add_get("/record/{step}", record_handler)
     app.router.add_get("/camera/frame.jpg", camera_frame_handler)
+    app.router.add_get("/hand-camera/status", hand_camera_status_handler)
+    app.router.add_get("/hand-camera/{name}.jpg", hand_camera_frame_handler)
+    app.router.add_post("/hand-camera/swap", hand_camera_swap_handler)
     app.router.add_post("/fingercal/{step}", fingercal_handler)
     app.router.add_get("/fingercal/{step}", fingercal_handler)
     app.router.add_get("/waist", waist_lock_handler)
@@ -1965,7 +2082,9 @@ def main():
     camera = None
     session_on_frame = (app["session"].note_camera
                         if app.get("session") is not None else None)
-    if args.sink == "realg1" and os.environ.get("TELEOP_CAM", "1") not in ("0", "off"):
+    head_camera = os.environ.get("TELEOP_HEAD_CAMERA", "").strip().lower()
+    if (args.sink == "realg1" and os.environ.get("TELEOP_CAM", "1") not in ("0", "off")
+            and head_camera not in ("none", "off")):
         from cam_client import CameraClient, CameraServiceClient, cam_url_from_ctrl
         # TELEOP_CAM_SOURCE=camera (or direct) pulls JPEGs from a separate
         # camera service at TELEOP_CAMERA_URL; otherwise the onboard's own
@@ -1985,6 +2104,22 @@ def main():
                   + (" go beside each session as <sid>.frames/" if session_on_frame else "")
                   + " (TELEOP_CAM=0 to disable)")
     app["camera"] = camera
+    # The hand cameras (cameras/hand_cameras.py), recorded beside each session
+    # as <sid>.frames/hand-<name>/. Only when recording: the console's live
+    # view goes through /hand-camera/* and needs no stream here.
+    if (args.sink == "realg1" and session_on_frame is not None
+            and hand_cams_enabled()):
+        from cam_client import CameraClient
+        base = _hand_cam_base().replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+        session = app["session"]
+        app["hand_cams"] = {
+            name: CameraClient(f"{base}/cam/{name}",
+                               on_frame=(lambda header, jpeg, name=name:
+                                         session.note_hand_camera(name, header, jpeg)),
+                               label=f"hand-{name}")
+            for name in HAND_CAM_NAMES}
+        print(f"[bridge] HAND CAMERAS — recorded beside each session as "
+              f"<sid>.frames/hand-left/ and hand-right/ (from {base})")
     # thumb_0 across the palm at a full squeeze: the operator's finding, kept
     # across redeploys. Refuses a bad value rather than gripping wrong.
     v = grip_thumb0_from_env()

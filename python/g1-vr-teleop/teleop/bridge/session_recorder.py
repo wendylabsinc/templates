@@ -158,6 +158,10 @@ class SessionRecorder:
         self._frames_dir = None  # <sid>.frames/, created on the first camera frame
         self._index_fh = None
         self._streams_fh = None
+        # Hand cameras (cameras/hand_cameras.py): per camera, a directory
+        # <sid>.frames/hand-<name>/ with its own index, and its own counts.
+        self._hand = {}          # name -> {"frames", "dropped", "skipped_not_armed"}
+        self._hand_index = {}    # name -> open index.jsonl handle
         self.n_stream_seen = self.n_stream_written = self.n_stream_dropped = 0
         self.n_artifact_written = self.n_artifact_dropped = self._artifact_bytes = 0
         self._artifact_pending = None
@@ -221,6 +225,8 @@ class SessionRecorder:
             self._frames_dir = None
             self._index_fh = None
             self._streams_fh = None
+            self._hand = {}
+            self._hand_index = {}
             self.n_stream_seen = self.n_stream_written = self.n_stream_dropped = 0
             self.n_artifact_written = self.n_artifact_dropped = self._artifact_bytes = 0
             self.n_capture_dropped = 0
@@ -287,6 +293,8 @@ class SessionRecorder:
                     self.n_dropped += 1
                 elif kind == "cam":
                     self.n_cam_dropped += 1
+                elif kind == "hcam":
+                    self._hand_counts_locked(item[2])["dropped"] += 1
                 elif kind == "stream":
                     self.n_stream_dropped += 1
                 elif kind == "artifact":
@@ -305,6 +313,7 @@ class SessionRecorder:
             cam_n, cam_dropped = self.n_cam_written, self.n_cam_dropped
             depth_n, depth_missing = self.n_depth_written, self.n_depth_missing
             cam_skipped = self.n_cam_skipped
+            hand_counts = self._hand_snapshot_locked()
             stream_counts = self._stream_counts()
             writer_errors, late = self.writer_errors, self.n_late
             dur = time.time() - (self._t0 or time.time())
@@ -316,9 +325,18 @@ class SessionRecorder:
                 # Kept apart from dropped on purpose: a big number here is the
                 # camera declining to film an empty table, not a fault.
                 "cam_skipped_not_armed": cam_skipped,
+                "hand_cams": hand_counts,
                 "writer_errors": writer_errors, "late": late,
                 **stream_counts,
                 "seconds": round(dur, 1)}
+
+    def _hand_counts_locked(self, name):
+        """Caller holds the lock: this session's counters for one hand camera."""
+        return self._hand.setdefault(name, {"frames": 0, "dropped": 0,
+                                            "skipped_not_armed": 0})
+
+    def _hand_snapshot_locked(self):
+        return {name: dict(c) for name, c in sorted(self._hand.items())}
 
     def _pending_for(self, sid):
         """Caller holds the lock: is anything of this session queued or in flight?"""
@@ -400,6 +418,7 @@ class SessionRecorder:
                     "dropped": self.n_dropped,
                     "cam_frames": self.n_cam_written, "cam_dropped": self.n_cam_dropped,
                     "cam_skipped_not_armed": self.n_cam_skipped,
+                    "hand_cams": self._hand_snapshot_locked(),
                     "seconds": (round(time.time() - self._t0, 1)
                                 if self._t0 and self._sid else None),
                     "queued": len(self._q), "late": self.n_late,
@@ -510,7 +529,7 @@ class SessionRecorder:
 
     # -- the hot path ------------------------------------------------------ #
     def note(self, frame, targets=None, robot=None, wrist_ref=None, cam=None,
-             sent=None, arm_offset=None, wrist_gain=None):
+             sent=None, arm_offset=None, wrist_gain=None, hand_cams=None):
         """Queue one frame. Never blocks, never raises, never writes here.
 
         `robot` is what the onboard last reported about itself -- at minimum
@@ -546,6 +565,12 @@ class SessionRecorder:
         `wrist_gain` is the versioned derived controller-wrist observation
         used before IK. It is written beside the untouched raw wrist in
         `hands`, never instead of it, so the transform can be retuned offline.
+
+        `hand_cams` is, per hand camera, the frame that was current for this
+        row: {name: {seq, t_cap_mono_ns, age_s}}. Every row also carries
+        `t_mono_ns`, taken here on the same CLOCK_MONOTONIC the hand cameras
+        stamp their frames with, so video and joints join on one clock
+        instead of on wall time, which NTP may step mid-session.
         """
         with self._lock:
             if self._sid is None:
@@ -568,7 +593,36 @@ class SessionRecorder:
             if str(((robot or {}).get("state")) or "").startswith("ARMED"):
                 self._armed_t = time.monotonic()
             self._q.append(("row", self._sid, time.time(), frame, targets, robot, ref, cam,
-                            sent, off, wrist_gain))
+                            sent, off, wrist_gain, hand_cams, time.monotonic_ns()))
+        self._wake.set()
+
+    def note_hand_camera(self, name, header, jpeg):
+        """Queue one hand-camera frame. Same rules as note_camera(): never
+        blocks, never raises, kept only while ARMED plus CAM_TAIL_S, dropped
+        and counted when the writer is behind.
+
+        Frames go to <sid>.frames/hand-<name>/<n>.jpg, numbered per camera by
+        the recorder (the camera's own seq restarts if its service restarts),
+        with an index line carrying the camera's capture time on
+        CLOCK_MONOTONIC and the time it arrived here.
+        """
+        name = str(name)
+        if not name.replace("-", "").replace("_", "").isalnum():
+            return
+        t_recv_mono, t_recv_unix = time.monotonic_ns(), time.time_ns()
+        with self._lock:
+            if self._sid is None:
+                self.n_late += 1
+                return
+            counts = self._hand_counts_locked(name)
+            t = self._armed_t
+            if t is None or time.monotonic() - t > self.CAM_TAIL_S:
+                counts["skipped_not_armed"] += 1
+                return
+            if len(self._q) >= self.QUEUE_MAX:
+                counts["dropped"] += 1
+                return
+            self._q.append(("hcam", self._sid, name, header, jpeg, t_recv_mono, t_recv_unix))
         self._wake.set()
 
     def note_camera(self, header, jpeg, depth=None, *, expected_sid=None,
@@ -699,6 +753,7 @@ class SessionRecorder:
                                            "depth_frames": self.n_depth_written,
                                            "depth_missing": self.n_depth_missing,
                                            "cam_skipped_not_armed": self.n_cam_skipped,
+                                           "hand_cams": self._hand_snapshot_locked(),
                                            "writer_errors": self.writer_errors,
                                            "late": self.n_late,
                                            **self._stream_counts(),
@@ -706,7 +761,7 @@ class SessionRecorder:
                 self._fh.close()
             except (OSError, ValueError):
                 pass
-            for handle in (self._index_fh, self._streams_fh):
+            for handle in (self._index_fh, self._streams_fh, *self._hand_index.values()):
                 if handle is not None:
                     try:
                         handle.close()
@@ -718,6 +773,7 @@ class SessionRecorder:
             self._frames_dir = None
             self._index_fh = None
             self._streams_fh = None
+            self._hand_index = {}
 
     def _ensure_frames_locked(self):
         """Create the sidecar directory while the recorder owns this session."""
@@ -790,6 +846,32 @@ class SessionRecorder:
             self.n_depth_missing += 1
         self._index_fh.write(json.dumps(row) + "\n")
         self.n_cam_written += 1
+
+    def _write_hand_camera_io(self, sid, n, name, header, jpeg, t_recv_mono, t_recv_unix):
+        """Write hand-camera frame `n` and its index line. Caller holds
+        _io_lock and NOT _lock (lock order is always queue, then I/O).
+
+        Numbered by the recorder, per camera, from 1: contiguous within the
+        session whatever the camera's own seq did. `source_seq` and the
+        capture time are the camera's, so a row's `hand_cams` reference
+        (seq, t_cap_mono_ns) finds its frame in the index.
+        """
+        d = os.path.join(self.dir, sid + ".frames", "hand-" + name)
+        fh = self._hand_index.get(name)
+        if fh is None:
+            os.makedirs(d, exist_ok=True)
+            fh = open(os.path.join(d, "index.jsonl"), "a")
+            self._hand_index[name] = fh
+        fname = f"{n:06d}.jpg"
+        with open(os.path.join(d, fname), "wb") as out:
+            out.write(jpeg)
+        row = {"seq": n, "source_seq": header.get("seq"),
+               "t_cap_mono_ns": header.get("t_cap_mono_ns"),
+               "t_cap_unix_ns": header.get("t_cap_unix_ns"),
+               "t_recv_mono_ns": t_recv_mono, "t_recv_unix_ns": t_recv_unix,
+               "w": header.get("w"), "h": header.get("h"),
+               "port": header.get("port"), "bytes": len(jpeg), "file": fname}
+        fh.write(json.dumps(row) + "\n")
 
     def _finish_item(self):
         """Caller holds the lock: one item done, tell a waiting stop()."""
@@ -890,6 +972,33 @@ class SessionRecorder:
                     self.n_stream_dropped += 1
                     raise
             return
+        if kind == "hcam":
+            # As "cam" below: ownership under the queue lock, disk under the
+            # I/O lock only.
+            with self._lock:
+                if self._sid != sid or self._fh is None:
+                    self.n_late += 1
+                    return
+                # The writer is the only thread that counts frames, so the
+                # next number is known here, before the queue lock is let go.
+                n = self._hand_counts_locked(item[2])["frames"] + 1
+                self._io_lock.acquire()
+            failure = None
+            try:
+                self._write_hand_camera_io(sid, n, *item[2:])
+            except OSError as e:
+                failure = e
+            finally:
+                self._io_lock.release()
+            with self._lock:
+                counts = self._hand_counts_locked(item[2])
+                if failure is None:
+                    counts["frames"] += 1
+                else:
+                    counts["dropped"] += 1
+            if failure is not None:
+                print(f"[recorder] {item[2]} hand camera frame write failed: {failure}")
+            return
         if kind == "cam":
             # Check ownership under the lock, then release it before touching
             # disk.  This item is already counted as `_inflight`, and stop()
@@ -952,7 +1061,9 @@ class SessionRecorder:
 
     @staticmethod
     def _row(item):
-        (_, _sid, t, frame, targets, robot, ref, cam, sent, off, wrist_gain) = item
+        (_, _sid, t, frame, targets, robot, ref, cam, sent, off, wrist_gain, *rest) = item
+        hand_cams = rest[0] if rest else None
+        t_mono_ns = rest[1] if len(rest) > 1 else None
         row = {"t": round(t, 4),
                "hands": [dict({"hand": h.get("hand"),
                                "landmarks": h.get("landmarks"),
@@ -1002,6 +1113,11 @@ class SessionRecorder:
             # Versioned derived observation beside the raw WebXR wrist. Raw
             # input stays authoritative and can be reprocessed offline.
             row["controller_wrist_gain"] = wrist_gain
+        if t_mono_ns is not None:
+            # The hand cameras' clock: join video to joints on this.
+            row["t_mono_ns"] = t_mono_ns
+        if hand_cams:
+            row["hand_cams"] = hand_cams
         return row
 
     def close(self):

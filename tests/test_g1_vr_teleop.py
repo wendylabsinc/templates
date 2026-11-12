@@ -71,7 +71,7 @@ def test_wendy_json_renders_to_valid_json():
     values = {name: str(v.get("default", "x" * 16)) for name, v in VARIABLES.items()}
     values["APP_ID"] = "g1-teleop"
     manifest = json.loads(_render((PROJECT / "wendy.json").read_text(), values))
-    assert set(manifest["services"]) == {"onboard", "teleop"}
+    assert set(manifest["services"]) == {"onboard", "teleop", "cameras"}
     assert manifest["readiness"]["tcpSocket"]["port"] == VARIABLES["HTTPS_PORT"]["default"]
 
 

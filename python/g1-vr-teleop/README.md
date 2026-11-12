@@ -90,6 +90,10 @@ which only runs while recording is on.
 | `HTTP_PORT` | `8280` | Same pages over plain HTTP, for a headset on USB only |
 | `WALKING` | `off` | `on` lets the left stick walk the robot |
 | `RECORDING` | `off` | `on` adds session recording and the head camera |
+| `HAND_CAMERAS` | `on` | Runs the two USB cameras in the robot's hands and shows them on the console |
+| `LEFT_HAND_CAMERA` | `auto` | `auto`, or the left camera's `/dev/v4l/by-path` link name (its USB port) |
+| `RIGHT_HAND_CAMERA` | `auto` | Same, for the right hand |
+| `CAMERA_FPS` | `30` | Frame rate asked of the hand cameras (MJPG, 640×480) |
 | `NETWORK_INTERFACE` | `auto` | Interface with the `192.168.123.x` robot address |
 | `DDS_DOMAIN` | `0` | `0` is the real robot, `1` a Unitree simulator |
 
@@ -101,6 +105,33 @@ robot's network can open the console and arm it, so keep it on a private
 network. To lock it down, set the same secret in `G1_KEY` (onboard) and
 `TELEOP_CONTROL_KEY` (teleop); the console then needs `?key=<secret>` in its
 URL. To require a held button, set `G1_DEADMAN` to one (`R2`, `L2`, `A`, ...).
+
+## Hand cameras
+
+With `HAND_CAMERAS=on`, the `cameras` service opens the USB cameras in the
+robot's hands and the console shows both feeds under **Hand cameras**, each
+labelled with its USB port and frame rate.
+
+- **Which camera is which.** Identical cameras share one USB serial, and
+  `/dev/videoN` numbers move between boots, so cameras are picked by their
+  `/dev/v4l/by-path` link, which is the USB port. `auto` takes every camera
+  that is not a RealSense, in port order.
+- **Left and right.** Software cannot tell the hands apart. The first time,
+  move one hand and check that its feed is on its own side; if not, press
+  **Swap left and right**. The choice is saved on the robot and kept across
+  redeploys. Check again after moving any camera cable.
+- **No camera settings are changed.** Exposure, gain and the like stay at the
+  camera's defaults: on another G1 a storm of failing camera-control requests
+  wedged the USB controller that also carries the robot's Wi-Fi.
+- **Frames are passed through.** The camera's own MJPG frames are served as
+  they arrive, with no decode or re-encode, and each is stamped with its
+  capture time on the robot's monotonic clock.
+
+To check the service directly from the robot's network:
+
+```sh
+curl http://<robot>:8091/status
+```
 
 ## How it works
 
@@ -118,8 +149,9 @@ URL. To require a held button, set `G1_DEADMAN` to one (`R2`, `L2`, `A`, ...).
 |---|---:|---|
 | `onboard` | `8090` | The only code that moves the robot. Starts in STANDBY, holds on Take control, follows only while ARMED, enforces joint limits and its own timeouts |
 | `teleop` | `{{.HTTP_PORT}}`, `{{.HTTPS_PORT}}` | Serves the headset page and console, retargets hands to arm and finger targets (Pinocchio IK, DexPilot), records sessions |
+| `cameras` | `8091` | Captures the two hand cameras and serves their newest frames. Never touches the arms |
 
-Both use host networking and run on the robot's computer. The G1 and Dex3
+All three use host networking and run on the robot's computer. The G1 and Dex3
 model files come from Unitree's
 [xr_teleoperate](https://github.com/unitreerobotics/xr_teleoperate)
 (Apache-2.0) at a pinned commit; see `NOTICE.md`.

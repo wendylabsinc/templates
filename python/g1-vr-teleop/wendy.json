@@ -11,6 +11,14 @@
                 { "type": "camera" }
             ]
         },
+        "cameras": {
+            "context": "./cameras",
+            "entitlements": [
+                { "type": "network", "mode": "host" },
+                { "type": "persist", "name": "{{.APP_ID}}-cameras", "path": "/state" },
+                { "type": "camera" }
+            ]
+        },
         "teleop": {
             "context": "./teleop",
             "dependsOn": ["onboard"],

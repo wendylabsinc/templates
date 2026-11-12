@@ -42,6 +42,36 @@
             "validate": { "pattern": "^(on|off)$" }
         },
         {
+            "name": "HAND_CAMERAS",
+            "description": "on runs the two USB cameras in the G1's hands as their own service (port 8091) and shows both feeds on the operator console. off leaves them alone. Harmless on a robot without hand cameras: the service reports none found.",
+            "type": "string",
+            "default": "on",
+            "prompt": "Hand cameras (on/off)",
+            "validate": { "pattern": "^(on|off)$" }
+        },
+        {
+            "name": "LEFT_HAND_CAMERA",
+            "description": "auto, or the /dev/v4l/by-path link name (the USB port) of the left hand's camera. auto takes the non-RealSense cameras in port order; if left and right come out swapped, press Swap on the console and it is remembered.",
+            "type": "string",
+            "default": "auto",
+            "prompt": "Left hand camera (auto or a by-path name)"
+        },
+        {
+            "name": "RIGHT_HAND_CAMERA",
+            "description": "auto, or the /dev/v4l/by-path link name (the USB port) of the right hand's camera.",
+            "type": "string",
+            "default": "auto",
+            "prompt": "Right hand camera (auto or a by-path name)"
+        },
+        {
+            "name": "CAMERA_FPS",
+            "description": "Frame rate asked of the hand cameras, in MJPG at 640x480. A camera may deliver less in low light.",
+            "type": "integer",
+            "default": 30,
+            "prompt": "Hand camera frame rate",
+            "validate": { "min": 1, "max": 60 }
+        },
+        {
             "name": "NETWORK_INTERFACE",
             "description": "Interface on the G1's computer with the robot-network address (192.168.123.x). Leave as auto unless detection fails.",
             "type": "string",

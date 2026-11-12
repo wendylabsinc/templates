@@ -1211,6 +1211,73 @@ async def camera_frame_handler(request: web.Request) -> web.Response:
                                  "X-Frame-Id": str(header.get("frame_id", ""))})
 
 
+# -- Hand cameras (cameras/hand_cameras.py, port 8091) --------------------- #
+# Proxied, not linked: the console is served over HTTPS and the camera service
+# speaks plain HTTP on the robot, and a browser blocks that mix. Every handler
+# answers even when the service is absent, so a robot without hand cameras
+# shows an empty panel instead of errors.
+HAND_CAM_NAMES = ("left", "right")
+
+
+def _hand_cam_base() -> str:
+    return os.environ.get("TELEOP_HAND_CAM_URL", "http://127.0.0.1:8091").rstrip("/")
+
+
+def _hand_cam_http(app):
+    import aiohttp
+    s = app.get("hand_cam_http")
+    if s is None or s.closed:
+        s = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=2.0))
+        app["hand_cam_http"] = s
+    return s
+
+
+async def hand_camera_status_handler(request: web.Request) -> web.Response:
+    """The hand-camera service's /status, or {"enabled": false} without it."""
+    try:
+        async with _hand_cam_http(request.app).get(_hand_cam_base() + "/status") as r:
+            data = await r.json()
+    except Exception as e:  # noqa: BLE001 -- no service is a state, not an error
+        data = {"enabled": False,
+                "error": f"hand-camera service unreachable ({type(e).__name__})"}
+    return web.json_response(data, headers={"Cache-Control": "no-store"})
+
+
+async def hand_camera_frame_handler(request: web.Request) -> web.Response:
+    """The newest JPEG from one hand camera, for the console."""
+    name = request.match_info["name"]
+    if name not in HAND_CAM_NAMES:
+        return web.Response(status=404, text="no such camera")
+    try:
+        url = f"{_hand_cam_base()}/cam/{name}/frame.jpg"
+        async with _hand_cam_http(request.app).get(url) as r:
+            if r.status != 200:
+                return web.Response(status=404, text="no frame")
+            body = await r.read()
+            headers = {"Cache-Control": "no-store"}
+            for h in ("X-Frame-Seq", "X-Captured-Mono-Ns", "X-Captured-Unix-Ns"):
+                if h in r.headers:
+                    headers[h] = r.headers[h]
+    except Exception:  # noqa: BLE001
+        return web.Response(status=503, text="hand-camera service unreachable")
+    return web.Response(body=body, content_type="image/jpeg", headers=headers)
+
+
+async def hand_camera_swap_handler(request: web.Request) -> web.Response:
+    """Swap which camera is called left and which right (saved on the robot)."""
+    locked = _locked(request)
+    if locked is not None:
+        return locked
+    try:
+        async with _hand_cam_http(request.app).post(_hand_cam_base() + "/swap") as r:
+            data, status = await r.json(), r.status
+    except Exception as e:  # noqa: BLE001
+        return web.json_response(
+            {"ok": False, "msg": f"hand-camera service unreachable ({type(e).__name__})"},
+            status=503)
+    return web.json_response(data, status=status)
+
+
 async def control_handler(request: web.Request) -> web.Response:
     """Drive the onboard state machine from a browser.
 
@@ -1652,6 +1719,11 @@ def make_app(retargeter, sink: SimSink, recording=None) -> web.Application:
     async def close_control_events(app):
         await asyncio.to_thread(app["control_events"].close)
     app.on_cleanup.append(close_control_events)
+    async def close_hand_cam_http(app):
+        s = app.get("hand_cam_http")
+        if s is not None and not s.closed:
+            await s.close()
+    app.on_cleanup.append(close_hand_cam_http)
     app["stats"] = {"connected": False, "frames": 0, "hands": 0,
                     "fps": 0.0, "since": 0.0}
     recording = recording_enabled() if recording is None else bool(recording)
@@ -1705,6 +1777,9 @@ def make_app(retargeter, sink: SimSink, recording=None) -> web.Application:
         app.router.add_post("/record/{step}", record_handler)
         app.router.add_get("/record/{step}", record_handler)
     app.router.add_get("/camera/frame.jpg", camera_frame_handler)
+    app.router.add_get("/hand-camera/status", hand_camera_status_handler)
+    app.router.add_get("/hand-camera/{name}.jpg", hand_camera_frame_handler)
+    app.router.add_post("/hand-camera/swap", hand_camera_swap_handler)
     app.router.add_post("/fingercal/{step}", fingercal_handler)
     app.router.add_get("/fingercal/{step}", fingercal_handler)
     app.router.add_get("/waist", waist_lock_handler)

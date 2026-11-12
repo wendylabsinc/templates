@@ -27,7 +27,11 @@ from pathlib import Path
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "teleop", "bridge"))
-import groot_export as ge  # noqa: E402
+try:
+    import groot_export as ge  # noqa: E402
+except ImportError as e:  # numpy missing: say what to install, not a traceback
+    sys.exit(f"export_dataset.py needs {e.name}: pip install -r "
+             f"{os.path.join(os.path.relpath(HERE), 'requirements-export.txt')} (and ffmpeg)")
 
 CONVERTER = "lerobot.scripts.convert_dataset_v21_to_v30"
 

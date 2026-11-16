@@ -15,7 +15,7 @@ async fn main() {
         .route("/health", get(health))
         .route("/items", post(create_item));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:{{.PORT}}").await.unwrap();
+    let listener = bind_listener({{.PORT}}).unwrap();
     println!("Server running on http://{}:{{.PORT}}", hostname);
     axum::serve(listener, app).await.unwrap();
 }
@@ -50,4 +50,31 @@ struct ItemResponse {
     id: u64,
     name: String,
     price: f64,
+}
+
+// Keep IPv4 LAN and IPv6 USB connections on the same listener.
+fn bind_listener(port: u16) -> std::io::Result<tokio::net::TcpListener> {
+    let socket = socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, Some(socket2::Protocol::TCP))?;
+    socket.set_only_v6(false)?;
+    socket.set_reuse_address(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&std::net::SocketAddr::from(([0u16; 8], port)).into())?;
+    socket.listen(1024)?;
+    tokio::net::TcpListener::from_std(socket.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn listener_accepts_ipv4_and_ipv6() {
+        let listener = bind_listener(0).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        for host in ["127.0.0.1", "::1"] {
+            let client = tokio::net::TcpStream::connect((host, port)).await.unwrap();
+            let (_, peer) = listener.accept().await.unwrap();
+            assert_eq!(peer.port(), client.local_addr().unwrap().port());
+        }
+    }
 }

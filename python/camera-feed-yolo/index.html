@@ -72,11 +72,13 @@
       class="fixed inset-0 z-20 flex items-center justify-center bg-black transition-opacity duration-500"
     >
       <div class="text-center">
-        <div class="relative w-16 h-16 mx-auto mb-4">
+        <div id="loading-spinner" class="relative w-16 h-16 mx-auto mb-4">
           <div class="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
           <div class="absolute inset-0 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
         </div>
-        <p class="text-gray-400 font-medium tracking-wide">LOADING YOLO MODEL</p>
+        <p id="loading-message" class="text-gray-400 font-medium tracking-wide">
+          LOADING YOLO MODEL
+        </p>
       </div>
     </div>
 
@@ -85,6 +87,8 @@
       const canvasEl = document.getElementById("overlay");
       const ctx = canvasEl.getContext("2d");
       const overlay = document.getElementById("loading-overlay");
+      const spinnerEl = document.getElementById("loading-spinner");
+      const overlayMsg = document.getElementById("loading-message");
       const statusDot = document.getElementById("status-dot");
       const statusText = document.getElementById("status-text");
       const fpsDisplay = document.getElementById("fps");
@@ -183,6 +187,29 @@
         }
       }
 
+      // Replace the "loading model" spinner with the real reason there is no
+      // video, instead of spinning forever on a device with no camera.
+      let captureProblem = false;
+
+      function showCaptureProblem(info) {
+        captureProblem = true;
+        setStatus("No camera", "red");
+        overlay.classList.remove("opacity-0", "pointer-events-none");
+        if (spinnerEl) spinnerEl.classList.add("hidden");
+        if (overlayMsg) {
+          overlayMsg.textContent =
+            info.message || "No camera detected on this device.";
+        }
+      }
+
+      // Frames are flowing again: restore the spinner so a later disconnect
+      // does not show a stale "no camera" message.
+      function clearCaptureProblem() {
+        captureProblem = false;
+        if (spinnerEl) spinnerEl.classList.remove("hidden");
+        if (overlayMsg) overlayMsg.textContent = "LOADING YOLO MODEL";
+      }
+
       function updateMetaUI(meta) {
         detCount.textContent = meta.detections ?? 0;
         inferenceMs.textContent = meta.inference_ms ?? "—";
@@ -255,13 +282,20 @@
         ws.onmessage = (e) => {
           if (e.data instanceof ArrayBuffer) {
             imgEl.src = arrayBufferToDataUrl(e.data);
+            if (captureProblem) clearCaptureProblem();
             frameCount++;
             overlay.classList.add("opacity-0", "pointer-events-none");
             setStatus("Live", "green");
             reconnectDelay = 2000;
           } else {
             try {
-              latestMeta = JSON.parse(e.data);
+              const parsed = JSON.parse(e.data);
+              // Frameless status messages explain why no video is arriving.
+              if (parsed.status) {
+                showCaptureProblem(parsed);
+                return;
+              }
+              latestMeta = parsed;
               updateMetaUI(latestMeta);
             } catch {}
           }

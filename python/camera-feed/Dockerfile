@@ -42,4 +42,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 EXPOSE {{.PORT}}
 
-CMD ["/app/venv/bin/uvicorn", "app:app", "--host", "0.0.0.0", "--port", "{{.PORT}}"]
+CMD ["/app/venv/bin/python", "app.py"]

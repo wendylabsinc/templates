@@ -170,6 +170,30 @@ def _v4l2_device_name(path: str) -> str:
     return Path(path).name
 
 
+def _open_capture(device):
+    """Open a camera, naming the V4L2 backend explicitly on Linux.
+
+    Without it OpenCV picks a backend itself -- GStreamer or FFMPEG, depending on
+    the build -- and CAP_PROP_FOURCC neither sets nor reads reliably through
+    those. The pixel format then silently stays whatever the camera offered
+    first, which for most webcams is raw.
+    """
+    if IS_MACOS:
+        return cv2.VideoCapture(device)
+    return cv2.VideoCapture(device, cv2.CAP_V4L2)
+
+
+def _fourcc_of(cap) -> str:
+    """The pixel format V4L2 actually settled on.
+
+    Worth asking rather than assuming: V4L2 accepts a format request and then
+    gives you whatever it likes, so the only way to know a codec took is to read
+    it back.
+    """
+    raw = int(cap.get(cv2.CAP_PROP_FOURCC))
+    return "".join(chr((raw >> (8 * i)) & 0xFF) for i in range(4)).strip() or "?"
+
+
 def _v4l2_is_capture(path: str) -> bool:
     try:
         out = subprocess.check_output(
@@ -304,6 +328,19 @@ def _log_camera_inventory_once(cameras: list[dict]):
     _last_camera_inventory_log = current
 
 
+def _first_capture_node() -> str | None:
+    """The first node that reports itself a capture device, or None.
+
+    /dev/video0 is not a safe default. A SoC with a hardware video codec
+    registers it as a V4L2 device -- qcom-iris on a Dragonwing, for instance --
+    so video0 can exist, open, and never produce a frame, while the webcam sits
+    on video2. enumerate_cameras() already filters by VIDIOC_QUERYCAP; this just
+    takes the first result.
+    """
+    cameras = enumerate_cameras()
+    return cameras[0]["id"] if cameras else None
+
+
 def _enumerate_linux_cameras() -> list[dict]:
     cameras = []
     for path in _linux_candidate_video_nodes():
@@ -317,22 +354,6 @@ def _enumerate_linux_cameras() -> list[dict]:
 # node every 2s forever; back off instead so the log stays readable.
 _CAPTURE_RETRY_MIN_S = 2.0
 _CAPTURE_RETRY_MAX_S = 30.0
-
-
-def _first_capture_device() -> str | None:
-    """First /dev/video* node v4l2 reports as a real capture source, else None.
-
-    The stream path used to fall back to /dev/video0 unconditionally. On a board
-    whose only /dev/video* nodes are mem2mem codecs (e.g. qcom-iris on the
-    Dragonwing IQ-8275) that node can never produce frames, so opening it just
-    failed on a loop.
-    """
-    if IS_MACOS:
-        return None
-    for path in _linux_candidate_video_nodes():
-        if _v4l2_is_capture(path):
-            return path
-    return None
 
 
 def enumerate_cameras() -> list[dict]:
@@ -687,11 +708,11 @@ class YOLOCamera:
         candidates: list[str] = []
         if device and _v4l2_is_capture(device):
             candidates.append(device)
-        discovered = _first_capture_device()
+        discovered = _first_capture_node()
         if discovered and discovered not in candidates:
             candidates.append(discovered)
         for dev in candidates:
-            cap = cv2.VideoCapture(dev)
+            cap = _open_capture(dev)
             opened = cap.isOpened()
             cap.release()
             if opened:
@@ -719,6 +740,12 @@ class YOLOCamera:
             # Without this an encoder/decoder node fails open() on every pass and
             # OpenCV logs ~8 lines of V4L2/FFMPEG errors each time.
             if not _v4l2_is_capture(device):
+                alternative = _first_capture_node()
+                if alternative:
+                    device = alternative
+                    with self._lock:
+                        self._current_device = alternative
+            if not _v4l2_is_capture(device):
                 logger.warning(
                     "OpenCV: %s is not a V4L2 capture device; retrying in %.0fs",
                     device, backoff,
@@ -731,7 +758,18 @@ class YOLOCamera:
                 backoff = min(backoff * 2, _CAPTURE_RETRY_MAX_S)
                 continue
 
-            cap = cv2.VideoCapture(device)
+            cap = _open_capture(device)
+            if not cap.isOpened():
+                # Preserve main's rediscovery on failure, but never fall back to
+                # an unchecked codec node or camera index.
+                alternative = _first_capture_node()
+                if alternative and alternative != device:
+                    cap.release()
+                    cap = _open_capture(alternative)
+                    if cap.isOpened():
+                        device = alternative
+                        with self._lock:
+                            self._current_device = alternative
             if not cap.isOpened():
                 cap.release()
                 logger.warning(
@@ -747,8 +785,30 @@ class YOLOCamera:
             backoff = _CAPTURE_RETRY_MIN_S
             with self._lock:
                 self._last_status_payload = None
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            # Ask for Motion-JPEG before the frame size. In the other order V4L2
+            # sizes the raw format and ignores the codec change.
+            #
+            # This matters most on a USB 2.0 port -- 480 Mbit/s -- where raw YUYV
+            # at 720p30 needs about 440 and does not fit, so V4L2 quietly drops
+            # the resolution until it does and the picture turns to mush with no
+            # error anywhere. MJPEG is ~15 Mbit/s for the same picture because the
+            # camera compresses it itself.
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+            negotiated = _fourcc_of(cap)   # read back: V4L2 may refuse silently
+            # Only ask for 720p once MJPEG is actually in use. A camera that cannot
+            # compress would have to send 720p raw, which is the failure this is
+            # meant to avoid -- so those stay at 480p.
+            want_w, want_h = (1280, 720) if negotiated == "MJPG" else (640, 480)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(os.environ.get("CAMERA_WIDTH", want_w)))
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, int(os.environ.get("CAMERA_HEIGHT", want_h)))
+            logger.info("OpenCV capture on %s: %s %dx%d", device, _fourcc_of(cap),
+                        int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                        int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            if negotiated != "MJPG":
+                logger.warning(
+                    "%s gave %s, not MJPG; on a USB 2.0 port expect a low-resolution "
+                    "picture. Check `v4l2-ctl -d %s --list-formats-ext`.",
+                    device, negotiated, device)
             logger.info("OpenCV camera opened: %s", device)
 
             try:
@@ -858,7 +918,7 @@ class YOLOCamera:
             should_start_gst = mode == "gstreamer" and self.pipeline is None
 
         if mode == "opencv":
-            device = self._current_device or _first_capture_device()
+            device = self._current_device or _first_capture_node()
             if device is None:
                 logger.warning(
                     "No V4L2 capture device present; not starting capture thread"

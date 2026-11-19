@@ -1,0 +1,1381 @@
+{
+ "schema": "wendy.g1.meshes.v1",
+ "source": "assets/g1/g1_body29_hand14.urdf",
+ "source_sha256": "8bbf006633fc50b616f665c7a970780cc296577a0adfd7d28b049e751c238735",
+ "bin": "g1_meshes.bin",
+ "bin_bytes": 2522508,
+ "bin_sha256": "ba8a6661055010dbc8c4e693d83bdcd762d7e51b95523804431edaead58710d2",
+ "layout": "per link: float32 pos[verts*3], float32 nrm[verts*3], uint32 idx[tris*3]; little-endian",
+ "total_tris": 110565,
+ "links": {
+  "pelvis": {
+   "mesh": "meshes/pelvis.STL",
+   "mesh_sha256": "5ba6bbc888e630550140d3c26763f10206da8c8bd30ed886b8ede41c61f57a31",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 1562,
+   "tris": 3140,
+   "pos_offset": 0,
+   "nrm_offset": 18744,
+   "idx_offset": 37488,
+   "bounds": [
+    [
+     -0.04875,
+     -0.06445,
+     -0.14742
+    ],
+    [
+     0.04875,
+     0.06445,
+     0.0025
+    ]
+   ]
+  },
+  "pelvis_contour_link": {
+   "mesh": "meshes/pelvis_contour_link.STL",
+   "mesh_sha256": "5cc5c2c7a312329e3feeb2b03d3fc09fc29705bd01864f6767e51be959662420",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 2814,
+   "tris": 6959,
+   "pos_offset": 75168,
+   "nrm_offset": 108936,
+   "idx_offset": 142704,
+   "bounds": [
+    [
+     -0.05807,
+     -0.06741,
+     -0.15187
+    ],
+    [
+     0.06143,
+     0.06772,
+     -0.02776
+    ]
+   ]
+  },
+  "waist_yaw_link": {
+   "mesh": "meshes/waist_yaw_link_rev_1_0.STL",
+   "mesh_sha256": "ec6db442b11f25eed898b5add07940c85d804f300de24dcbd264ccd8be7d554c",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 1251,
+   "tris": 3141,
+   "pos_offset": 226212,
+   "nrm_offset": 241224,
+   "idx_offset": 256236,
+   "bounds": [
+    [
+     -0.0425,
+     -0.04247,
+     -0.0002
+    ],
+    [
+     0.04237,
+     0.04246,
+     0.054
+    ]
+   ]
+  },
+  "waist_roll_link": {
+   "mesh": "meshes/waist_roll_link_rev_1_0.STL",
+   "mesh_sha256": "b67c347a05abc3e8ddae600d98a082bee273bb39f8e651647708b0a7140a8a97",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 130,
+   "tris": 261,
+   "pos_offset": 293928,
+   "nrm_offset": 295488,
+   "idx_offset": 297048,
+   "bounds": [
+    [
+     -0.017,
+     -0.01,
+     -0.01179
+    ],
+    [
+     0.017,
+     0.01,
+     0.01179
+    ]
+   ]
+  },
+  "torso_link": {
+   "mesh": "meshes/torso_link_rev_1_0.STL",
+   "mesh_sha256": "11ddb46f2098efbbd8816b1d65893632d8e78be936376c7cdcd6771899ccc723",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 6867,
+   "tris": 15815,
+   "pos_offset": 300180,
+   "nrm_offset": 382584,
+   "idx_offset": 464988,
+   "bounds": [
+    [
+     -0.06664,
+     -0.10771,
+     -0.00891
+    ],
+    [
+     0.08363,
+     0.10771,
+     0.31141
+    ]
+   ]
+  },
+  "logo_link": {
+   "mesh": "meshes/logo_link.STL",
+   "mesh_sha256": "8571a0a19bc4916fa55f91449f51d5fdefd751000054865a842449429d5f155b",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 649,
+   "tris": 1336,
+   "pos_offset": 654768,
+   "nrm_offset": 662556,
+   "idx_offset": 670344,
+   "bounds": [
+    [
+     -0.07253,
+     -0.07302,
+     0.25699
+    ],
+    [
+     0.07682,
+     0.07457,
+     0.28617
+    ]
+   ]
+  },
+  "head_link": {
+   "mesh": "meshes/head_link.STL",
+   "mesh_sha256": "005fb67fbd3eff94aa8bf4a6e83238174e9f91b6721f7111594322f223724411",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 3618,
+   "tris": 7348,
+   "pos_offset": 686376,
+   "nrm_offset": 729792,
+   "idx_offset": 773208,
+   "bounds": [
+    [
+     -0.06636,
+     -0.07749,
+     0.32632
+    ],
+    [
+     0.07397,
+     0.07752,
+     0.53057
+    ]
+   ]
+  },
+  "left_shoulder_pitch_link": {
+   "mesh": "meshes/left_shoulder_pitch_link.STL",
+   "mesh_sha256": "f0d1cfd02fcf0d42f95e678eeca33da3afbcc366ffba5c052847773ec4f31d52",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 617,
+   "tris": 1254,
+   "pos_offset": 861384,
+   "nrm_offset": 868788,
+   "idx_offset": 876192,
+   "bounds": [
+    [
+     -0.03101,
+     -0.0,
+     -0.05033
+    ],
+    [
+     0.03104,
+     0.0745,
+     0.03999
+    ]
+   ]
+  },
+  "left_shoulder_roll_link": {
+   "mesh": "meshes/left_shoulder_roll_link.STL",
+   "mesh_sha256": "fb9df21687773522598dc384f1a2945c7519f11cbc8bd372a49170316d6eee88",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 1248,
+   "tris": 3019,
+   "pos_offset": 891240,
+   "nrm_offset": 906216,
+   "idx_offset": 921192,
+   "bounds": [
+    [
+     -0.04015,
+     -0.03262,
+     -0.1032
+    ],
+    [
+     0.04104,
+     0.03994,
+     0.03333
+    ]
+   ]
+  },
+  "left_shoulder_yaw_link": {
+   "mesh": "meshes/left_shoulder_yaw_link.STL",
+   "mesh_sha256": "1aa97e9748e924336567992181f78c7cd0652fd52a4afcca3df6b2ef6f9e712e",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 1205,
+   "tris": 2578,
+   "pos_offset": 957420,
+   "nrm_offset": 971880,
+   "idx_offset": 986340,
+   "bounds": [
+    [
+     -0.03281,
+     -0.04141,
+     -0.1137
+    ],
+    [
+     0.04832,
+     0.03311,
+     0.03157
+    ]
+   ]
+  },
+  "left_elbow_link": {
+   "mesh": "meshes/left_elbow_link.STL",
+   "mesh_sha256": "fa752198accd104d5c4c3a01382e45165b944fbbc5acce085059223324e5bed3",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 561,
+   "tris": 1119,
+   "pos_offset": 1017276,
+   "nrm_offset": 1024008,
+   "idx_offset": 1030740,
+   "bounds": [
+    [
+     -0.02978,
+     -0.03125,
+     -0.04543
+    ],
+    [
+     0.1,
+     0.03478,
+     0.02978
+    ]
+   ]
+  },
+  "left_wrist_roll_link": {
+   "mesh": "meshes/left_wrist_roll_link.STL",
+   "mesh_sha256": "edc387c9a0ba8c2237e9b296d32531426fabeb6f53e58df45c76106bca74148c",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 325,
+   "tris": 800,
+   "pos_offset": 1044168,
+   "nrm_offset": 1048068,
+   "idx_offset": 1051968,
+   "bounds": [
+    [
+     0.00051,
+     -0.03045,
+     -0.02969
+    ],
+    [
+     0.05533,
+     0.02998,
+     0.0297
+    ]
+   ]
+  },
+  "left_wrist_pitch_link": {
+   "mesh": "meshes/left_wrist_pitch_link.STL",
+   "mesh_sha256": "b251d8e05047f695d0f536cd78c11973cfa4e78d08cfe82759336cc3471de3a9",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 305,
+   "tris": 606,
+   "pos_offset": 1061568,
+   "nrm_offset": 1065228,
+   "idx_offset": 1068888,
+   "bounds": [
+    [
+     -0.02845,
+     -0.02848,
+     -0.02844
+    ],
+    [
+     0.07445,
+     0.02849,
+     0.02844
+    ]
+   ]
+  },
+  "left_wrist_yaw_link": {
+   "mesh": "meshes/left_wrist_yaw_link.STL",
+   "mesh_sha256": "83f8fb3a726bf9613d65dd14f0f447cb918c3c95b3938042a0c9c09749267d3b",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 375,
+   "tris": 1000,
+   "pos_offset": 1076160,
+   "nrm_offset": 1080660,
+   "idx_offset": 1085160,
+   "bounds": [
+    [
+     -0.01718,
+     -0.02339,
+     -0.0304
+    ],
+    [
+     0.0415,
+     0.03,
+     0.02996
+    ]
+   ]
+  },
+  "right_shoulder_pitch_link": {
+   "mesh": "meshes/right_shoulder_pitch_link.STL",
+   "mesh_sha256": "24cdb387e0128dfe602770a81c56cdce3a0181d34d039a11d1aaf8819b7b8c02",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 625,
+   "tris": 1258,
+   "pos_offset": 1097160,
+   "nrm_offset": 1104660,
+   "idx_offset": 1112160,
+   "bounds": [
+    [
+     -0.03101,
+     -0.0745,
+     -0.05033
+    ],
+    [
+     0.03104,
+     0.0,
+     0.03999
+    ]
+   ]
+  },
+  "right_shoulder_roll_link": {
+   "mesh": "meshes/right_shoulder_roll_link.STL",
+   "mesh_sha256": "962b97c48f9ce9e8399f45dd9522e0865d19aa9fd299406b2d475a8fc4a53e81",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 1224,
+   "tris": 3028,
+   "pos_offset": 1127256,
+   "nrm_offset": 1141944,
+   "idx_offset": 1156632,
+   "bounds": [
+    [
+     -0.04015,
+     -0.03964,
+     -0.1032
+    ],
+    [
+     0.04104,
+     0.03274,
+     0.03333
+    ]
+   ]
+  },
+  "right_shoulder_yaw_link": {
+   "mesh": "meshes/right_shoulder_yaw_link.STL",
+   "mesh_sha256": "a0b76489271da0c72461a344c9ffb0f0c6e64f019ea5014c1624886c442a2fe5",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 1243,
+   "tris": 2655,
+   "pos_offset": 1192968,
+   "nrm_offset": 1207884,
+   "idx_offset": 1222800,
+   "bounds": [
+    [
+     -0.03279,
+     -0.03311,
+     -0.1137
+    ],
+    [
+     0.04832,
+     0.04141,
+     0.03157
+    ]
+   ]
+  },
+  "right_elbow_link": {
+   "mesh": "meshes/right_elbow_link.STL",
+   "mesh_sha256": "1be925d7aa268bb8fddf5362b9173066890c7d32092c05638608126e59d1e2ab",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 544,
+   "tris": 1084,
+   "pos_offset": 1254660,
+   "nrm_offset": 1261188,
+   "idx_offset": 1267716,
+   "bounds": [
+    [
+     -0.02978,
+     -0.03478,
+     -0.04543
+    ],
+    [
+     0.1,
+     0.03125,
+     0.02978
+    ]
+   ]
+  },
+  "right_wrist_roll_link": {
+   "mesh": "meshes/right_wrist_roll_link.STL",
+   "mesh_sha256": "a7ee9212ff5b94d6cb7f52bb1bbf3f352194d5b598acff74f4c77d340c5b344f",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 333,
+   "tris": 832,
+   "pos_offset": 1280724,
+   "nrm_offset": 1284720,
+   "idx_offset": 1288716,
+   "bounds": [
+    [
+     -0.0,
+     -0.02999,
+     -0.02967
+    ],
+    [
+     0.05533,
+     0.03049,
+     0.02967
+    ]
+   ]
+  },
+  "right_wrist_pitch_link": {
+   "mesh": "meshes/right_wrist_pitch_link.STL",
+   "mesh_sha256": "d22f8f3b3127f15a63e5be1ee273cd5075786c3142f1c3d9f76cbf43d2a26477",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 293,
+   "tris": 582,
+   "pos_offset": 1298700,
+   "nrm_offset": 1302216,
+   "idx_offset": 1305732,
+   "bounds": [
+    [
+     -0.02845,
+     -0.02849,
+     -0.02843
+    ],
+    [
+     0.07445,
+     0.02848,
+     0.02844
+    ]
+   ]
+  },
+  "right_wrist_yaw_link": {
+   "mesh": "meshes/right_wrist_yaw_link.STL",
+   "mesh_sha256": "bc9dece2d12509707e0057ba2e48df8f3d56db0c79410212963a25e8a50f61a6",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.004,
+   "verts": 394,
+   "tris": 1013,
+   "pos_offset": 1312716,
+   "nrm_offset": 1317444,
+   "idx_offset": 1322172,
+   "bounds": [
+    [
+     -0.01748,
+     -0.02956,
+     -0.03049
+    ],
+    [
+     0.0415,
+     0.0234,
+     0.02998
+    ]
+   ]
+  },
+  "left_hand_palm_link": {
+   "mesh": "meshes/left_hand_palm_link.STL",
+   "mesh_sha256": "23a486b75bd78a9bf03cec25d84d87f97f3dae038cf21a743b6d469b337e4004",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 5489,
+   "tris": 11086,
+   "pos_offset": 1334328,
+   "nrm_offset": 1400196,
+   "idx_offset": 1466064,
+   "bounds": [
+    [
+     0.0,
+     -0.02019,
+     -0.0439
+    ],
+    [
+     0.0867,
+     0.02142,
+     0.0439
+    ]
+   ]
+  },
+  "left_hand_thumb_0_link": {
+   "mesh": "meshes/left_hand_thumb_0_link.STL",
+   "mesh_sha256": "a90c721661c0622685488a3c74d1e122c7da89242d3a1daef75edb83422d05e0",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 32,
+   "tris": 60,
+   "pos_offset": 1599096,
+   "nrm_offset": 1599480,
+   "idx_offset": 1599864,
+   "bounds": [
+    [
+     -0.01148,
+     -0.0283,
+     -0.0095
+    ],
+    [
+     0.01005,
+     -0.00013,
+     0.0095
+    ]
+   ]
+  },
+  "left_hand_thumb_1_link": {
+   "mesh": "meshes/left_hand_thumb_1_link.STL",
+   "mesh_sha256": "445c54a45bc13ce36001556f66bc0f49c83cb40321205ae4d676bb2874325684",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 514,
+   "tris": 1021,
+   "pos_offset": 1600584,
+   "nrm_offset": 1606752,
+   "idx_offset": 1612920,
+   "bounds": [
+    [
+     -0.01255,
+     -0.0548,
+     -0.0129
+    ],
+    [
+     0.01458,
+     0.007,
+     0.0128
+    ]
+   ]
+  },
+  "left_hand_thumb_2_link": {
+   "mesh": "meshes/left_hand_thumb_2_link.STL",
+   "mesh_sha256": "3d8dbe5085acfc213d21aa8b0782e89cd79084e9678f3a85fc7b04a86b029db5",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 1590,
+   "tris": 3885,
+   "pos_offset": 1625172,
+   "nrm_offset": 1644252,
+   "idx_offset": 1663332,
+   "bounds": [
+    [
+     -0.00892,
+     -0.05188,
+     -0.0131
+    ],
+    [
+     0.00864,
+     0.00695,
+     0.0129
+    ]
+   ]
+  },
+  "left_hand_middle_0_link": {
+   "mesh": "meshes/left_hand_middle_0_link.STL",
+   "mesh_sha256": "6b35f2f77211d5a366f0b9a4e47c4ee35e536731266f1a34e9efa12db579b892",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 526,
+   "tris": 1065,
+   "pos_offset": 1709952,
+   "nrm_offset": 1716264,
+   "idx_offset": 1722576,
+   "bounds": [
+    [
+     -0.007,
+     -0.01458,
+     -0.0128
+    ],
+    [
+     0.0548,
+     0.01255,
+     0.0129
+    ]
+   ]
+  },
+  "left_hand_middle_1_link": {
+   "mesh": "meshes/left_hand_middle_1_link.STL",
+   "mesh_sha256": "9e315ebc8a7a0cb98e033985b586b20d81cf8aa761181ae61ce56fcb14077a06",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 1568,
+   "tris": 3791,
+   "pos_offset": 1735356,
+   "nrm_offset": 1754172,
+   "idx_offset": 1772988,
+   "bounds": [
+    [
+     -0.00695,
+     -0.00867,
+     -0.0129
+    ],
+    [
+     0.05188,
+     0.00892,
+     0.0131
+    ]
+   ]
+  },
+  "left_hand_index_0_link": {
+   "mesh": "meshes/left_hand_index_0_link.STL",
+   "mesh_sha256": "6b35f2f77211d5a366f0b9a4e47c4ee35e536731266f1a34e9efa12db579b892",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 526,
+   "tris": 1065,
+   "pos_offset": 1818480,
+   "nrm_offset": 1824792,
+   "idx_offset": 1831104,
+   "bounds": [
+    [
+     -0.007,
+     -0.01458,
+     -0.0128
+    ],
+    [
+     0.0548,
+     0.01255,
+     0.0129
+    ]
+   ]
+  },
+  "left_hand_index_1_link": {
+   "mesh": "meshes/left_hand_index_1_link.STL",
+   "mesh_sha256": "9e315ebc8a7a0cb98e033985b586b20d81cf8aa761181ae61ce56fcb14077a06",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 1568,
+   "tris": 3791,
+   "pos_offset": 1843884,
+   "nrm_offset": 1862700,
+   "idx_offset": 1881516,
+   "bounds": [
+    [
+     -0.00695,
+     -0.00867,
+     -0.0129
+    ],
+    [
+     0.05188,
+     0.00892,
+     0.0131
+    ]
+   ]
+  },
+  "right_hand_palm_link": {
+   "mesh": "meshes/right_hand_palm_link.STL",
+   "mesh_sha256": "86c0b231cc44477d64a6493e5a427ba16617a00738112dd187c652675b086fb9",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 5452,
+   "tris": 11029,
+   "pos_offset": 1927008,
+   "nrm_offset": 1992432,
+   "idx_offset": 2057856,
+   "bounds": [
+    [
+     -0.0,
+     -0.02142,
+     -0.0439
+    ],
+    [
+     0.0867,
+     0.0202,
+     0.0439
+    ]
+   ]
+  },
+  "right_hand_thumb_0_link": {
+   "mesh": "meshes/right_hand_thumb_0_link.STL",
+   "mesh_sha256": "544298d0ea1088f5b276a10cc6a6a9e533efdd91594955fdc956c46211d07f83",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 32,
+   "tris": 60,
+   "pos_offset": 2190204,
+   "nrm_offset": 2190588,
+   "idx_offset": 2190972,
+   "bounds": [
+    [
+     -0.0115,
+     0.00013,
+     -0.0095
+    ],
+    [
+     0.01005,
+     0.0283,
+     0.0095
+    ]
+   ]
+  },
+  "right_hand_thumb_1_link": {
+   "mesh": "meshes/right_hand_thumb_1_link.STL",
+   "mesh_sha256": "0a9a820da8dd10f298778b714f1364216e8a5976f4fd3a05689ea26327d44bf6",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 555,
+   "tris": 1127,
+   "pos_offset": 2191692,
+   "nrm_offset": 2198352,
+   "idx_offset": 2205012,
+   "bounds": [
+    [
+     -0.01255,
+     -0.007,
+     -0.0128
+    ],
+    [
+     0.01458,
+     0.0548,
+     0.0129
+    ]
+   ]
+  },
+  "right_hand_thumb_2_link": {
+   "mesh": "meshes/right_hand_thumb_2_link.STL",
+   "mesh_sha256": "3f1bfb37668e8f61801c8d25f171fa1949e08666be86c67acad7e0079937cc45",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 1571,
+   "tris": 3821,
+   "pos_offset": 2218536,
+   "nrm_offset": 2237388,
+   "idx_offset": 2256240,
+   "bounds": [
+    [
+     -0.00892,
+     -0.00695,
+     -0.0129
+    ],
+    [
+     0.00867,
+     0.05188,
+     0.0131
+    ]
+   ]
+  },
+  "right_hand_middle_0_link": {
+   "mesh": "meshes/right_hand_middle_0_link.STL",
+   "mesh_sha256": "12ab4300c95e437e834f9aef772b3b431c671bf34338930b52ad11aef73bbd0d",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 545,
+   "tris": 1117,
+   "pos_offset": 2302092,
+   "nrm_offset": 2308632,
+   "idx_offset": 2315172,
+   "bounds": [
+    [
+     -0.007,
+     -0.01255,
+     -0.0129
+    ],
+    [
+     0.0548,
+     0.01458,
+     0.0128
+    ]
+   ]
+  },
+  "right_hand_middle_1_link": {
+   "mesh": "meshes/right_hand_middle_1_link.STL",
+   "mesh_sha256": "c9c34efce4563cacdcfd29fc838a982976d40f5442c71219811dcbbf3923a33d",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 1563,
+   "tris": 3851,
+   "pos_offset": 2328576,
+   "nrm_offset": 2347332,
+   "idx_offset": 2366088,
+   "bounds": [
+    [
+     -0.00695,
+     -0.00892,
+     -0.0131
+    ],
+    [
+     0.05188,
+     0.00867,
+     0.0129
+    ]
+   ]
+  },
+  "right_hand_index_0_link": {
+   "mesh": "meshes/right_hand_index_0_link.STL",
+   "mesh_sha256": "12ab4300c95e437e834f9aef772b3b431c671bf34338930b52ad11aef73bbd0d",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 545,
+   "tris": 1117,
+   "pos_offset": 2412300,
+   "nrm_offset": 2418840,
+   "idx_offset": 2425380,
+   "bounds": [
+    [
+     -0.007,
+     -0.01255,
+     -0.0129
+    ],
+    [
+     0.0548,
+     0.01458,
+     0.0128
+    ]
+   ]
+  },
+  "right_hand_index_1_link": {
+   "mesh": "meshes/right_hand_index_1_link.STL",
+   "mesh_sha256": "c9c34efce4563cacdcfd29fc838a982976d40f5442c71219811dcbbf3923a33d",
+   "origin_xyz": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "origin_rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "cell_m": 0.0015,
+   "verts": 1563,
+   "tris": 3851,
+   "pos_offset": 2438784,
+   "nrm_offset": 2457540,
+   "idx_offset": 2476296,
+   "bounds": [
+    [
+     -0.00695,
+     -0.00892,
+     -0.0131
+    ],
+    [
+     0.05188,
+     0.00867,
+     0.0129
+    ]
+   ]
+  }
+ }
+}

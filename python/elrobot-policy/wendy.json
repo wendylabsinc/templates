@@ -1,0 +1,40 @@
+{
+    "appId": "{{.APP_ID}}",
+    "version": "0.1.0",
+    "platform": "linux",
+    "entitlements": [
+        {
+            "type": "serial",
+            "device": "{{.FOLLOWER_SERIAL_DEVICE}}"
+        },
+        {
+            "type": "camera"
+        },
+        {
+            "type": "gpu"
+        },
+        {
+            "type": "network",
+            "mode": "host"
+        },
+        {
+            "type": "persist",
+            "name": "{{.APP_ID}}-data",
+            "path": "/data"
+        },
+        {
+            "type": "persist",
+            "name": "{{.CALIBRATION_VOLUME}}",
+            "path": "/calibration"
+        }
+    ],
+    "readiness": {
+        "tcpSocket": { "port": {{.PORT}} },
+        "timeoutSeconds": 60
+    },
+    "hooks": {
+        "postStart": {
+            "cli": "wendy utils open-browser http://${WENDY_HOSTNAME}:{{.PORT}}"
+        }
+    }
+}

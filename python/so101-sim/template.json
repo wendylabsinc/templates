@@ -1,0 +1,21 @@
+{
+    "name": "so101-sim",
+    "description": "Simulated SO-101 robot arm in MuJoCo with a 3D browser viewer and an HTTP joint API. Virtual only: no USB serial port or servos.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Port for the simulator's viewer web page and HTTP API. The default 8891 leaves 8890 free for the Go2 simulator.",
+            "type": "integer",
+            "default": 8891,
+            "prompt": "Viewer web port",
+            "validate": { "min": 1, "max": 65535 }
+        }
+    ]
+}

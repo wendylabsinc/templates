@@ -62,6 +62,10 @@ class _FastAPIStub(_Accepts):
 @pytest.fixture(scope="module")
 def app_module():
     """Import the rendered template module with heavy deps replaced by stubs."""
+    # Main now includes tests that use NumPy-aware pytest.approx. Keep these
+    # lightweight imports local to this fixture rather than poisoning that suite.
+    module_names = ("cv2", "numpy", "ultralytics", "fastapi", "fastapi.responses", "fastapi.staticfiles")
+    original_modules = {name: sys.modules.get(name) for name in module_names}
     cv2 = _stub(
         "cv2",
         VideoCapture=mock.MagicMock(),
@@ -69,6 +73,9 @@ def app_module():
         CAP_PROP_FRAME_WIDTH=3,
         CAP_PROP_FRAME_HEIGHT=4,
         IMWRITE_JPEG_QUALITY=1,
+        CAP_V4L2=200,
+        CAP_PROP_FOURCC=6,
+        VideoWriter_fourcc=lambda *chars: sum(ord(c) << (8 * i) for i, c in enumerate(chars)),
     )
     _stub("numpy", ndarray=object, frombuffer=mock.MagicMock())
     _stub("ultralytics", YOLO=_YOLOStub)
@@ -81,24 +88,31 @@ def app_module():
     module.__dict__["__file__"] = str(APP_PY)
     exec(compile(source, str(APP_PY), "exec"), module.__dict__)  # noqa: S102
     module.cv2 = cv2
-    return module
+    try:
+        yield module
+    finally:
+        for name, original in original_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
 
 
-def test_first_capture_device_rejects_codec_only_nodes(app_module):
+def test_first_capture_node_rejects_codec_only_nodes(app_module):
     """A board with no real camera must yield no capture device."""
     with mock.patch.object(app_module, "_linux_candidate_video_nodes", return_value=CODEC_ONLY_NODES), \
          mock.patch.object(app_module, "_v4l2_is_capture", return_value=False), \
          mock.patch.object(app_module, "IS_MACOS", False):
-        assert app_module._first_capture_device() is None
+        assert app_module._first_capture_node() is None
         assert app_module._enumerate_linux_cameras() == []
 
 
-def test_first_capture_device_picks_the_capture_node(app_module):
+def test_first_capture_node_picks_the_capture_node(app_module):
     """When one node is a real capture source, it is the one selected."""
     with mock.patch.object(app_module, "_linux_candidate_video_nodes", return_value=CODEC_ONLY_NODES), \
          mock.patch.object(app_module, "_v4l2_is_capture", side_effect=lambda p: p == "/dev/video1"), \
          mock.patch.object(app_module, "IS_MACOS", False):
-        assert app_module._first_capture_device() == "/dev/video1"
+        assert app_module._first_capture_node() == "/dev/video1"
 
 
 def test_capture_loop_backs_off_and_never_opens_a_non_capture_node(app_module):
@@ -153,7 +167,7 @@ def test_every_new_client_learns_the_status(app_module):
     async def scenario():
         camera = app_module.YOLOCamera()
         camera._capture_mode = "opencv"
-        with mock.patch.object(app_module, "_first_capture_device", return_value=None):
+        with mock.patch.object(app_module, "_first_capture_node", return_value=None):
             first = await camera.add_client(object())
             second = await camera.add_client(object())
             await asyncio.sleep(0.05)  # let call_soon_threadsafe drain
@@ -166,3 +180,50 @@ def test_every_new_client_learns_the_status(app_module):
         frame, payload = queue.get_nowait()
         assert frame is None, "status messages carry no binary frame"
         assert json.loads(payload)["status"] == "no_capture_device"
+
+
+def test_fallback_uses_validated_node_and_explicit_v4l2(app_module):
+    camera = app_module.YOLOCamera()
+    cap = mock.MagicMock()
+    cap.isOpened.return_value = True
+    with mock.patch.object(app_module, "IS_MACOS", False), \
+         mock.patch.object(app_module, "_v4l2_is_capture", side_effect=lambda p: p == "/dev/video2"), \
+         mock.patch.object(app_module, "_first_capture_node", return_value="/dev/video2"), \
+         mock.patch.object(app_module.cv2, "VideoCapture", return_value=cap) as capture, \
+         mock.patch.object(camera, "_start_opencv_thread") as start:
+        assert camera._try_opencv_fallback("/dev/video0")
+    capture.assert_called_once_with("/dev/video2", app_module.cv2.CAP_V4L2)
+    start.assert_called_once_with("/dev/video2")
+    cap.release.assert_called_once()
+
+
+@pytest.mark.parametrize("format_name,dimensions", [("MJPG", (1280, 720)), ("YUYV", (640, 480))])
+@pytest.mark.parametrize("initial_valid", [True, False])
+def test_capture_preserves_mjpeg_negotiation_and_rediscovery(app_module, monkeypatch, format_name, dimensions, initial_valid):
+    """Combining #104 and #109 must retain format ordering and valid fallback."""
+    monkeypatch.delenv("CAMERA_WIDTH", raising=False)
+    monkeypatch.delenv("CAMERA_HEIGHT", raising=False)
+    camera = app_module.YOLOCamera()
+    camera._current_device = "/dev/video0"
+    camera.queues = {object(): mock.MagicMock()}
+    camera._last_status_payload = "old error"
+    cap = mock.MagicMock()
+    cap.isOpened.return_value = True
+    cap.get.return_value = app_module.cv2.VideoWriter_fourcc(*format_name)
+    cap.read.side_effect = SystemExit
+    with mock.patch.object(app_module, "IS_MACOS", False), \
+         mock.patch.object(app_module, "_v4l2_is_capture", side_effect=lambda p: initial_valid or p == "/dev/video2"), \
+         mock.patch.object(app_module, "_first_capture_node", return_value="/dev/video2"), \
+         mock.patch.object(app_module.cv2, "VideoCapture", return_value=cap) as capture:
+        with pytest.raises(SystemExit):
+            camera._opencv_loop("/dev/video0")
+    expected_device = "/dev/video0" if initial_valid else "/dev/video2"
+    capture.assert_called_once_with(expected_device, app_module.cv2.CAP_V4L2)
+    assert camera._current_device == expected_device
+    assert cap.set.call_args_list == [
+        mock.call(app_module.cv2.CAP_PROP_FOURCC, app_module.cv2.VideoWriter_fourcc(*"MJPG")),
+        mock.call(app_module.cv2.CAP_PROP_FRAME_WIDTH, dimensions[0]),
+        mock.call(app_module.cv2.CAP_PROP_FRAME_HEIGHT, dimensions[1]),
+    ]
+    assert camera._last_status_payload is None
+    cap.release.assert_called_once()

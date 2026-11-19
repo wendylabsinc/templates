@@ -1,0 +1,37 @@
+{
+    "name": "elrobot-policy",
+    "description": "Run a trained LeRobot 0.6.1 policy (ACT or SmolVLA) on an ElRobot follower arm (7 joints + gripper) with its arm and table cameras. Loads a pinned Hugging Face model revision and stops safely: back to the start pose, then torque off.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Port for the policy runner's web page (status, camera pictures, Start and Stop; also the calibration page): open http://<device>:<port> in a browser",
+            "type": "integer",
+            "default": 8095,
+            "prompt": "Web UI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "FOLLOWER_SERIAL_DEVICE",
+            "description": "USB serial tty of the ElRobot follower arm (12 V). ttyACM1 on the team's Jetson; check with ls -l /dev/serial/by-id/ on the device. It must be connected when you deploy.",
+            "type": "string",
+            "default": "ttyACM1",
+            "prompt": "Follower arm serial device",
+            "validate": { "pattern": "^tty(ACM|USB)[0-9]+$" }
+        },
+        {
+            "name": "CALIBRATION_VOLUME",
+            "description": "Persistent volume that holds the follower's LeRobot calibration file (follower.json); the same volume elrobot-record uses",
+            "type": "string",
+            "default": "elrobot-calibration",
+            "prompt": "Calibration volume",
+            "validate": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+        }
+    ]
+}

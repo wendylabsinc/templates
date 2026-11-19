@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 # Stage 1 - Build React visualizer
-FROM node:22-slim AS frontend
+FROM node:22.23.4-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
 # `npm ci` for reproducible builds: it requires package-lock.json (which

@@ -4,7 +4,7 @@
 #   nvidia-jetson -> dustynv/onnxruntime + Node 22. We swap onnxruntime-node's
 #                    bundled CPU-only libonnxruntime.so.1 for dustynv's
 #                    CUDA-enabled build so the CUDA EP is actually available.
-#   generic       -> node:22-slim + Microsoft prebuilt CPU onnxruntime.
+#   generic       -> node:22.23.4-slim + Microsoft prebuilt CPU onnxruntime.
 #
 # onnxruntime-node is pinned to ~1.20.0 in package.json so the bundled binding
 # stays ABI-compatible with the dustynv 1.20.x libonnxruntime.so we swap in.
@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
- && apt-get install -y --no-install-recommends nodejs \
+ && apt-get install -y --no-install-recommends nodejs=22.23.4-1nodesource1 \
  && rm -rf /var/lib/apt/lists/*
 
 # ── JetPack 7 / WendyOS 0.17 GPU fix (WendyOS#1370; mirrors WendyOS PR #1379) ──
@@ -64,7 +64,7 @@ RUN mkdir -p /opt/cuda12/lib \
 ENV LD_LIBRARY_PATH=/opt/cuda12/lib
 
 # ── Stage B-generic ─────────────────────────────────────────────────────────
-FROM node:22-slim AS base-generic
+FROM node:22.23.4-slim AS base-generic
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates \

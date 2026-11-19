@@ -21,6 +21,12 @@
             ]
         },
         {
+            "name": "blink-rgb-led",
+            "description": "Blink an onboard WS2812 RGB LED on an ESP32",
+            "targets": ["wendy-lite"],
+            "languages": ["c"]
+        },
+        {
             "name": "simple-api",
             "description": "Minimal HTTP API with JSON endpoints",
             "languages": [
@@ -98,6 +104,13 @@
             ]
         },
         {
+            "name": "llm-npu",
+            "description": "Qwen3-4B answering questions on a Qualcomm Hexagon NPU, with a chat UI. Runs entirely on the device, offline after its first run",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "camera-feed-yolo",
             "description": "Live camera feed with YOLOv8 COCO object detection (generic CPU or Jetson GPU)",
             "languages": [
@@ -137,6 +150,13 @@
             ]
         },
         {
+            "name": "g1-vr-teleop",
+            "description": "Teleoperate a Unitree G1's arms and Dex3 hands from a Meta Quest 3 in VR, with optional session recording for training data",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "go2-initial-test",
             "description": "Pre-hackathon hardware self-test for the Unitree Go2: one tiny app per hardware interface (camera, LiDAR, mic, speaker, IMU, foot contact, battery, motion, GPU, Bluetooth, cloud) plus a dashboard UI showing a live pass/fail go/no-go board",
             "languages": [
@@ -158,8 +178,50 @@
             ]
         },
         {
+            "name": "so101-calibration",
+            "description": "Calibrate an SO-101 arm from a browser: move it by hand (torque stays off), record home and joint ranges, and save LeRobot-convention calibration JSON. Finds the arm's serial port by pinging its Feetech servos",
+            "languages": [
+                "python"
+            ]
+        },
+        {
             "name": "go2-rosbag",
             "description": "Record a Unitree Go2's DDS topics to an mcap rosbag from a browser: discovers every topic the robot exposes and records all of them (opens directly in Foxglove / plays with ros2 bag)",
+            "languages": [
+                "python"
+            ]
+        },
+        {
+            "name": "so101-sim",
+            "description": "Simulate an SO-101 robot arm in MuJoCo: a 3D browser viewer with six joint sliders, plus an HTTP API to move the virtual arm from your own code. Virtual only: no USB serial port or servos",
+            "languages": [
+                "python"
+            ]
+        },
+        {
+            "name": "so101-record",
+            "description": "Record SO-101 teleoperation demonstrations (leader arm, follower arm, one USB camera) as a LeRobot 0.6.1 dataset for policy training, controlled from a browser; optionally upload it to the Hugging Face Hub",
+            "languages": [
+                "python"
+            ]
+        },
+        {
+            "name": "so101-policy",
+            "description": "Run a trained LeRobot 0.6.1 policy (ACT or SmolVLA) on an SO-101 follower arm with a USB camera: loads a pinned Hugging Face model revision, starts from a browser, and stops safely (back to the start pose, then torque off)",
+            "languages": [
+                "python"
+            ]
+        },
+        {
+            "name": "elrobot-record",
+            "description": "Record ElRobot teleoperation demonstrations (7-joint + gripper leader and follower arms, arm and table cameras) as a LeRobot 0.6.1 dataset for policy training, controlled from a browser; calibrates the arms without writing to the servos, and optionally uploads the dataset to the Hugging Face Hub",
+            "languages": [
+                "python"
+            ]
+        },
+        {
+            "name": "elrobot-policy",
+            "description": "Run a trained LeRobot 0.6.1 policy (ACT or SmolVLA) on an ElRobot follower arm (7 joints + gripper) with its arm and table cameras: loads a pinned Hugging Face model revision, starts from a browser, and stops safely (back to the start pose, then torque off)",
             "languages": [
                 "python"
             ]
@@ -199,6 +261,10 @@
         {
             "key": "node",
             "name": "Node (TypeScript)"
+        },
+        {
+            "key": "c",
+            "name": "C"
         },
         {
             "key": "cpp",

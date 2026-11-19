@@ -1,0 +1,4 @@
+{
+    "name": "blink-rgb-led",
+    "description": "Blink an onboard WS2812 RGB LED on an ESP32"
+}

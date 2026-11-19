@@ -70,3 +70,5 @@ wendy device apps stop {{.APP_ID}}
 
 If readiness times out, check that port `{{.PORT}}` is free and inspect the
 first build or application error in the logs.
+
+The container listens on IPv6 and IPv4, including the IPv6-only USB connection.

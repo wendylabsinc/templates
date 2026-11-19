@@ -1,0 +1,8 @@
+# LeRobot 0.6.1, the version the wendy train image uses, so the dataset format
+# (codebase v3.0) matches. torch and torchvision are installed first from the
+# CPU index (see the Dockerfile). torchcodec comes with the dataset extra;
+# 0.11 is the build that matches torch 2.11. The app decodes with PyAV, so
+# torchcodec is never loaded. The ElRobot arm classes are vendored in
+# elrobot_arms.py; they need only the feetech extra.
+lerobot[feetech,dataset]==0.6.1
+torchcodec==0.11.1

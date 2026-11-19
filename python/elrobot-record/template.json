@@ -1,0 +1,45 @@
+{
+    "name": "elrobot-record",
+    "description": "Record ElRobot teleoperation demonstrations (7-joint + gripper leader and follower arms, arm and table cameras) as a LeRobot 0.6.1 dataset on the device, and optionally upload it to the Hugging Face Hub.",
+    "variables": [
+        {
+            "name": "APP_ID",
+            "description": "Application identifier",
+            "type": "string",
+            "required": true,
+            "prompt": "App ID"
+        },
+        {
+            "name": "PORT",
+            "description": "Port for the recorder's web page (status, countdown, camera pictures, and the next, re-record and stop buttons; also the calibration page): open http://<device>:<port> in a browser",
+            "type": "integer",
+            "default": 8094,
+            "prompt": "Web UI port",
+            "validate": { "min": 1, "max": 65535 }
+        },
+        {
+            "name": "FOLLOWER_SERIAL_DEVICE",
+            "description": "USB serial tty of the ElRobot follower arm (12 V, the arm that copies your moves). ttyACM1 on the team's Jetson; check with ls -l /dev/serial/by-id/ on the device. It must be connected when you deploy.",
+            "type": "string",
+            "default": "ttyACM1",
+            "prompt": "Follower arm serial device",
+            "validate": { "pattern": "^tty(ACM|USB)[0-9]+$" }
+        },
+        {
+            "name": "LEADER_SERIAL_DEVICE",
+            "description": "USB serial tty of the ElRobot leader arm (5 to 7.4 V, the arm you move by hand). ttyACM0 on the team's Jetson. It must be connected when you deploy.",
+            "type": "string",
+            "default": "ttyACM0",
+            "prompt": "Leader arm serial device",
+            "validate": { "pattern": "^tty(ACM|USB)[0-9]+$" }
+        },
+        {
+            "name": "CALIBRATION_VOLUME",
+            "description": "Persistent volume that holds the arms' LeRobot calibration files (follower.json, leader.json); elrobot-policy mounts the same volume",
+            "type": "string",
+            "default": "elrobot-calibration",
+            "prompt": "Calibration volume",
+            "validate": { "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" }
+        }
+    ]
+}

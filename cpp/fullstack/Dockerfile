@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 # Stage 1: Build frontend
-FROM node:22-slim AS frontend
+FROM node:22.23.4-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN npm install

@@ -1,0 +1,7 @@
+# LeRobot 0.6.1, the version the wendy train image trains with, so the saved
+# policy config and processors load as they were written. torch and
+# torchvision are installed first (see the Dockerfile). The smolvla extra adds
+# transformers for SmolVLA; ACT needs nothing more. Running a policy needs no
+# dataset code, so the dataset extra is left out. The ElRobot follower class
+# is vendored in elrobot_arms.py and needs only the feetech extra.
+lerobot[feetech,smolvla]==0.6.1

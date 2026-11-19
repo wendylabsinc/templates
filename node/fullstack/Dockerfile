@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 # Stage 1 — Build React frontend
-FROM node:22-slim AS frontend
+FROM node:22.23.4-slim AS frontend
 WORKDIR /frontend
 COPY frontend/package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm install
@@ -8,7 +8,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2 — Build backend TypeScript
-FROM node:22-slim AS builder
+FROM node:22.23.4-slim AS builder
 WORKDIR /app
 COPY package*.json ./
 RUN --mount=type=cache,target=/root/.npm npm install
@@ -17,7 +17,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # Stage 3 — Production runtime
-FROM node:22-slim
+FROM node:22.23.4-slim
 WORKDIR /app
 
 # Install GStreamer, ALSA, v4l-utils, and native build tools for better-sqlite3

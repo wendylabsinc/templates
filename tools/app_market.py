@@ -97,8 +97,10 @@ def catalog(root=ROOT):
                 raise ValueError(f"Invalid image release for {slug}")
             if not re.fullmatch(r"[a-f0-9]{40}", release["source_revision"]):
                 raise ValueError(f"A source commit is required for {slug}")
-            if release["platforms"] != ["linux/amd64", "linux/arm64"]:
-                raise ValueError(f"Both Linux architectures must be qualified for {slug}")
+            platforms = release["platforms"]
+            if (not platforms or len(platforms) != len(set(platforms))
+                    or not set(platforms) <= {"linux/amd64", "linux/arm64"}):
+                raise ValueError(f"A supported, qualified platform is required for {slug}")
             for platform in release["platforms"]:
                 evidence = release["qualification"][platform]
                 if (evidence.get("image_reference") != release["image_reference"]

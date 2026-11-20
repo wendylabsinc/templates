@@ -74,6 +74,10 @@ class AppMarketTests(unittest.TestCase):
                 }
             write()
             self.assertFalse(market.catalog(root)["apps"][3]["coming_soon"])
+            release["platforms"] = ["linux/arm64"]
+            write()
+            published = market.catalog(root)["apps"][3]["template_release"]
+            self.assertEqual(published["platforms"], ["linux/arm64"])
             release["app_config_json"] = config + " "
             write()
             with self.assertRaises(ValueError):

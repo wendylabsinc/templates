@@ -55,7 +55,7 @@ opening hook. Installation sends that exact configuration to the agent.
 
 ## Qualify and promote
 
-For each of `linux/amd64` and `linux/arm64`, use a supported WendyOS device to
+For each architecture being published (`linux/amd64` and/or `linux/arm64`), use a supported WendyOS device to
 install the candidate by immutable digest with its exact configuration. Record
 the agent version, device identity and architecture, image digest, configuration
 hash, install result, start result, expected HTTP response, opening the UI from
@@ -71,6 +71,11 @@ platform's qualification record. This is a maintainer declaration backed by that
 evidence, not cryptographic remote attestation.
 
 Add the candidate under its app ID in `releases.json`, including:
+
+List only qualified architectures in the release's `platforms`. An ARM64-only
+qualification enables ARM64 installs while AMD64 devices remain incompatible,
+even though the candidate image contains both architectures. Add AMD64 after
+its independent device validation passes.
 
 ```json
 {

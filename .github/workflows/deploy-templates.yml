@@ -37,6 +37,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validate and generate the template App Market catalog
+        run: |
+          python -m unittest discover -s tests -p test_app_market.py
+          python tools/app_market.py catalog --output store/catalog.json
+
       - id: auth
         uses: google-github-actions/auth@v2
         with:

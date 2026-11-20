@@ -88,7 +88,7 @@ def catalog(root=ROOT):
         release = releases.get(slug)
         item = dict(slug=slug, name=app["name"], tagline=description,
                     description=description, category=app["category"], subcategory=app["subcategory"],
-                    icon_path="", screenshot_paths=[], entitlements=[], featured=False,
+                    icon_path="", screenshot_paths=[], entitlements=[], featured=release is not None,
                     coming_soon=release is None, maintainer="Wendy Labs",
                     source_url=f"https://github.com/wendylabsinc/templates/tree/main/{app['language']}/{app['template']}")
         if release is not None:
@@ -117,6 +117,7 @@ def catalog(root=ROOT):
             if len(ports) != 1 or type(ports[0]) is not int or not 1 <= ports[0] <= 65535:
                 raise ValueError(f"One valid HTTP port is required for {slug}")
             item["template_release"] = {k: release[k] for k in ("image_reference", "app_config_json", "platforms")}
+            item["source_url"] = f"https://github.com/wendylabsinc/templates/tree/{release['source_revision']}/{app['language']}/{app['template']}"
             item["entitlements"] = sorted({e["type"] for e in config["entitlements"]})
         apps.append(item)
     unknown = set(releases) - {a["slug"] for a in apps}

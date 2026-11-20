@@ -1,1 +1,21 @@
-{"releases": {}}
+{
+  "releases": {
+    "template-so101-sim": {
+      "image_reference": "ghcr.io/wendylabsinc/template-so101-sim@sha256:a1cbe4642a06742557e9cea06a263395d22c3f45b2b50e606c6688dff153f187",
+      "source_revision": "bc8f819649e044a2d2645a1235a337aba318add6",
+      "platforms": [
+        "linux/arm64"
+      ],
+      "app_config_json": "{\n  \"appId\": \"template-so101-sim\",\n  \"version\": \"0.1.0\",\n  \"platform\": \"linux\",\n  \"entitlements\": [\n    {\n      \"type\": \"network\",\n      \"mode\": \"host\"\n    },\n    {\n      \"type\": \"http\",\n      \"port\": 8891\n    }\n  ],\n  \"readiness\": {\n    \"tcpSocket\": {\n      \"port\": 8891\n    },\n    \"timeoutSeconds\": 120\n  }\n}\n",
+      "qualification": {
+        "linux/arm64": {
+          "image_reference": "ghcr.io/wendylabsinc/template-so101-sim@sha256:a1cbe4642a06742557e9cea06a263395d22c3f45b2b50e606c6688dff153f187",
+          "app_config_sha256": "b83154d93d3b65e9836b8d45d4f383feb62a322e79acb037de87a640bddf628d",
+          "evidence_url": "https://github.com/wendylabsinc/templates/blob/54b29ded3b2fa4abb16130ca94b6356e48fa183e/store/qualification/so101-arm64.json",
+          "install_passed": true,
+          "health_passed": true
+        }
+      }
+    }
+  }
+}

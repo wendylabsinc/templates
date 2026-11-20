@@ -15,7 +15,14 @@ per app. `apps.json` curates five starting listings. SO-101 Simulator and Simple
 fixed, single-service package recipes. Both target Linux ARM64 and AMD64. The
 simulator is virtual only and never opens a physical robot's servos. Camera,
 Audio, and Dashboard are preview listings pending their runtime contracts.
-No image releases or device qualifications are included in this change.
+SO-101 Simulator has a digest-pinned ARM64 release record, validated through the
+real Companion SDK on an existing WendyOS 0.20.2 ARM64 VM. Installation/start took
+12.26 seconds and application health passed at 15.50 seconds in that test. Its
+3D viewer, JPEG output, and stop/start passed; existing apps retained their states.
+See `qualification/so101-arm64.json` for the image/config-bound evidence. This
+establishes a virtual-machine result, not a physical robot qualification. AMD64
+and every other template remain unavailable pending independent qualification.
+The public main catalog changes only when this PR is merged and deployed.
 
 Native Mac applications and Wendy Lite firmware require their own artifact
 and installation paths. Multi-service apps such as G1 RC, Go2 RC, and local LLM

@@ -10,11 +10,21 @@
       "subcategory": "Simulation",
       "icon_path": "",
       "screenshot_paths": [],
-      "entitlements": [],
-      "featured": false,
-      "coming_soon": true,
+      "entitlements": [
+        "http",
+        "network"
+      ],
+      "featured": true,
+      "coming_soon": false,
       "maintainer": "Wendy Labs",
-      "source_url": "https://github.com/wendylabsinc/templates/tree/main/python/so101-sim"
+      "source_url": "https://github.com/wendylabsinc/templates/tree/bc8f819649e044a2d2645a1235a337aba318add6/python/so101-sim",
+      "template_release": {
+        "image_reference": "ghcr.io/wendylabsinc/template-so101-sim@sha256:a1cbe4642a06742557e9cea06a263395d22c3f45b2b50e606c6688dff153f187",
+        "app_config_json": "{\n  \"appId\": \"template-so101-sim\",\n  \"version\": \"0.1.0\",\n  \"platform\": \"linux\",\n  \"entitlements\": [\n    {\n      \"type\": \"network\",\n      \"mode\": \"host\"\n    },\n    {\n      \"type\": \"http\",\n      \"port\": 8891\n    }\n  ],\n  \"readiness\": {\n    \"tcpSocket\": {\n      \"port\": 8891\n    },\n    \"timeoutSeconds\": 120\n  }\n}\n",
+        "platforms": [
+          "linux/arm64"
+        ]
+      }
     },
     {
       "slug": "template-camera-feed",

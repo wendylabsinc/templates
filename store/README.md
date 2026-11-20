@@ -32,6 +32,10 @@ builds both Linux architectures, pushes a candidate image to GHCR, and saves
 `release-candidate.json` and the exact `wendy.json` as a workflow artifact.
 Candidate construction does not publish an installable catalog release.
 
+Before the workflow exists on the default branch, push a reviewed commit tag
+named `app-market-candidate/so101-sim/<commit-sha>` (or `simple-api`). This runs
+the same candidate-only build from the tagged source without merging the PR.
+
 The GHCR package must permit anonymous pulls before publishing a release. Do not
 put registry credentials in the catalog. First-time package creation can require
 repository access to its organization package.

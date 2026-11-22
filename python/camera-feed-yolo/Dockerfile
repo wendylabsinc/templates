@@ -136,9 +136,11 @@ ENV PYTHONPATH=/usr/lib/python3/dist-packages
 RUN python3 -c "import gi; gi.require_version('Gst', '1.0'); from gi.repository import Gst; Gst.init(None); print('gi+Gst OK')"
 
 # Bake YOLOv8n weights into the image so the container doesn't need network on first run.
-# Size check catches truncated downloads (full file is ~6.2 MB).
-RUN python3 -c "from ultralytics import YOLO; YOLO('yolov8n.pt')" && \
-    [ -s /app/yolov8n.pt ] && [ "$(stat -c %s /app/yolov8n.pt)" -gt 6000000 ]
+# Pin the model bytes; the first launch requires no model download.
+RUN python3 -c "import urllib.request; urllib.request.urlretrieve('https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt', 'yolov8n.pt')" && \
+    echo 'f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36  yolov8n.pt' | sha256sum -c -
+ARG YOLO_REQUIRE_CUDA=false
+ENV YOLO_REQUIRE_CUDA=${YOLO_REQUIRE_CUDA}
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     if [ "$WENDY_DEBUG" = "true" ]; then pip install debugpy; fi

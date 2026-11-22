@@ -117,6 +117,8 @@ logger.info("Platform: %s (device=%s, gpu=%s), CUDA: %s, capture: %s, max infere
 
 _model: YOLO | None = None
 _model_lock = threading.Lock()
+_model_error: str | None = None
+_REQUIRE_CUDA = _env_bool("YOLO_REQUIRE_CUDA") is True
 
 
 def _get_model() -> YOLO:
@@ -128,7 +130,16 @@ def _get_model() -> YOLO:
             return _model
         model_path = "yolov8n.onnx" if Path("yolov8n.onnx").exists() else "yolov8n.pt"
         logger.info("Loading YOLOv8n model (CUDA: %s)...", _HAS_CUDA)
+        if _REQUIRE_CUDA and not _HAS_CUDA:
+            raise RuntimeError("This Jetson package requires an accessible NVIDIA GPU")
         m = YOLO(model_path)
+        if _HAS_CUDA:
+            m.to("cuda:0")
+        # Readiness means inference works, rather than just an open HTTP port.
+        m.predict(np.zeros((320, 320, 3), dtype=np.uint8), device=0 if _HAS_CUDA else "cpu",
+                  imgsz=_INFERENCE_IMGSZ, verbose=False)
+        if len(m.names) != 80:
+            raise RuntimeError("Expected the 80-class COCO model")
         logger.info("YOLOv8n ready — %d COCO classes, backend: %s", len(m.names), model_path)
         _model = m
         return _model
@@ -780,7 +791,7 @@ class YOLOCamera:
             h, w = frame.shape[:2]
 
             t0 = time.monotonic()
-            results = model.predict(frame, conf=conf, imgsz=_INFERENCE_IMGSZ, verbose=False)
+            results = model.predict(frame, conf=conf, imgsz=_INFERENCE_IMGSZ, device=0 if _HAS_CUDA else "cpu", verbose=False)
             inference_ms = (time.monotonic() - t0) * 1000
             last_inference = time.monotonic()
 
@@ -859,7 +870,28 @@ camera = YOLOCamera()
 
 # Warm the model at startup so the first client connection isn't stalled by a
 # multi-second GIL-holding torch load.
-threading.Thread(target=_get_model, daemon=True).start()
+def _warm_model():
+    global _model_error
+    try:
+        _get_model()
+    except Exception as error:
+        _model_error = str(error)
+        logger.exception("YOLO model failed to initialize")
+
+
+threading.Thread(target=_warm_model, daemon=True).start()
+
+
+@app.get("/health")
+async def health():
+    cameras = enumerate_cameras()
+    ready = _model is not None and bool(cameras) and (not _REQUIRE_CUDA or _HAS_CUDA)
+    return JSONResponse(status_code=200 if ready else 503, content={
+        "ready": ready, "model_loaded": _model is not None,
+        "model_error": _model_error, "cuda": _HAS_CUDA,
+        "device": str(_model.device) if _model else None,
+        "camera_count": len(cameras), "classes": len(_model.names) if _model else 0,
+    })
 
 
 @app.get("/cameras")

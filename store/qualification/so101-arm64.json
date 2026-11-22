@@ -1,0 +1,22 @@
+{
+  "agentVersion": "dev",
+  "architecture": "arm64",
+  "frameCount": 3,
+  "healthy": true,
+  "healthySeconds": 15.498509049415588,
+  "imageReference": "ghcr.io/wendylabsinc/template-so101-sim@sha256:a1cbe4642a06742557e9cea06a263395d22c3f45b2b50e606c6688dff153f187",
+  "installSeconds": 12.256603002548218,
+  "jpegBytes": 22619,
+  "os": "wendyos",
+  "stopStartPassed": true,
+  "virtualOnly": true,
+  "app_config_sha256": "b83154d93d3b65e9836b8d45d4f383feb62a322e79acb037de87a640bddf628d",
+  "source_revision": "bc8f819649e044a2d2645a1235a337aba318add6",
+  "candidate_build": "https://github.com/wendylabsinc/templates/actions/runs/44834594420",
+  "qualification_scope": "Local ARM64 WendyOS virtual machine; no physical robot qualification",
+  "existing_apps_unchanged": true,
+  "existing_app_count": 2,
+  "viewer_3d_checked": true,
+  "anonymous_registry_pull_verified": true,
+  "recorded_at": "2026-11-20T23:15:35.479418+00:00"
+}

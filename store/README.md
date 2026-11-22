@@ -126,3 +126,34 @@ current BLE and Cloud v2 transports do not implement image installation; local
 gRPC and the existing legacy Cloud tunnel can use it. Settings, models, secrets,
 rollback, upgrades, health-gated completion, and Cloud v2 install support remain
 separate work before expanding this initial package set.
+
+
+## YOLO COCO on Jetson Orin Nano
+
+The `camera-feed-yolo` candidate is ARM64 only and explicitly builds the
+`nvidia-jetson` stage with CUDA required. The model is downloaded and verified
+by SHA-256 at build time. Startup warms real inference; `/health` returns 503
+until the 80-class model and a camera are available. No device-qualified YOLO
+release is published yet. Before promotion, inspect the actual Orin Nano and
+its WendyOS/JetPack version, verify GPU inference and live camera frames, and
+bind qualification evidence to that image and configuration. An ARM64 simulator
+cannot qualify this GPU package.
+
+The Companion iPhone runtime uses Core ML and Apple's YOLOv3 Tiny FP16 model
+instead of this Linux container. Its pinned model download, compilation and
+camera processing live in the Companion SDK. This is a separate target release.
+
+## Visibility and publication requirements
+
+Private apps belong to a Wendy organization. Their metadata, artifacts and
+install authorization must be served by authenticated Wendy Cloud endpoints;
+they must never be included in this public repository, CDN catalog or public
+GHCR packages. Organization membership is the access boundary, with existing
+app permission restrictions still enforced.
+
+Public apps require a Wendy team review before publication. Approval must bind
+to the exact release digest, configuration and requested permissions. A changed
+release must be reviewed again. Pending/rejected releases must not resolve for
+public installation. The current static feed does not implement an organization
+private catalog or a review queue; those require Cloud and publisher integration.
+Do not represent a client-side visibility filter as authorization.

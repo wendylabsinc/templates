@@ -1,9 +1,52 @@
 {
   "apps": [
-    {"template": "so101-sim", "language": "python", "name": "SO-101 Simulator", "category": "Robotics", "subcategory": "Simulation", "package": true},
-    {"template": "camera-feed", "language": "python", "name": "Camera", "category": "Robotics", "subcategory": "Camera", "package": false},
-    {"template": "audio", "language": "python", "name": "Audio", "category": "Robotics", "subcategory": "Audio", "package": false},
-    {"template": "simple-api", "language": "python", "name": "Simple API", "category": "Developer Tools", "subcategory": "API", "package": true},
-    {"template": "fullstack", "language": "python", "name": "Dashboard", "category": "Developer Tools", "subcategory": "Dashboard", "package": false}
+    {
+      "template": "so101-sim",
+      "language": "python",
+      "name": "SO-101 Simulator",
+      "category": "Robotics",
+      "subcategory": "Simulation",
+      "package": true
+    },
+    {
+      "template": "camera-feed",
+      "language": "python",
+      "name": "Camera",
+      "category": "Robotics",
+      "subcategory": "Camera",
+      "package": false
+    },
+    {
+      "template": "audio",
+      "language": "python",
+      "name": "Audio",
+      "category": "Robotics",
+      "subcategory": "Audio",
+      "package": false
+    },
+    {
+      "template": "simple-api",
+      "language": "python",
+      "name": "Simple API",
+      "category": "Developer Tools",
+      "subcategory": "API",
+      "package": true
+    },
+    {
+      "template": "fullstack",
+      "language": "python",
+      "name": "Dashboard",
+      "category": "Developer Tools",
+      "subcategory": "Dashboard",
+      "package": false
+    },
+    {
+      "template": "camera-feed-yolo",
+      "language": "python",
+      "name": "YOLO COCO",
+      "category": "Robotics",
+      "subcategory": "Camera",
+      "package": true
+    }
   ]
 }

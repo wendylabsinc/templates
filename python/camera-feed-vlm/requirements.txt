@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+opencv-python-headless
+transformers>=4.44,<5
+accelerate
+torch
+pillow
+einops
